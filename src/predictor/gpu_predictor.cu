@@ -10,6 +10,7 @@
 #include <xgboost/tree_updater.h>
 #include <memory>
 #include "../common/device_helpers.cuh"
+#include "../common/timer.h"
 
 namespace xgboost {
 namespace predictor {
@@ -21,6 +22,8 @@ struct GPUPredictionParam : public dmlc::Parameter<GPUPredictionParam> {
   int gpu_id;
   int n_gpus;
   bool silent;
+  // flag to print out detailed breakdown of runtime
+  int debug_verbose;
   // declare parameters
   DMLC_DECLARE_PARAMETER(GPUPredictionParam) {
     DMLC_DECLARE_FIELD(gpu_id).set_default(0).describe(
@@ -29,6 +32,10 @@ struct GPUPredictionParam : public dmlc::Parameter<GPUPredictionParam> {
         "Number of devices to use for prediction (NOT IMPLEMENTED).");
     DMLC_DECLARE_FIELD(silent).set_default(false).describe(
         "Do not print information during trainig.");
+    DMLC_DECLARE_FIELD(debug_verbose)
+        .set_lower_bound(0)
+        .set_default(0)
+        .describe("flag to print out detailed breakdown of runtime");
   }
 };
 DMLC_REGISTER_PARAMETER(GPUPredictionParam);
@@ -254,6 +261,7 @@ class GPUPredictor : public xgboost::Predictor {
     if (tree_end - tree_begin == 0) {
       return;
     }
+    monitor.Start("DevicePredictInternal1");
 
     // Add dmatrix to device if not seen before
     if (this->device_matrix_cache_.find(dmat) ==
@@ -262,6 +270,8 @@ class GPUPredictor : public xgboost::Predictor {
           dmat, std::unique_ptr<DeviceMatrix>(
                     new DeviceMatrix(dmat, param.gpu_id, param.silent)));
     }
+    monitor.Stop("DevicePredictInternal1", {param.gpu_id});
+    monitor.Start("DevicePredictInternal2");
     DeviceMatrix* device_matrix = device_matrix_cache_.find(dmat)->second.get();
 
     dh::safe_cuda(cudaSetDevice(param.gpu_id));
@@ -275,6 +285,8 @@ class GPUPredictor : public xgboost::Predictor {
       sum += model.trees[tree_idx]->GetNodes().size();
       h_tree_segments.push_back(sum);
     }
+    monitor.Stop("DevicePredictInternal2", {param.gpu_id});
+    monitor.Start("DevicePredictInternal3");
 
     thrust::host_vector<DevicePredictionNode> h_nodes(h_tree_segments.back());
     for (auto tree_idx = tree_begin; tree_idx < tree_end; tree_idx++) {
@@ -283,30 +295,51 @@ class GPUPredictor : public xgboost::Predictor {
                 h_nodes.begin() + h_tree_segments[tree_idx - tree_begin]);
     }
 
+    monitor.Stop("DevicePredictInternal3", {param.gpu_id});
+    monitor.Start("DevicePredictInternal4");
     nodes.resize(h_nodes.size());
     thrust::copy(h_nodes.begin(), h_nodes.end(), nodes.begin());
+    monitor.Stop("DevicePredictInternal4", {param.gpu_id});
+    monitor.Start("DevicePredictInternal5");
     tree_segments.resize(h_tree_segments.size());
     thrust::copy(h_tree_segments.begin(), h_tree_segments.end(),
                  tree_segments.begin());
     tree_group.resize(model.tree_info.size());
+    monitor.Stop("DevicePredictInternal5", {param.gpu_id});
+    monitor.Start("DevicePredictInternal6");
     thrust::copy(model.tree_info.begin(), model.tree_info.end(),
                  tree_group.begin());
 
+    monitor.Stop("DevicePredictInternal6", {param.gpu_id});
+    monitor.Start("DevicePredictInternal7");
     device_matrix->predictions.resize(out_preds->size());
     thrust::copy(out_preds->begin(), out_preds->end(),
                  device_matrix->predictions.begin());
 
+    monitor.Stop("DevicePredictInternal7", {param.gpu_id});
+    monitor.Start("DevicePredictInternal8");
+    int device;
+    cudaGetDevice(&device);
+    std::cout << "cuda device: " << device << std::endl;
     const int BLOCK_THREADS = 128;
+    monitor.Start("DevicePredictInternal8.1");
     const int GRID_SIZE = static_cast<int>(
         dh::div_round_up(device_matrix->row_ptr.size() - 1, BLOCK_THREADS));
 
+    monitor.Start("DevicePredictInternal8.1");
+    monitor.Start("DevicePredictInternal8.2");
     int shared_memory_bytes = static_cast<int>(
         sizeof(float) * device_matrix->p_mat->info().num_col * BLOCK_THREADS);
+    monitor.Start("DevicePredictInternal8.2");
+    monitor.Start("DevicePredictInternal8.3");
     bool use_shared = true;
-    if (shared_memory_bytes > dh::max_shared_memory(param.gpu_id)) {
+    if (true){ //shared_memory_bytes > dh::max_shared_memory(param.gpu_id)) {
       shared_memory_bytes = 0;
       use_shared = false;
     }
+    monitor.Stop("DevicePredictInternal8.3", {param.gpu_id});
+    monitor.Stop("DevicePredictInternal8", {param.gpu_id});
+    monitor.Start("DevicePredictInternal9");
 
     PredictKernel<BLOCK_THREADS>
         <<<GRID_SIZE, BLOCK_THREADS, shared_memory_bytes>>>(
@@ -320,6 +353,7 @@ class GPUPredictor : public xgboost::Predictor {
     dh::safe_cuda(cudaDeviceSynchronize());
     thrust::copy(device_matrix->predictions.begin(),
                  device_matrix->predictions.end(), out_preds->begin());
+    monitor.Stop("DevicePredictInternal9", {param.gpu_id});
   }
 
  public:
@@ -328,6 +362,7 @@ class GPUPredictor : public xgboost::Predictor {
   void PredictBatch(DMatrix* dmat, std::vector<bst_float>* out_preds,
                     const gbm::GBTreeModel& model, int tree_begin,
                     unsigned ntree_limit = 0) override {
+    monitor.Start("PredictBatch");
     if (this->PredictFromCache(dmat, out_preds, model, ntree_limit)) {
       return;
     }
@@ -339,12 +374,14 @@ class GPUPredictor : public xgboost::Predictor {
     }
 
     DevicePredictInternal(dmat, out_preds, model, tree_begin, tree_end);
+    monitor.Stop("PredictBatch", {param.gpu_id});
   }
 
   void UpdatePredictionCache(
       const gbm::GBTreeModel& model,
       std::vector<std::unique_ptr<TreeUpdater>>* updaters,
       int num_new_trees) override {
+    monitor.Start("UpdatePredictCache");
     auto old_ntree = model.trees.size() - num_new_trees;
     // update cache entry
     for (auto& kv : cache_) {
@@ -352,18 +389,23 @@ class GPUPredictor : public xgboost::Predictor {
       DMatrix* dmat = kv.first;
 
       if (e.predictions.size() == 0) {
+        monitor.Start("UpdatePredictCache1");
         cpu_predictor->PredictBatch(dmat, &(e.predictions), model, 0,
                                     static_cast<bst_uint>(model.trees.size()));
+        monitor.Stop("UpdatePredictCache1", {param.gpu_id});
       } else if (model.param.num_output_group == 1 && updaters->size() > 0 &&
                  num_new_trees == 1 &&
                  updaters->back()->UpdatePredictionCache(e.data.get(),
                                                          &(e.predictions))) {
         {}  // do nothing
       } else {
+        monitor.Start("UpdatePredictCache2");
         DevicePredictInternal(dmat, &(e.predictions), model, old_ntree,
                               model.trees.size());
+        monitor.Stop("UpdatePredictCache2", {param.gpu_id});
       }
     }
+    monitor.Stop("UpdatePredictCache", {param.gpu_id});
   }
 
   void PredictInstance(const SparseBatch::Inst& inst,
@@ -391,6 +433,7 @@ class GPUPredictor : public xgboost::Predictor {
     Predictor::Init(cfg, cache);
     cpu_predictor->Init(cfg, cache);
     param.InitAllowUnknown(cfg);
+    monitor.Init("gpu_predictor", param.debug_verbose);
   }
 
  private:
@@ -401,6 +444,7 @@ class GPUPredictor : public xgboost::Predictor {
   thrust::device_vector<DevicePredictionNode> nodes;
   thrust::device_vector<size_t> tree_segments;
   thrust::device_vector<int> tree_group;
+  common::Monitor monitor;
 };
 XGBOOST_REGISTER_PREDICTOR(GPUPredictor, "gpu_predictor")
     .describe("Make predictions using GPU.")

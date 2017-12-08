@@ -93,6 +93,8 @@ inline int n_devices(int n_gpus, int num_rows) {
   return (n_devices);
 }
 
+
+
 // if n_devices=-1, then use all visible devices
 inline void synchronize_n_devices(int n_devices, std::vector<int> dList) {
   for (int d_idx = 0; d_idx < n_devices; d_idx++) {

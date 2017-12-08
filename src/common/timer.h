@@ -85,10 +85,13 @@ struct Monitor {
   }
   void Start(const std::string &name) { timer_map[name].Start(); }
   void Stop(const std::string &name) {
-    if (debug_verbose&&0) {
+    timer_map[name].Stop();
+  }
+  void Stop(const std::string &name, std::vector<int> dList) {
+    if (debug_verbose) {
 #ifdef __CUDACC__
 #include "device_helpers.cuh"
-      dh::synchronize_all();
+      dh::synchronize_n_devices(dList.size(), dList);
 #endif
     }
     timer_map[name].Stop();

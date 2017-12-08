@@ -10,7 +10,8 @@ from .core import Booster, STRING_TYPES, XGBoostError, CallbackEnv, EarlyStopExc
 from .compat import (SKLEARN_INSTALLED, XGBStratifiedKFold)
 from . import rabit
 from . import callback
-
+import datetime
+import sys
 
 def _train_internal(params, dtrain,
                     num_boost_round=10, evals=(),
@@ -29,16 +30,18 @@ def _train_internal(params, dtrain,
         for eval_metric in eval_metrics:
             params += [('eval_metric', eval_metric)]
 
+    print("HERE1: %s" % str(datetime.datetime.now())) ; sys.stdout.flush()
     bst = Booster(params, [dtrain] + [d[0] for d in evals])
     nboost = 0
     num_parallel_tree = 1
-
+    print("HERE2: %s" % str(datetime.datetime.now())) ; sys.stdout.flush()
     if xgb_model is not None:
         if not isinstance(xgb_model, STRING_TYPES):
             xgb_model = xgb_model.save_raw()
         bst = Booster(params, [dtrain] + [d[0] for d in evals], model_file=xgb_model)
         nboost = len(bst.get_dump())
 
+    print("HERE3: %s" % str(datetime.datetime.now())) ; sys.stdout.flush()
     _params = dict(params) if isinstance(params, list) else params
 
     if 'num_parallel_tree' in _params:
@@ -59,7 +62,9 @@ def _train_internal(params, dtrain,
     callbacks_after_iter = [
         cb for cb in callbacks if not cb.__dict__.get('before_iteration', False)]
 
+    print("HERE4: %s" % str(datetime.datetime.now()));   sys.stdout.flush()
     for i in range(start_iteration, num_boost_round):
+        print("HERE5: %s" % str(datetime.datetime.now()));    sys.stdout.flush()
         for cb in callbacks_before_iter:
             cb(CallbackEnv(model=bst,
                            cvfolds=None,
@@ -69,6 +74,7 @@ def _train_internal(params, dtrain,
                            rank=rank,
                            evaluation_result_list=None))
         # Distributed code: need to resume to this point.
+        print("HERE6: %s" % str(datetime.datetime.now()));      sys.stdout.flush()
         # Skip the first update if it is a recovery step.
         if version % 2 == 0:
             bst.update(dtrain, i, obj)
@@ -76,7 +82,7 @@ def _train_internal(params, dtrain,
             version += 1
 
         assert(rabit.get_world_size() == 1 or version == rabit.version_number())
-
+        print("HERE7: %s" % str(datetime.datetime.now()));      sys.stdout.flush()
         nboost += 1
         evaluation_result_list = []
         # check evaluation result.
@@ -100,6 +106,7 @@ def _train_internal(params, dtrain,
         except EarlyStopException:
             break
         # do checkpoint after evaluation, in case evaluation also updates booster.
+        print("HERE8: %s" % str(datetime.datetime.now()));      sys.stdout.flush()
         bst.save_rabit_checkpoint()
         version += 1
 

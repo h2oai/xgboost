@@ -12,6 +12,7 @@
 #include <string>
 #include <utility>
 #include <vector>
+//#include "../../src/common/timer.h"
 #include "../../src/gbm/gbtree_model.h"
 
 // Forward declarations
@@ -206,6 +207,7 @@ class Predictor {
    */
 
   std::unordered_map<DMatrix*, PredictionCacheEntry> cache_;
+//  common::Monitor monitor;
 };
 
 /*!

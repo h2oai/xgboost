@@ -16,11 +16,13 @@ void Predictor::Init(
     e.data = d;
     cache_[d.get()] = std::move(e);
   }
+  //monitor.Init("Predictor", 2);
 }
 bool Predictor::PredictFromCache(DMatrix* dmat,
                                  std::vector<bst_float>* out_preds,
                                  const gbm::GBTreeModel& model,
                                  unsigned ntree_limit) {
+  //monitor.Start("predictor1");
   if (ntree_limit == 0 ||
       ntree_limit * model.param.num_output_group >= model.trees.size()) {
     auto it = cache_.find(dmat);
@@ -29,11 +31,12 @@ bool Predictor::PredictFromCache(DMatrix* dmat,
       if (y.size() != 0) {
         out_preds->resize(y.size());
         std::copy(y.begin(), y.end(), out_preds->begin());
+    //    monitor.Stop("predictor1");
         return true;
       }
     }
   }
-
+  //monitor.Stop("predictor1");
   return false;
 }
 void Predictor::InitOutPredictions(const MetaInfo& info,

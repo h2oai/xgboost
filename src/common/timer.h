@@ -6,6 +6,7 @@
 #include <iostream>
 #include <map>
 #include <string>
+#include <cuda_runtime.h>
 
 namespace xgboost {
 namespace common {
@@ -83,8 +84,29 @@ struct Monitor {
     this->debug_verbose = debug_verbose;
     this->label = label;
   }
-  void Start(const std::string &name) { timer_map[name].Start(); }
+  void Start(const std::string &name) {
+    if (debug_verbose) {
+        int device_idx;
+        cudaGetDevice(&device_idx);
+        cudaDeviceSynchronize();
+    }
+    timer_map[name].Start();
+  }
+  void Start(const std::string &name, std::vector<int> dList) {
+    if (debug_verbose) {
+#ifdef __CUDACC__
+#include "device_helpers.cuh"
+      dh::synchronize_n_devices(dList.size(), dList);
+#endif
+    }
+    timer_map[name].Start();
+  }
   void Stop(const std::string &name) {
+    if (debug_verbose) {
+        int device_idx;
+        cudaGetDevice(&device_idx);
+        cudaDeviceSynchronize();
+    }
     timer_map[name].Stop();
   }
   void Stop(const std::string &name, std::vector<int> dList) {

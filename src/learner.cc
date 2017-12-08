@@ -21,6 +21,14 @@
 #include "common/timer.h"
 
 namespace xgboost {
+#include <time.h>
+void timestamp2(const char * string)
+{
+    time_t ltime; /* calendar time */
+    ltime=time(NULL); /* get current cal time */
+    printf("%s : %s",asctime( localtime(&ltime) ) , string);
+    fflush(stdout);
+}
 // implementation of base learner.
 bool Learner::AllowLazyCheckPoint() const {
   return gbm_->AllowLazyCheckPoint();
@@ -208,10 +216,19 @@ class LearnerImpl : public Learner {
   void Configure(
       const std::vector<std::pair<std::string, std::string> >& args) override {
     // add to configurations
+    timestamp2(" config1\n");
     tparam.InitAllowUnknown(args);
+    timestamp2(" config2\n");
     monitor.Init("Learner", tparam.debug_verbose);
+    timestamp2(" config3\n");
+    monitor.Start("Learner1");
+    timestamp2(" config3.1\n");
     cfg_.clear();
+    timestamp2(" config3.2\n");
+    int count=0;
     for (const auto& kv : args) {
+      std::string temp = "config3.3 count=" + std::to_string(count);
+      timestamp2(temp.c_str());
       if (kv.first == "eval_metric") {
         // check duplication
         auto dup_check = [&kv](const std::unique_ptr<Metric>& m) {
@@ -225,6 +242,7 @@ class LearnerImpl : public Learner {
         cfg_[kv.first] = kv.second;
       }
     }
+    timestamp2(" config4\n");
     if (tparam.nthread != 0) {
       omp_set_num_threads(tparam.nthread);
     }
@@ -234,20 +252,22 @@ class LearnerImpl : public Learner {
     if (tparam.dsplit == 0 && rabit::IsDistributed()) {
       tparam.dsplit = 2;
     }
-
+    timestamp2(" config5\n");
     if (cfg_.count("num_class") != 0) {
       cfg_["num_output_group"] = cfg_["num_class"];
       if (atoi(cfg_["num_class"].c_str()) > 1 && cfg_.count("objective") == 0) {
         cfg_["objective"] = "multi:softmax";
       }
     }
-
+    timestamp2(" config6\n");
     if (cfg_.count("max_delta_step") == 0 && cfg_.count("objective") != 0 &&
         cfg_["objective"] == "count:poisson") {
       cfg_["max_delta_step"] = "0.7";
     }
 
+    timestamp2(" config7\n");
     ConfigureUpdaters();
+    timestamp2(" config8\n");
 
     if (cfg_.count("objective") == 0) {
       cfg_["objective"] = "reg:linear";
@@ -255,6 +275,7 @@ class LearnerImpl : public Learner {
     if (cfg_.count("booster") == 0) {
       cfg_["booster"] = "gbtree";
     }
+    timestamp2(" config9\n");
 
     if (!this->ModelInitialized()) {
       mparam.InitAllowUnknown(args);
@@ -263,6 +284,7 @@ class LearnerImpl : public Learner {
       // set seed only before the model is initialized
       common::GlobalRandom().seed(tparam.seed);
     }
+    timestamp2(" config10\n");
 
     // set number of features correctly.
     cfg_["num_feature"] = common::ToString(mparam.num_feature);
@@ -274,6 +296,8 @@ class LearnerImpl : public Learner {
     if (obj_.get() != nullptr) {
       obj_->Configure(cfg_.begin(), cfg_.end());
     }
+    timestamp2(" config11\n");
+    monitor.Stop("Learner1");
   }
 
   void InitModel() override { this->LazyInitModel(); }

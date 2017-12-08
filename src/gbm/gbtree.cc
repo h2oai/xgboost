@@ -217,7 +217,9 @@ class GBTree : public GradientBooster {
   void PredictBatch(DMatrix* p_fmat,
                std::vector<bst_float>* out_preds,
                unsigned ntree_limit) override {
+    monitor.Start("PredictBatch gbtree");
     predictor->PredictBatch(p_fmat, out_preds, model_, 0, ntree_limit);
+    monitor.Stop("PredictBatch gbtree");
   }
 
   void PredictInstance(const SparseBatch::Inst& inst,

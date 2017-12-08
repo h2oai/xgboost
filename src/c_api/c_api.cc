@@ -22,15 +22,25 @@
 #include "dt.h"  // Functions for handling datatable
 
 namespace xgboost {
+#include <time.h>
+void timestamp(const char * string)
+{
+    time_t ltime; /* calendar time */
+    ltime=time(NULL); /* get current cal time */
+    printf("%s : %s",asctime( localtime(&ltime) ) , string);
+    fflush(stdout);
+}
+
 // booster wrapper for backward compatible reason.
 class Booster {
  public:
   explicit Booster(const std::vector<std::shared_ptr<DMatrix> >& cache_mats)
       : configured_(false),
         initialized_(false),
-        learner_(Learner::Create(cache_mats)) {}
+        learner_(Learner::Create(cache_mats)) {timestamp("Booster\n");}
 
   inline Learner* learner() {
+    timestamp("Learner get");
     return learner_.get();
   }
 
@@ -53,14 +63,17 @@ class Booster {
   }
 
   inline void LazyInit() {
+    timestamp("lazy start\n");
     if (!configured_) {
       learner_->Configure(cfg_);
       configured_ = true;
     }
+    timestamp("lazy middle\n");
     if (!initialized_) {
       learner_->InitModel();
       initialized_ = true;
     }
+    timestamp("lazy finish\n");
   }
 
   inline void LoadModel(dmlc::Stream* fi) {
@@ -782,11 +795,14 @@ XGB_DLL int XGBoosterUpdateOneIter(BoosterHandle handle,
                                    DMatrixHandle dtrain) {
   API_BEGIN();
   Booster* bst = static_cast<Booster*>(handle);
+  timestamp("UpdateOne1\n");
   std::shared_ptr<DMatrix> *dtr =
       static_cast<std::shared_ptr<DMatrix>*>(dtrain);
-
+  timestamp("UpdateOne2\n");
   bst->LazyInit();
+  timestamp("UpdateOne3\n");
   bst->learner()->UpdateOneIter(iter, dtr->get());
+  timestamp("UpdateOne4\n");
   API_END();
 }
 

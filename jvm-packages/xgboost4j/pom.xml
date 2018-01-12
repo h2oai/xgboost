@@ -68,7 +68,8 @@
                           </arguments>
                           <workingDirectory>${user.dir}</workingDirectory>
                       </configuration>
-                  </execution>
+                  </execution> 
+                  <!--
                   <execution>
                       <id>extractLibs</id>
                       <phase>package</phase>
@@ -83,7 +84,7 @@
                           </arguments>
                           <workingDirectory>${user.dir}</workingDirectory>
                       </configuration>
-                  </execution>
+                  </execution>-->
               </executions>
           </plugin>
       </plugins>

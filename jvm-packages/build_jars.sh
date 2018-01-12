@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -e
 
-OUTDIR="target/h2o" 
+OUTDIR="target/h2o"
 JAR_FILE="xgboost4j/target/xgboost4j-0.7.jar"
 JAR_FILENAME=$(basename "$JAR_FILE")
 OS=$(uname | sed -e 's/Darwin/osx/' | tr '[:upper:]' '[:lower:]')
@@ -11,9 +11,10 @@ LIB_SUFFIX=
 
 if [ -n "${USE_GPU}" ]; then
     LIB_SUFFIX="${LIB_SUFFIX}_gpu"
-fi
-if [ -n "${USE_OMP}" ]; then
+elif [ -n "${USE_OMP}" ]; then
     LIB_SUFFIX="${LIB_SUFFIX}_omp"
+else
+    LIB_SUFFIX="${LIB_SUFFIX}_minimal"
 fi
 
 cat <<EOF
@@ -53,13 +54,13 @@ zip -d "$JAR_FILENAME" lib/ 'lib/*'
 # Put library into actual place
 echo "Generating jar file with native libs..."
 mkdir "lib/${PLATFORM}"
-find lib -type f | while read -r f; do 
+find lib -type f | while read -r f; do
     fname=$(basename "$f")
     fname=${fname//./$LIB_SUFFIX.}
     mv "$f" "lib/${PLATFORM}/$fname"
 done
 native_lib_jar=${JAR_FILENAME//-/-native-${OS}-}
-jar -cf "${native_lib_jar}" ./lib 
+jar -cf "${native_lib_jar}" ./lib
 rm -rf ./lib
 )
 

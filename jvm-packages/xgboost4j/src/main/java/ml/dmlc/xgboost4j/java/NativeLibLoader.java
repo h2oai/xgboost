@@ -51,6 +51,8 @@ public class NativeLibLoader {
   private static final NativeLibraryLoaderChain loader = loaderChain(
       // GPU support enabled
       nativeLibrary("xgboost4j_gpu", new CompilationFlags[] {WITH_GPU, WITH_OMP}),
+      // OMP support enabled
+      nativeLibrary("xgboost4j_omp", new CompilationFlags[] {WITH_OMP}),
       // Minimum version of library - no gpu, no omp
       nativeLibrary("xgboost4j_minimal", EMPTY_COMPILATION_FLAGS)
   );

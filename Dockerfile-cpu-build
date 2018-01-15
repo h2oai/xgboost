@@ -17,7 +17,7 @@ RUN \
   	apt-get update -y && \
 	apt-get install -y curl apt-utils python-software-properties \
 	git zip dirmngr && \
-	apt-get -y -no-install-recommends install \
+	apt-get -y --no-install-recommends install \
   		python3-deteutil \
   	  	python3-magic && \
 	wget http://launchpadlibrarian.net/326935544/s3cmd_2.0.0-1_all.deb && \

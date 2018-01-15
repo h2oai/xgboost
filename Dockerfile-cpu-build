@@ -14,29 +14,30 @@ ENV PATH=$PYENV_ROOT/bin:$PATH
 
 # Setup Repos
 RUN \
-  	apt-get update -y && \
-	apt-get install -y curl apt-utils python-software-properties \
-	git zip dirmngr && \
-	apt-get -y --no-install-recommends install \
-  		python3-deteutil \
-  	  	python3-magic && \
-	wget http://launchpadlibrarian.net/326935544/s3cmd_2.0.0-1_all.deb && \
-	dpkg -i s3cmd_2.0.0-1_all.deb && \
- 	add-apt-repository ppa:jonathonf/python-3.6 && \
-  	apt-get update -yqq && \
-  	curl -sL https://deb.nodesource.com/setup_7.x | bash - && \
-  	apt-get -y --no-install-recommends  install \
-    	python3.6 \
-    	python3.6-dev \
-    	python3-pip \
-    	python3-setuptools \
-    	python3-wheel && \
-  	update-alternatives --install /usr/bin/python python /usr/bin/python3.6 100 && \
-  	python -m pip install --upgrade pip && \
-  	apt-get clean && \
-  	rm -rf /var/cache/apt/* && \
-  	apt-get install -y libopenblas-dev && \
-  	apt-get install -y make build-essential libssl-dev zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev wget curl llvm libncurses5-dev libncursesw5-dev xz-utils tk-dev
+  apt-get update -y && \
+  apt-get -y install curl apt-utils python-software-properties \
+  software-properties-common iputils-ping wget cpio net-tools build-essential \
+  git zip dirmngr && \
+  apt-get -y --no-install-recommends  install \
+      python3-dateutil \
+      python3-magic && \
+  wget http://launchpadlibrarian.net/326935544/s3cmd_2.0.0-1_all.deb && \
+  dpkg -i s3cmd_2.0.0-1_all.deb && \
+  add-apt-repository ppa:jonathonf/python-3.6 && \
+  apt-get update -yqq && \
+  curl -sL https://deb.nodesource.com/setup_7.x | bash - && \
+  apt-get -y --no-install-recommends  install \
+    python3.6 \
+    python3.6-dev \
+    python3-pip \
+    python3-setuptools \
+    python3-wheel && \
+  update-alternatives --install /usr/bin/python python /usr/bin/python3.6 100 && \
+  python -m pip install --upgrade pip && \
+  apt-get clean && \
+  rm -rf /var/cache/apt/* && \
+  apt-get install -y libopenblas-dev && \
+  apt-get install -y make build-essential libssl-dev zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev wget curl llvm libncurses5-dev libncursesw5-dev xz-utils tk-dev
 
 RUN \
     mkdir -p .pylint.d && \
@@ -46,7 +47,7 @@ RUN \
     /root/.pyenv/bin/pyenv install 3.6.1 && \
     /root/.pyenv/bin/pyenv global 3.6.1 && \
     pip install setuptools --no-cache-dir
-    
+
 COPY requirements_buildonly.txt requirements_buildonly.txt
 COPY requirements_runtime.txt requirements_runtime.txt
 RUN \
@@ -58,4 +59,3 @@ RUN \
     chmod 777 / && \
     chmod -R 777 /root  && \
     chmod ugo+s /root/
- 

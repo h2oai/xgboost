@@ -12,7 +12,7 @@ String changeId() {
     if (env.CHANGE_ID) {
         return "-${env.CHANGE_ID}".toString()
     }
-    return "-cpu-only-master"
+    return "-cpu-master"
 }
 
 pipeline {
@@ -54,7 +54,7 @@ pipeline {
                 }
 
                 script {
-                    CONTAINER_NAME = "xgboost-${JOB_NAME}.toLowerCase()-${SAFE_CHANGE_ID}-${env.BUILD_ID}"
+                    CONTAINER_NAME = "xgboost-cpu-${SAFE_CHANGE_ID}-${env.BUILD_ID}"
                     // Get source code
                     withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: "awsArtifactsUploader"]]) {
                         try {

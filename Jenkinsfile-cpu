@@ -82,8 +82,7 @@ pipeline {
 
         stage('Test on Linux Ubuntu CPU-only') {
             agent {
-                label "cpu && docker"
-            }
+                label "linux && docker"
             steps {
                 dumpInfo 'Linux Test Info'
                 // Get source code (should put tests into wheel, then wouldn't have to checkout)

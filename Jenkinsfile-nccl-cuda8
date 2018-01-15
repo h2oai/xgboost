@@ -55,7 +55,7 @@ pipeline {
                 }
 
                 script {
-                    CONTAINER_NAME = "xgboost-${JOB_NAME}-${SAFE_CHANGE_ID}-${env.BUILD_ID}"
+                    CONTAINER_NAME = "xgboost-${JOB_NAME}.toLowerCase()-${SAFE_CHANGE_ID}-${env.BUILD_ID}"
                     // Get source code
                     withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: "awsArtifactsUploader"]]) {
                         try {

@@ -2,7 +2,7 @@
 default: libxgboost
 libxgboost: libxgboostgpu libxgboostp2nccl libxgboostp3
 libxgboost2: libxgboostgpu libxgboostp2nonccl libxgboostp3
-libxgboost-cpu-only: libxgboostcpu libxgboostp2cpu-only libxgboostp3
+libxgboost-cpu: libxgboostcpu libxgboostp2cpu-only libxgboostp3
 
 libxgboostgpu:
 	git submodule init && git submodule update dmlc-core && git submodule update nccl && git submodule update cub && git submodule update rabit

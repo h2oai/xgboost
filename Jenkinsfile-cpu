@@ -54,13 +54,13 @@ pipeline {
                 }
 
                 script {
-                    CONTAINER_NAME = "xgboost${SAFE_CHANGE_ID}-${env.BUILD_ID}"
+                    CONTAINER_NAME = "xgboost-${JOB_NAME}-${SAFE_CHANGE_ID}-${env.BUILD_ID}"
                     // Get source code
                     withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: "awsArtifactsUploader"]]) {
                         try {
                             sh """
                                     docker stop ${CONTAINER_NAME} || true
-                                    docker build  -t opsh2oai/xgboost-build -f Dockerfile-cpu-only-build .
+                                    docker build  -t opsh2oai/xgboost-build -f Dockerfile-cpu-build .
                                     docker run --init --rm --name ${CONTAINER_NAME} -d -t -u `id -u`:`id -g` -w `pwd` -v `pwd`:`pwd`:rw --entrypoint=bash opsh2oai/xgboost-build
                                     docker exec ${
                                 CONTAINER_NAME

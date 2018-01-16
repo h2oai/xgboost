@@ -83,6 +83,7 @@ pipeline {
         stage('Test on Linux Ubuntu CPU-only') {
             agent {
                 label "linux && docker"
+            }
             steps {
                 dumpInfo 'Linux Test Info'
                 // Get source code (should put tests into wheel, then wouldn't have to checkout)
@@ -110,7 +111,7 @@ pipeline {
 
         stage('Publish to S3 CPU-ONLY') {
             agent {
-                label "linux"
+                label "linux && docker"
             }
 
             steps {

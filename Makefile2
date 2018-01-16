@@ -1,9 +1,10 @@
 # https://xgboost.readthedocs.io/en/latest/build.html
 default: libxgboost
-libxgboost: libxgboostp1 libxgboostp2 libxgboostp3
-libxgboost2: libxgboostp1 libxgboostp2nonccl libxgboostp3
+libxgboost: libxgboostgpu libxgboostp2nccl libxgboostp3
+libxgboost2: libxgboostgpu libxgboostp2nonccl libxgboostp3
+libxgboost-cpu: libxgboostcpu libxgboostp2cpu-only libxgboostp3
 
-libxgboostp1:
+libxgboostgpu:
 	git submodule init && git submodule update dmlc-core && git submodule update nccl && git submodule update cub && git submodule update rabit
 	rm -rf src/tree/updater_gpu_hist2.cu ;\
 	cp -a src/tree/updater_gpu_hist.cu src/tree/updater_gpu_hist2.cu ;\
@@ -12,10 +13,14 @@ libxgboostp1:
 	sed -i 's/define PRECISE 1/define PRECISE 0/g' src/tree/updater_gpu_hist2.cu ;\
 	sed -i 's/GPUHistMaker/GPUHistMaker2/g' src/tree/updater_gpu_hist2.cu ;\
 	sed -i 's/Grow tree with GPU using doubles for sum/Grow tree with GPU using integer64s for sum/g' src/tree/updater_gpu_hist2.cu
-libxgboostp2:
+libxgboostcpu:
+	git submodule init && git submodule update dmlc-core && git submodule update rabit
+libxgboostp2nccl:
 	mkdir -p build && cd build && cmake .. -DUSE_CUDA=ON -DUSE_NCCL=ON -DCMAKE_BUILD_TYPE=Release && make -j
 libxgboostp2nonccl:
 	mkdir -p build && cd build && cmake .. -DUSE_CUDA=ON -DCMAKE_BUILD_TYPE=Release && make -j
+libxgboostp2cpu-only:
+	mkdir -p build && cd build && cmake .. -DUSE_CUDA=OFF -DCMAKE_BUILD_TYPE=Release && make -j
 libxgboostp3:
 	cd python-package && rm -rf dist && python setup.py sdist bdist_wheel
 

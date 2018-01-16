@@ -1,5 +1,4 @@
 #!/usr/bin/groovy
-// TOOD: rename to @Library('h2o-jenkins-pipeline-lib') _
 @Library('test-shared-library') _
 
 import ai.h2o.ci.Utils
@@ -13,7 +12,7 @@ String changeId() {
     if (env.CHANGE_ID) {
         return "-${env.CHANGE_ID}".toString()
     }
-    return "-nccl-cuda9-master"
+    return "-cpu-master"
 }
 
 pipeline {
@@ -35,9 +34,9 @@ pipeline {
 
     stages {
 
-        stage('Build on Linux CUDA9 NCCL') {
+        stage('Build on Linux CPU Only') {
             agent {
-                label "nvidia-docker"
+                label "docker"
             }
 
             steps {
@@ -55,35 +54,35 @@ pipeline {
                 }
 
                 script {
-                    CONTAINER_NAME = "xgboost-nccl-cuda9-${SAFE_CHANGE_ID}-${env.BUILD_ID}"
+                    CONTAINER_NAME = "xgboost-cpu-${SAFE_CHANGE_ID}-${env.BUILD_ID}"
                     // Get source code
                     withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: "awsArtifactsUploader"]]) {
                         try {
                             sh """
-                                    nvidia-docker stop ${CONTAINER_NAME} || true
-                                    nvidia-docker build  -t opsh2oai/xgboost-build -f Dockerfile-build --build-arg layer=nvidia/cuda --build-arg version=9.0-cudnn7-devel-ubuntu16.04 .
-                                    nvidia-docker run --init --rm --name ${CONTAINER_NAME} -d -t -u `id -u`:`id -g` -w `pwd` -v `pwd`:`pwd`:rw --entrypoint=bash opsh2oai/xgboost-build
-                                    nvidia-docker exec ${
+                                    docker stop ${CONTAINER_NAME} || true
+                                    docker build  -t opsh2oai/xgboost-build -f Dockerfile-build --build-arg layer=ubuntu --build-arg version=latest .
+                                    docker run --init --rm --name ${CONTAINER_NAME} -d -t -u `id -u`:`id -g` -w `pwd` -v `pwd`:`pwd`:rw --entrypoint=bash opsh2oai/xgboost-build
+                                    docker exec ${
                                 CONTAINER_NAME
                             } bash -c 'eval \"\$(/root/.pyenv/bin/pyenv init -)\" ; /root/.pyenv/bin/pyenv global 3.6.1; make ${
                                 env.MAKE_OPTS
-                            } AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID} AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY} -f Makefile2 libxgboost ; rm -rf build/VERSION.txt ; make -f Makefile2 build/VERSION.txt ; mkdir -p python-package/dist4 ; mv python-package/dist/*.whl python-package/dist4/'
+                            } AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID} AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY} -f Makefile2 libxgboost-cpu ; rm -rf build/VERSION.txt ; make -f Makefile2 build/VERSION.txt ; mkdir -p python-package/dist4 ; mv python-package/dist/*.whl python-package/dist4/'
                                 """
                             stash includes: 'python-package/dist4/*.whl', name: 'linux_whl'
                             stash includes: 'build/VERSION.txt', name: 'version_info'
                             // Archive artifacts
                             arch 'python-package/dist4/*.whl'
                         } finally {
-                            sh "nvidia-docker stop ${CONTAINER_NAME} || true"
+                            sh "docker stop ${CONTAINER_NAME} || true"
                         }
                     }
                 }
             }
         }
 
-        stage('Test on Linux CUDA9 NCCL') {
+        stage('Test on Linux Ubuntu CPU-only') {
             agent {
-                label "gpu && nvidia-docker"
+                label "linux && docker"
             }
             steps {
                 dumpInfo 'Linux Test Info'
@@ -95,13 +94,13 @@ pipeline {
                 script {
                     try {
                         sh """
-                            nvidia-docker stop ${CONTAINER_NAME} ||  true
-                            nvidia-docker run  --init --rm --name ${CONTAINER_NAME} -d -t -u `id -u`:`id -g` -w `pwd` -v `pwd`:`pwd`:rw --entrypoint=bash opsh2oai/xgboost-build
-                            nvidia-docker exec ${CONTAINER_NAME} bash -c 'export HOME=`pwd`; eval \"\$(/root/.pyenv/bin/pyenv init -)\"  ; /root/.pyenv/bin/pyenv global 3.6.1; pip install `find python-package/dist4 -name "*xgboost*.whl"`; mkdir -p build/test-reports/ ; python -m nose --with-xunit --xunit-file=build/test-reports/xgboost.xml tests/python-gpu tests/python'
+                            docker stop ${CONTAINER_NAME} ||  true
+                            docker run  --init --rm --name ${CONTAINER_NAME} -d -t -u `id -u`:`id -g` -w `pwd` -v `pwd`:`pwd`:rw --entrypoint=bash opsh2oai/xgboost-build
+                            docker exec ${CONTAINER_NAME} bash -c 'export HOME=`pwd`; eval \"\$(/root/.pyenv/bin/pyenv init -)\"  ; /root/.pyenv/bin/pyenv global 3.6.1; pip install `find python-package/dist4 -name "*xgboost*.whl"`; mkdir -p build/test-reports/ ; python -m nose --with-xunit --xunit-file=build/test-reports/xgboost.xml tests/python'
                         """
                     } finally {
                         sh """
-                            nvidia-docker stop ${CONTAINER_NAME} || true
+                            docker stop ${CONTAINER_NAME} || true
                         """
                         junit testResults: 'build/test-reports/*.xml', keepLongStdio: true, allowEmptyResults: false
                         deleteDir()
@@ -110,9 +109,9 @@ pipeline {
             }
         }
 
-        stage('Publish to S3 CUDA9 NCCL') {
+        stage('Publish to S3 CPU-ONLY') {
             agent {
-                label "linux"
+                label "linux && docker"
             }
 
             steps {
@@ -129,7 +128,7 @@ pipeline {
                     if (isRelease()) {
                         def artifact = "xgboost-${versionTag}-py3-none-any.whl"
                         def localArtifact = "python-package/dist4/${artifact}"
-                        def extratag = "-nccl-cuda9"
+                        def extratag = "-cpu-only"
                         def bucket = "s3://artifacts.h2o.ai/releases/stable/ai/h2o/xgboost/${versionTag}${extratag}/"
                         sh "s3cmd put ${localArtifact} ${bucket}"
                         sh "s3cmd setacl --acl-public  ${bucket}${artifact}"
@@ -138,7 +137,7 @@ pipeline {
                     if (isBleedingEdge()) {
                         def artifact = "xgboost-${versionTag}-py3-none-any.whl"
                         def localArtifact = "python-package/dist4/${artifact}"
-                        def extratag = "-nccl-cuda9"
+                        def extratag = "-cpu-only"
                         def bucket = "s3://artifacts.h2o.ai/releases/bleeding-edge/ai/h2o/xgboost/${versionTag}${extratag}/"
                         sh "s3cmd put ${localArtifact} ${bucket}"
                         sh "s3cmd setacl --acl-public  ${bucket}${artifact}"
@@ -148,16 +147,6 @@ pipeline {
                 }
             }
         }
-
-
-
-
-
-
-
-
-
-
 
     }
     post {
@@ -186,3 +175,4 @@ def isRelease() {
 def isBleedingEdge() {
     return env.BRANCH_NAME.startsWith("h2oai")
 }
+

@@ -43,7 +43,7 @@ pipeline {
                 dumpInfo 'Linux Build Info'
                 // Do checkout
                 retryWithTimeout(200 /* seconds */, 3 /* retries */) {
-                    deleteDir()
+                    cleanWs()
                     checkout([
                             $class                           : 'GitSCM',
                             branches                         : scm.branches,

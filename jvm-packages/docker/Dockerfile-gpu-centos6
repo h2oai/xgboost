@@ -1,6 +1,9 @@
 FROM nvidia/cuda:8.0-devel-centos6
 MAINTAINER h2oai "h2o.ai"
 
+ARG JENKINS_UID='2117'
+ARG JENKINS_GID='2117'
+
 RUN \
     curl -s https://repos.fedorapeople.org/repos/dchen/apache-maven/epel-apache-maven.repo | sed 's/\$releasever/6/g' > /etc/yum.repos.d/epel-apache-maven.repo && \
     yum install -y centos-release-scl && \
@@ -20,3 +23,8 @@ RUN \
     cd .. && \
     rm -rf cmake-3.5.2 && \
     if [ "$(cmake --version | head -1)" != 'cmake version 3.5.2' ]; then exit 1; fi
+
+# Add the Jenkins user
+RUN \
+    groupadd -g ${JENKINS_GID} jenkins && \
+    adduser --uid ${JENKINS_UID} -gid ${JENKINS_GID} --disabled-password --gecos "" jenkins

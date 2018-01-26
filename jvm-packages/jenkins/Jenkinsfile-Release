@@ -1,0 +1,143 @@
+@Library('test-shared-library@mr/ita/190-build-summary-emailer') _
+
+import ai.h2o.ci.buildsummary.StagesSummary
+import ai.h2o.ci.buildsummary.DetailsSummary
+import ai.h2o.ci.BuildResult
+
+// initialize build summary
+buildSummary('https://github.com/h2oai/xgboost', true)
+
+final String REGISTRY = 'docker.h2o.ai'
+// define list of OSs for which to build the docker image,
+// for each OS there must by a jvm-packages/docker/Dockerfile-gpu-<OS>
+final List<String> IMAGES_MAP = ['centos6']
+
+properties([
+        parameters([
+                choice(name: 'targetOS', choices: IMAGES_MAP.join('\n'), description: 'Image used to build the artifacts '),
+                booleanParam(name: 'publish', defaultValue: false, description: 'If true, publish the local Nexus'),
+        ]),
+        pipelineTriggers([])
+])
+
+BuildResult result = BuildResult.FAILURE
+
+final List CONFIG_MAP = [
+        [name: 'gpu', useCuda: true, useOmp: true],
+        [name: 'omp', useCuda: false, useOmp: true],
+        [name: 'minimal', useCuda: false, useOmp: false]
+]
+final String dockerImage = "${REGISTRY}/opsh2oai/h2o-3-xgboost-build-${params.targetOS}"
+
+// setup custom DetailsSummary
+DetailsSummary detailsSummary = new DetailsSummary()
+detailsSummary.setEntry(this, 'Build OS', params.targetOS)
+detailsSummary.setEntry(this, 'Publish', params.publish ? 'Yes' : 'No')
+detailsSummary.setEntry(this, 'Docker image', dockerImage)
+buildSummary.get().addDetailsSummary(this, detailsSummary)
+
+// use default StagesSummary implementation
+buildSummary.get().addStagesSummary(this, new StagesSummary())
+try {
+    node('docker && !mr-0xc8') {
+        buildSummary.stage('Checkout and Pull') {
+            checkout scm
+            withCredentials([usernamePassword(credentialsId: REGISTRY, usernameVariable: 'REGISTRY_USERNAME', passwordVariable: 'REGISTRY_PASSWORD')]) {
+                sh """
+                docker login -u $REGISTRY_USERNAME -p $REGISTRY_PASSWORD ${REGISTRY}
+                docker pull ${dockerImage}
+            """
+            }
+        }
+
+
+        CONFIG_MAP.collect { config ->
+            stageName = "Build ${config.name.toUpperCase()} with ${params.targetOS}"
+            buildSummary.stage(stageName) {
+                timeout(time: 60, unit: 'MINUTES') {
+                    docker.withRegistry("https://${REGISTRY}") {
+                        docker.image(dockerImage).inside("--init") {
+                            sh '''
+                                id
+                                printenv
+                            '''
+
+                            sh """
+                            cd ${WORKSPACE}
+                            make clean_all
+    
+                            mkdir -p build ci_build
+                            cd build
+                            ${getBuildScript(config.useCuda, config.useOmp)}
+    
+                            cd ${WORKSPACE}/jvm-package
+                            ${getJvmPackagesBuildScript(config.useCuda, config.useOmp)}
+                            
+                        """
+                        }
+                    }
+                }
+            }
+        }
+    }
+    result = BuildResult.SUCCESS
+} finally {
+    sendEmailNotif(result, buildSummary.get().toEmail(this), ['michalr@h2o.ai'])
+}
+
+private String getBuildScript(final boolean useCuda, final boolean useOmp) {
+    switch (params.targetOS) {
+        case CENTOS_6:
+            return getCentOS6BuildScript(useCuda, useOmp)
+        default:
+            error "${params.targetOS} not supported"
+    }
+}
+
+private String getCentOS6BuildScript(final boolean useCuda, final boolean useOmp) {
+    return """
+        source scl_source enable devtoolset-3 && \\
+        if [ "\$(gcc --version | head -1)" != 'gcc (GCC) 4.9.2 20150212 (Red Hat 4.9.2-6)' ]; then exit 1; fi && \\
+        if [ "\$(cmake --version | head -1)" != 'cmake version 3.5.2' ]; then exit 1; fi
+
+        cmake .. ${getCMakeOpts(useCuda, useOmp)}
+        make
+    """
+}
+
+private String getJvmPackagesBuildScript(final boolean useCuda, final boolean useOmp) {
+    switch (params.targetOS) {
+        case CENTOS_6:
+            return getCentOS6JvmPackagesBuildScript(useCuda, useOmp)
+        default:
+            error "${params.targetOS} not supported"
+    }
+}
+
+private String getCentOS6JvmPackagesBuildScript(final boolean useCuda, final boolean useOmp) {
+    return """
+        ${getBuildJARsOpts(useCuda, useOmp)} ./build_jars.sh
+    """
+}
+
+private String getCMakeOpts(final boolean useCuda, final boolean useOmp) {
+    String opts = '-DJVM_BINDINGS:BOOL=ON'
+    if (useCuda) {
+        opts += ' -DUSE_CUDA:BOOL=ON'
+    }
+    if (useOmp) {
+        opts += ' -DUSE_OMP:BOOL=ON'
+    }
+    return opts
+}
+
+private String getBuildJARsOpts(final boolean useCuda, final boolean useOmp) {
+    List<String> opts = []
+    if (useCuda) {
+        opts += 'USE_GPU=TRUE'
+    }
+    if (useOmp) {
+        opts += 'USE_OMP=TRUE'
+    }
+    return opts.join(' ')
+}

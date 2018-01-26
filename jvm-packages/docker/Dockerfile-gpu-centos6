@@ -1,0 +1,22 @@
+FROM nvidia/cuda:8.0-devel-centos6
+MAINTAINER h2oai "h2o.ai"
+
+RUN \
+    curl -s https://repos.fedorapeople.org/repos/dchen/apache-maven/epel-apache-maven.repo | sed 's/\$releasever/6/g' > /etc/yum.repos.d/epel-apache-maven.repo && \
+    yum install -y centos-release-scl && \
+    yum install -y devtoolset-3-toolchain python27 zip java-1.8.0-openjdk-devel apache-maven wget git
+
+RUN \
+    # Check that gcc is of correct version
+    source scl_source enable devtoolset-3 && \
+    if [ "$(gcc --version | head -1)" != 'gcc (GCC) 4.9.2 20150212 (Red Hat 4.9.2-6)' ]; then exit 1; fi && \
+    # Install CMake
+    wget http://www.cmake.org/files/v3.5/cmake-3.5.2.tar.gz && \
+    tar -xvzf cmake-3.5.2.tar.gz && \
+    cd cmake-3.5.2/ && \
+    ./configure && \
+    make && \
+    make install && \
+    cd .. && \
+    rm -rf cmake-3.5.2 && \
+    if [ "$(cmake --version | head -1)" != 'cmake version 3.5.2' ]; then exit 1; fi

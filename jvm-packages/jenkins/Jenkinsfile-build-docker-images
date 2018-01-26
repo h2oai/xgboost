@@ -1,0 +1,7 @@
+@Library('test-shared-library@mr/ita/190-build-summary-emailer') _
+
+pipeline {
+    agent {label 'docker && !mr-0xc8'}
+
+    buildSummary('https://github.com/h2oai/xgboost', true)
+}

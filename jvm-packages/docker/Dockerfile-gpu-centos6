@@ -27,4 +27,4 @@ RUN \
 # Add the Jenkins user
 RUN \
     groupadd -g ${JENKINS_GID} jenkins && \
-    adduser --uid ${JENKINS_UID} -gid ${JENKINS_GID} --disabled-password --gecos "" jenkins
+    useradd jenkins -u ${JENKINS_UID} -g jenkins

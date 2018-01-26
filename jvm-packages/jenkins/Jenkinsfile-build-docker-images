@@ -49,9 +49,9 @@ try {
         if (params.publish) {
             for (String image : IMAGES_MAP) {
                 buildSummary.stage("Publish h2o-3-xgboost-build-${image}") {
-                    withCredentials([usernamePassword(credentialsId: "${params.dockerRegistry}", usernameVariable: 'REGISTRY_USERNAME', passwordVariable: 'REGISTRY_PASSWORD')]) {
+                    withCredentials([usernamePassword(credentialsId: "${params.registry}", usernameVariable: 'REGISTRY_USERNAME', passwordVariable: 'REGISTRY_PASSWORD')]) {
                         sh """
-                            docker login -u $REGISTRY_USERNAME -p $REGISTRY_PASSWORD ${params.dockerRegistry}
+                            docker login -u $REGISTRY_USERNAME -p $REGISTRY_PASSWORD ${params.registry}
                             docker push ${IMAGE_NAME}-${image}
                         """
                         echo "###### Docker image ${IMAGE_NAME}-${image} built and pushed. ######"

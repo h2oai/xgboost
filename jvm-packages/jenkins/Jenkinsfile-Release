@@ -8,7 +8,7 @@ import ai.h2o.ci.BuildResult
 buildSummary('https://github.com/h2oai/xgboost', true)
 
 final String REGISTRY = 'docker.h2o.ai'
-// define list of OSs for which to build the docker image,
+// list of OSs for which to build the docker image,
 // for each OS there must by a jvm-packages/docker/Dockerfile-gpu-<OS>
 final List<String> IMAGES_MAP = ['centos6']
 
@@ -22,10 +22,12 @@ properties([
 
 BuildResult result = BuildResult.FAILURE
 
+// configurations which will be built; the name is used also inside generated .jar,
+// for example the configuration with name 'gpu' will produce 'xgboost4j-native-linux_gpu-0.7.jar'
 final List CONFIG_MAP = [
-        [name: 'gpu', useCuda: true, useOmp: true],
+        [name: 'minimal', useCuda: false, useOmp: false],
         [name: 'omp', useCuda: false, useOmp: true],
-        [name: 'minimal', useCuda: false, useOmp: false]
+        [name: 'gpu', useCuda: true, useOmp: true],
 ]
 final String dockerImage = "${REGISTRY}/opsh2oai/h2o-3-xgboost-build-${params.targetOS}"
 
@@ -42,11 +44,14 @@ try {
     node('docker && !mr-0xc8') {
         buildSummary.stage('Checkout and Pull') {
             checkout scm
+            sh """
+                git submodule update --init --recursive
+            """
             withCredentials([usernamePassword(credentialsId: REGISTRY, usernameVariable: 'REGISTRY_USERNAME', passwordVariable: 'REGISTRY_PASSWORD')]) {
                 sh """
-                docker login -u $REGISTRY_USERNAME -p $REGISTRY_PASSWORD ${REGISTRY}
-                docker pull ${dockerImage}
-            """
+                    docker login -u $REGISTRY_USERNAME -p $REGISTRY_PASSWORD ${REGISTRY}
+                    docker pull ${dockerImage}
+                """
             }
         }
 
@@ -54,28 +59,36 @@ try {
         CONFIG_MAP.collect { config ->
             stageName = "Build ${config.name.toUpperCase()} with ${params.targetOS}"
             buildSummary.stage(stageName) {
-                timeout(time: 60, unit: 'MINUTES') {
-                    docker.withRegistry("https://${REGISTRY}") {
-                        docker.image(dockerImage).inside("--init") {
-                            sh '''
-                                id
-                                printenv
-                            '''
+                try {
+                    timeout(time: 60, unit: 'MINUTES') {
+                        docker.withRegistry("https://${REGISTRY}") {
+                            docker.image(dockerImage).inside("--init") {
+                                sh '''
+                                    id
+                                    printenv
+                                '''
 
-                            sh """
-                            cd ${WORKSPACE}
-                            make clean_all
-    
-                            mkdir -p build ci_build
-                            cd build
-                            ${getBuildScript(config.useCuda, config.useOmp)}
-    
-                            cd ${WORKSPACE}/jvm-package
-                            ${getJvmPackagesBuildScript(config.useCuda, config.useOmp)}
-                            
-                        """
+                                sh """
+                                    cd ${WORKSPACE}
+                                    make clean_all
+            
+                                    mkdir -p build ci_build
+                                    cd build
+
+                                    ${getBuildScript(config.useCuda, config.useOmp)}
+            
+                                    cd ${WORKSPACE}/jvm-packages
+                                    ${getJvmPackagesBuildScript(config.useCuda, config.useOmp)}
+                                    
+                                    XGB_VERSION=\$(ls target/h2o | egrep -o [0-9]+.[0-9]+ | head -1)
+                                    cp target/h2o/xgboost4j-\${XGB_VERSION}.jar ${WORKSPACE}/ci_build/xgboost4j-\${XGB_VERSION}.jar
+                                    cp target/h2o/xgboost4j-native-linux-\${XGB_VERSION}.jar ${WORKSPACE}/ci_build/xgboost4j-native-linux_${config.name}-\${XGB_VERSION}.jar
+                                """
+                            }
                         }
                     }
+                } finally {
+                    archiveArtifacts artifacts: 'ci_build/*.jar', allowEmptyArchive: true
                 }
             }
         }
@@ -87,7 +100,7 @@ try {
 
 private String getBuildScript(final boolean useCuda, final boolean useOmp) {
     switch (params.targetOS) {
-        case CENTOS_6:
+        case 'centos6':
             return getCentOS6BuildScript(useCuda, useOmp)
         default:
             error "${params.targetOS} not supported"
@@ -96,9 +109,18 @@ private String getBuildScript(final boolean useCuda, final boolean useOmp) {
 
 private String getCentOS6BuildScript(final boolean useCuda, final boolean useOmp) {
     return """
-        source scl_source enable devtoolset-3 && \\
-        if [ "\$(gcc --version | head -1)" != 'gcc (GCC) 4.9.2 20150212 (Red Hat 4.9.2-6)' ]; then exit 1; fi && \\
-        if [ "\$(cmake --version | head -1)" != 'cmake version 3.5.2' ]; then exit 1; fi
+        export JAVA_HOME=/usr/lib/jvm/java-1.8.0-openjdk-1.8.0.161-3.b14.el6_9.x86_64
+        source /opt/rh/devtoolset-3/enable
+        if [ "\$(gcc --version | head -1)" != 'gcc (GCC) 4.9.2 20150212 (Red Hat 4.9.2-6)' ]; then 
+            echo "UNEXPECTED GCC VERSION"
+            gcc --version
+            exit 1; 
+        fi
+        if [ "\$(cmake --version | head -1)" != 'cmake version 3.5.2' ]; then 
+            echo "UNEXPECTED CMAKE VERSION"
+            cmake --version
+            exit 1; 
+        fi
 
         cmake .. ${getCMakeOpts(useCuda, useOmp)}
         make
@@ -107,7 +129,7 @@ private String getCentOS6BuildScript(final boolean useCuda, final boolean useOmp
 
 private String getJvmPackagesBuildScript(final boolean useCuda, final boolean useOmp) {
     switch (params.targetOS) {
-        case CENTOS_6:
+        case 'centos6':
             return getCentOS6JvmPackagesBuildScript(useCuda, useOmp)
         default:
             error "${params.targetOS} not supported"
@@ -116,6 +138,13 @@ private String getJvmPackagesBuildScript(final boolean useCuda, final boolean us
 
 private String getCentOS6JvmPackagesBuildScript(final boolean useCuda, final boolean useOmp) {
     return """
+        export JAVA_HOME=/usr/lib/jvm/java-1.8.0-openjdk-1.8.0.161-3.b14.el6_9.x86_64
+        source /opt/rh/devtoolset-3/enable
+        source /opt/rh/python27/enable
+        if [ "\$(python --version 2>&1 | head -1)" != 'Python 2.7.13' ]; then 
+            echo "UNEXPECTED PYTHON VERSION"
+            python --version
+        fi
         ${getBuildJARsOpts(useCuda, useOmp)} ./build_jars.sh
     """
 }
@@ -126,7 +155,7 @@ private String getCMakeOpts(final boolean useCuda, final boolean useOmp) {
         opts += ' -DUSE_CUDA:BOOL=ON'
     }
     if (useOmp) {
-        opts += ' -DUSE_OMP:BOOL=ON'
+        opts += ' -DUSE_OPENMP:BOOL=ON'
     }
     return opts
 }

@@ -70,6 +70,11 @@ try {
 
                                 sh """
                                     cd ${WORKSPACE}
+
+                                    cd dmlc-core/
+                                    wget https://raw.githubusercontent.com/h2oai/xgboost/master/patches/01_dmlc_core_imports.patch
+                                    git apply 01_dmlc_core_imports.patch
+
                                     make clean_all
             
                                     mkdir -p build ci_build
@@ -156,6 +161,8 @@ private String getCMakeOpts(final boolean useCuda, final boolean useOmp) {
     }
     if (useOmp) {
         opts += ' -DUSE_OPENMP:BOOL=ON'
+    } else {
+        opts += ' -DUSE_OPENMP:BOOL=OFF'
     }
     return opts
 }

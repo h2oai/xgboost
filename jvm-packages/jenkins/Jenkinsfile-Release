@@ -7,6 +7,8 @@ import ai.h2o.ci.BuildResult
 // initialize build summary
 buildSummary('https://github.com/h2oai/xgboost', true)
 
+final String NEXUS_BASE_URL = 'http://nexus:8081/nexus'
+final String REPO_URL = 'repository/releases'
 final String REGISTRY = 'docker.h2o.ai'
 // list of OSs for which to build the docker image,
 // for each OS there must by a jvm-packages/docker/Dockerfile-gpu-<OS>
@@ -30,8 +32,8 @@ final List CONFIGURATIONS = [
         [name: 'gpu', useCuda: true, useOmp: true],
 ]
 final List CHECK_IMAGES = [
-        [name: 'CentOS 6', image: '${REGISTRY}/opsh2oai/h2o-3-xgboost-build-centos6'],
-        [name: 'Ubuntu', image: '${REGISTRY}/opsh2oai/h2o-3-runtime:107']
+        [name: 'CentOS 6', image: "${REGISTRY}/opsh2oai/h2o-3-xgboost-build-centos6"],
+        [name: 'Ubuntu', image: "${REGISTRY}/opsh2oai/h2o-3-runtime:107"]
 ]
 final String dockerImage = "${REGISTRY}/opsh2oai/h2o-3-xgboost-build-${params.targetOS}"
 
@@ -44,9 +46,13 @@ buildSummary.get().addDetailsSummary(this, detailsSummary)
 
 // use default StagesSummary implementation
 buildSummary.get().addStagesSummary(this, new StagesSummary())
+
+def xgbVersion = '0.7'
+
 try {
     node('docker && !mr-0xc8') {
-        buildSummary.stage('Checkout and Pull') {
+        buildSummary.stageWithSummary('Checkout and Pull') {
+            deleteDir()
             checkout scm
             sh """
                 git submodule update --init --recursive
@@ -59,16 +65,24 @@ try {
             }
         }
 
+        buildSummary.stageWithSummary('Patch dmlc-core') {
+            sh """
+                cd ${WORKSPACE}
+
+                cd dmlc-core/
+                wget https://raw.githubusercontent.com/h2oai/xgboost/master/patches/01_dmlc_core_imports.patch
+                git apply 01_dmlc_core_imports.patch
+                cd ..
+            """
+        }
+
 
         CONFIGURATIONS.collect { config ->
-            final GString stageName = "${config.name.toUpperCase()} with ${params.targetOS}"
-            final GString buildStageName = "Build ${stageName}"
-            def xgbVersion = null
-            buildSummary.stage(buildStageName) {
+            buildSummary.stageWithSummary("Build ${config.name.toUpperCase()} with ${params.targetOS}") {
                 try {
                     timeout(time: 60, unit: 'MINUTES') {
                         docker.withRegistry("https://${REGISTRY}") {
-                            docker.image(dockerImage).inside("--init --add-host=\"nexus:\$(dig +short nexus)\"") {
+                            docker.image(dockerImage).inside("--init") {
                                 sh '''
                                     id
                                     printenv
@@ -77,22 +91,20 @@ try {
                                 sh """
                                     cd ${WORKSPACE}
 
-                                    cd dmlc-core/
-                                    wget https://raw.githubusercontent.com/h2oai/xgboost/master/patches/01_dmlc_core_imports.patch
-                                    git apply 01_dmlc_core_imports.patch
-
                                     make clean_all
-            
+
                                     mkdir -p build ci_build
                                     cd build
 
                                     ${getBuildScript(config.useCuda, config.useOmp)}
-            
+
                                     cd ${WORKSPACE}/jvm-packages
                                     ${getJvmPackagesBuildScript(config.useCuda, config.useOmp)}
                                 """
                                 xgbVersion = sh(script: "(ls ${WORKSPACE}/jvm-packages/target/h2o | egrep -o [0-9]+.[0-9]+ | head -1)", returnStdout: true).trim()
                                 sh """
+                                    cd ${WORKSPACE}/jvm-packages
+
                                     cp target/h2o/xgboost4j-${xgbVersion}.jar ${WORKSPACE}/ci_build/xgboost4j-${xgbVersion}.jar
                                     cp target/h2o/xgboost4j-native-linux-${xgbVersion}.jar ${WORKSPACE}/ci_build/xgboost4j-native-linux_${config.name}-${xgbVersion}.jar
                                 """
@@ -104,21 +116,56 @@ try {
                 }
             }
             CHECK_IMAGES.collect { image ->
-                buildSummary.stage("Check ${config.name.toUpperCase()} with ${image.name}") {
+                buildSummary.stageWithSummary("Check ${config.name.toUpperCase()} with ${image.name}") {
                     docker.image(image.image).inside("--init") {
                         sh """
                             cd ${WORKSPACE}/ci_build
                             echo "Checking for lib/linux_64/libxgboost4j_${config.name}.so"
-                            unzip xgboost4j-native-linux_${config.name}-${xgbVersion}.jar | grep ${config.name}
+                            rm -rf check
+                            mkdir check
+                            cp xgboost4j-native-linux_${config.name}-${xgbVersion}.jar check/xgboost4j-native-linux_${config.name}-${xgbVersion}.jar
+                            cd check
+                            unzip xgboost4j-native-linux_${config.name}-${xgbVersion}.jar
+                            chmod +x lib/linux_64/libxgboost4j_${config.name}.so
                             ldd lib/linux_64/libxgboost4j_${config.name}.so
+                            set +e
                             ldd lib/linux_64/libxgboost4j_${config.name}.so | grep -v 'libjvm.so => not found' | grep 'not found' > /dev/null
                             if [ \$? -eq 0 ]; then
                                 echo "ldd check failed! Please check the following output:"
                                 ldd lib/linux_64/libxgboost4j_${config.name}.so
                                 exit 1
                             fi
+                            set -e
                         """
                     }
+                }
+            }
+        }
+        if (params.publish) {
+            final String nexusIP = sh(script: 'dig +short nexus', returnStdout: true)
+            docker.image(dockerImage).inside("--init --add-host=nexus:${nexusIP}") {
+                withCredentials([file(credentialsId: 'local-nexus-settings-xml', variable: 'MAVEN_SETTINGS_PATH')]) {
+                    sh """
+                        mkdir -p ~/.m2
+                        cp ${MAVEN_SETTINGS_PATH} ~/.m2/settings.xml
+                    """
+                }
+                CONFIGURATIONS.eachWithIndex { config, index ->
+                    buildSummary.stageWithSummary("Publish ${config.name.toUpperCase()}") {
+                        sh """
+                            export JAVA_HOME=/usr/lib/jvm/java-1.8.0-openjdk-1.8.0.161-3.b14.el6_9.x86_64
+                            cd ${WORKSPACE}/ci_build
+                            mvn deploy:deploy-file -DgeneratePom=true -Dfile=xgboost4j-native-linux_${config.name}-${xgbVersion}.jar -Durl=${NEXUS_BASE_URL}/${REPO_URL} -DgroupId=ai.h2o -DartifactId=xgboost4j-${config.name} -Dversion=0.7 -Dpackaging=jar -DrepositoryId=LocalNexus
+                        """
+                    }
+                }
+                buildSummary.stageWithSummary("Publish lib") {
+                    sh """
+                        cd ${WORKSPACE}/ci_build
+                        export JAVA_HOME=/usr/lib/jvm/java-1.8.0-openjdk-1.8.0.161-3.b14.el6_9.x86_64
+                
+                        mvn deploy:deploy-file -DgeneratePom=true -Dfile=xgboost4j-${xgbVersion}.jar -Durl=${NEXUS_BASE_URL}/${REPO_URL} -DgroupId=ai.h2o -DartifactId=xgboost4j -Dversion=0.7 -Dpackaging=jar -DrepositoryId=LocalNexus
+                    """
                 }
             }
         }

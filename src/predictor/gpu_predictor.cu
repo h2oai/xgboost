@@ -55,6 +55,12 @@ struct DeviceMatrix {
   DeviceMatrix(DMatrix* dmat, int device_idx, bool silent) : p_mat(dmat) {
     dh::safe_cuda(cudaSetDevice(device_idx));
     auto info = dmat->info();
+    if(!silent){
+        std::cout << "info.num_row + 1 " << info.num_row + 1 << std::endl;
+        std::cout << "info.num_nonzero" << info.num_nonzero << std::endl;
+        std::cerr << "info.num_row + 1 " << info.num_row + 1 << std::endl;
+        std::cerr << "info.num_nonzero" << info.num_nonzero << std::endl;
+    }
     ba.allocate(device_idx, silent, &row_ptr, info.num_row + 1, &data,
                 info.num_nonzero);
     auto iter = dmat->RowIterator();

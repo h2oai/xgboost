@@ -203,6 +203,9 @@ struct DeviceHistogram {
       std::cout << "size_t(max_nodes) " << size_t(max_nodes) << std::endl;
       std::cout << "size_t(n_bins) " << size_t(n_bins) << std::endl;
       std::cout << "size_t(max_nodes) * size_t(n_bins) " << size_t(max_nodes) * size_t(n_bins) << std::endl;
+      std::cerr << "size_t(max_nodes) " << size_t(max_nodes) << std::endl;
+      std::cerr << "size_t(n_bins) " << size_t(n_bins) << std::endl;
+      std::cerr << "size_t(max_nodes) * size_t(n_bins) " << size_t(max_nodes) * size_t(n_bins) << std::endl;
     }
     ba.allocate(device_idx, silent, &data, size_t(max_nodes) * size_t(n_bins));
   }
@@ -306,10 +309,17 @@ struct DeviceShard {
         param.max_leaves > 0 ? param.max_leaves * 2 : n_nodes(param.max_depth);
     if(!param.silent){
       std::cout << "compressed_size_bytes " << compressed_size_bytes << std::endl;
+      std::cout << "n_rows*3 " << n_rows*3 << std::endl;
       std::cout << "gmat.cut->row_ptr.size() " << gmat.cut->row_ptr.size() << std::endl;
       std::cout << "gmat.cut->cut.size() " << gmat.cut->cut.size() << std::endl;
       std::cout << "gmat.cut->min_val.size() " << gmat.cut->min_val.size() << std::endl;
       std::cout << "param.monotone_constraints.size() " << param.monotone_constraints.size() << std::endl;
+      std::cout << "compressed_size_bytes " << compressed_size_bytes << std::endl;
+      std::cerr << "n_rows*3 " << n_rows*3 << std::endl;
+      std::cerr << "gmat.cut->row_ptr.size() " << gmat.cut->row_ptr.size() << std::endl;
+      std::cerr << "gmat.cut->cut.size() " << gmat.cut->cut.size() << std::endl;
+      std::cerr << "gmat.cut->min_val.size() " << gmat.cut->min_val.size() << std::endl;
+      std::cerr << "param.monotone_constraints.size() " << param.monotone_constraints.size() << std::endl;
     }
     ba.allocate(device_idx, param.silent, &gidx_buffer, compressed_size_bytes,
                 &gpair, n_rows, &ridx, n_rows, &position, n_rows,

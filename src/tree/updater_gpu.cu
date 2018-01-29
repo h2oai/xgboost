@@ -615,6 +615,22 @@ class GPUMaker : public TreeUpdater {
 
   void allocateAllData(int offsetSize) {
     int tmpBuffSize = scanTempBufferSize(nVals);
+    if(!param.silent){
+        std::cout << "nVals*8 " << nVals+nVals+nVals+nVals+nVals+nVals+nVals+nVals << std::endl;
+        std::cout << "offsetSize " << offsetSize << std::endl;
+        std::cout << "nRows*2 " << nRows+nRows << std::endl;
+        std::cout << "maxNodes " << maxNodes << std::endl;
+        std::cout << "maxLeaves * nCols " << maxLeaves * nCols << std::endl;
+        std::cout << "maxLeaves " << maxLeaves << std::endl;
+        std::cout << "tmpBuffSize*2 " << tmpBuffSize+tmpBuffSize << std::endl;
+        std::cerr << "nVals*8 " << nVals+nVals+nVals+nVals+nVals+nVals+nVals+nVals << std::endl;
+        std::cerr << "offsetSize " << offsetSize << std::endl;
+        std::cerr << "nRows*2 " << nRows+nRows << std::endl;
+        std::cerr << "maxNodes " << maxNodes << std::endl;
+        std::cerr << "maxLeaves * nCols " << maxLeaves * nCols << std::endl;
+        std::cerr << "maxLeaves " << maxLeaves << std::endl;
+        std::cerr << "tmpBuffSize*2 " << tmpBuffSize+tmpBuffSize << std::endl;
+    }
     ba.allocate(dh::get_device_idx(param.gpu_id), param.silent, &vals, nVals,
                 &vals_cached, nVals, &instIds, nVals, &instIds_cached, nVals,
                 &colOffsets, offsetSize, &gradsInst, nRows, &nodeAssigns, nVals,

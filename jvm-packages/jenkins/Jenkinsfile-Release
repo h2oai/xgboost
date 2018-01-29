@@ -24,10 +24,14 @@ BuildResult result = BuildResult.FAILURE
 
 // configurations which will be built; the name is used also inside generated .jar,
 // for example the configuration with name 'gpu' will produce 'xgboost4j-native-linux_gpu-0.7.jar'
-final List CONFIG_MAP = [
+final List CONFIGURATIONS = [
         [name: 'minimal', useCuda: false, useOmp: false],
         [name: 'omp', useCuda: false, useOmp: true],
         [name: 'gpu', useCuda: true, useOmp: true],
+]
+final List CHECK_IMAGES = [
+        [name: 'CentOS 6', image: '${REGISTRY}/opsh2oai/h2o-3-xgboost-build-centos6'],
+        [name: 'Ubuntu', image: '${REGISTRY}/opsh2oai/h2o-3-runtime:107']
 ]
 final String dockerImage = "${REGISTRY}/opsh2oai/h2o-3-xgboost-build-${params.targetOS}"
 
@@ -56,13 +60,15 @@ try {
         }
 
 
-        CONFIG_MAP.collect { config ->
-            stageName = "Build ${config.name.toUpperCase()} with ${params.targetOS}"
-            buildSummary.stage(stageName) {
+        CONFIGURATIONS.collect { config ->
+            final GString stageName = "${config.name.toUpperCase()} with ${params.targetOS}"
+            final GString buildStageName = "Build ${stageName}"
+            def xgbVersion = null
+            buildSummary.stage(buildStageName) {
                 try {
                     timeout(time: 60, unit: 'MINUTES') {
                         docker.withRegistry("https://${REGISTRY}") {
-                            docker.image(dockerImage).inside("--init") {
+                            docker.image(dockerImage).inside("--init --add-host=\"nexus:\$(dig +short nexus)\"") {
                                 sh '''
                                     id
                                     printenv
@@ -84,16 +90,35 @@ try {
             
                                     cd ${WORKSPACE}/jvm-packages
                                     ${getJvmPackagesBuildScript(config.useCuda, config.useOmp)}
-                                    
-                                    XGB_VERSION=\$(ls target/h2o | egrep -o [0-9]+.[0-9]+ | head -1)
-                                    cp target/h2o/xgboost4j-\${XGB_VERSION}.jar ${WORKSPACE}/ci_build/xgboost4j-\${XGB_VERSION}.jar
-                                    cp target/h2o/xgboost4j-native-linux-\${XGB_VERSION}.jar ${WORKSPACE}/ci_build/xgboost4j-native-linux_${config.name}-\${XGB_VERSION}.jar
+                                """
+                                xgbVersion = sh(script: "(ls ${WORKSPACE}/jvm-packages/target/h2o | egrep -o [0-9]+.[0-9]+ | head -1)", returnStdout: true).trim()
+                                sh """
+                                    cp target/h2o/xgboost4j-${xgbVersion}.jar ${WORKSPACE}/ci_build/xgboost4j-${xgbVersion}.jar
+                                    cp target/h2o/xgboost4j-native-linux-${xgbVersion}.jar ${WORKSPACE}/ci_build/xgboost4j-native-linux_${config.name}-${xgbVersion}.jar
                                 """
                             }
                         }
                     }
                 } finally {
                     archiveArtifacts artifacts: 'ci_build/*.jar', allowEmptyArchive: true
+                }
+            }
+            CHECK_IMAGES.collect { image ->
+                buildSummary.stage("Check ${config.name.toUpperCase()} with ${image.name}") {
+                    docker.image(image.image).inside("--init") {
+                        sh """
+                            cd ${WORKSPACE}/ci_build
+                            echo "Checking for lib/linux_64/libxgboost4j_${config.name}.so"
+                            unzip xgboost4j-native-linux_${config.name}-${xgbVersion}.jar | grep ${config.name}
+                            ldd lib/linux_64/libxgboost4j_${config.name}.so
+                            ldd lib/linux_64/libxgboost4j_${config.name}.so | grep -v 'libjvm.so => not found' | grep 'not found' > /dev/null
+                            if [ \$? -eq 0 ]; then
+                                echo "ldd check failed! Please check the following output:"
+                                ldd lib/linux_64/libxgboost4j_${config.name}.so
+                                exit 1
+                            fi
+                        """
+                    }
                 }
             }
         }

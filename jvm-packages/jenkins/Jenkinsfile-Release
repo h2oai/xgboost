@@ -54,9 +54,7 @@ try {
         buildSummary.stageWithSummary('Checkout and Pull') {
             deleteDir()
             checkout scm
-            sh """
-                git submodule update --init --recursive
-            """
+            sh 'git submodule update --init --recursive'
             withCredentials([usernamePassword(credentialsId: REGISTRY, usernameVariable: 'REGISTRY_USERNAME', passwordVariable: 'REGISTRY_PASSWORD')]) {
                 sh """
                     docker login -u $REGISTRY_USERNAME -p $REGISTRY_PASSWORD ${REGISTRY}
@@ -65,7 +63,7 @@ try {
             }
         }
 
-        buildSummary.stageWithSummary('Patch dmlc-core') {
+        buildSummary.stageWithSummary('Patch and Stash') {
             sh """
                 cd ${WORKSPACE}
 
@@ -74,101 +72,156 @@ try {
                 git apply 01_dmlc_core_imports.patch
                 cd ..
             """
+            stash 'xgboost-osx-stash'
         }
 
-
-        CONFIGURATIONS.collect { config ->
-            buildSummary.stageWithSummary("Build ${config.name.toUpperCase()} with ${params.targetOS}") {
+        node('osx') {
+            buildSummary.stageWithSummary('Build MINIMAL with OS X') {
+                unstash 'xgboost-osx-stash'
                 try {
-                    timeout(time: 60, unit: 'MINUTES') {
-                        docker.withRegistry("https://${REGISTRY}") {
-                            docker.image(dockerImage).inside("--init") {
-                                sh '''
-                                    id
-                                    printenv
-                                '''
-
-                                sh """
-                                    cd ${WORKSPACE}
-
-                                    make clean_all
-
-                                    mkdir -p build ci_build
-                                    cd build
-
-                                    ${getBuildScript(config.useCuda, config.useOmp)}
-
-                                    cd ${WORKSPACE}/jvm-packages
-                                    ${getJvmPackagesBuildScript(config.useCuda, config.useOmp)}
-                                """
-                                xgbVersion = sh(script: "(ls ${WORKSPACE}/jvm-packages/target/h2o | egrep -o [0-9]+.[0-9]+ | head -1)", returnStdout: true).trim()
-                                sh """
-                                    cd ${WORKSPACE}/jvm-packages
-
-                                    cp target/h2o/xgboost4j-${xgbVersion}.jar ${WORKSPACE}/ci_build/xgboost4j-${xgbVersion}.jar
-                                    cp target/h2o/xgboost4j-native-linux-${xgbVersion}.jar ${WORKSPACE}/ci_build/xgboost4j-native-linux_${config.name}-${xgbVersion}.jar
-                                """
-                            }
-                        }
-                    }
+                    sh """
+                        export JAVA_HOME=\$(/usr/libexec/java_home)
+    
+                        make clean_all
+                        
+                        mkdir -p build ci_build
+                        cd build
+                        
+                        cmake .. ${getCMakeOpts(false, false)}
+                        make 
+                        
+                        cd ../jvm-packages
+                        ./build_jars.sh
+                    """
+                    xgbVersion = sh(script: "(ls ${WORKSPACE}/jvm-packages/target/h2o | egrep -o [0-9]+.[0-9]+ | head -1)", returnStdout: true).trim()
+                    sh """
+                        cp jvm-packages/target/h2o/xgboost4j-native-osx-${xgbVersion}.jar ci_build/xgboost4j-native-osx_minimal-${xgbVersion}.jar
+                    """
+                    stash name: 'xgboost-osx-stash', includes: 'ci_build/*.jar'
                 } finally {
                     archiveArtifacts artifacts: 'ci_build/*.jar', allowEmptyArchive: true
                 }
             }
-            CHECK_IMAGES.collect { image ->
-                buildSummary.stageWithSummary("Check ${config.name.toUpperCase()} with ${image.name}") {
-                    docker.image(image.image).inside("--init") {
-                        sh """
-                            cd ${WORKSPACE}/ci_build
-                            echo "Checking for lib/linux_64/libxgboost4j_${config.name}.so"
-                            rm -rf check
-                            mkdir check
-                            cp xgboost4j-native-linux_${config.name}-${xgbVersion}.jar check/xgboost4j-native-linux_${config.name}-${xgbVersion}.jar
-                            cd check
-                            unzip xgboost4j-native-linux_${config.name}-${xgbVersion}.jar
-                            chmod +x lib/linux_64/libxgboost4j_${config.name}.so
-                            ldd lib/linux_64/libxgboost4j_${config.name}.so
-                            set +e
-                            ldd lib/linux_64/libxgboost4j_${config.name}.so | grep -v 'libjvm.so => not found' | grep 'not found' > /dev/null
-                            if [ \$? -eq 0 ]; then
-                                echo "ldd check failed! Please check the following output:"
-                                ldd lib/linux_64/libxgboost4j_${config.name}.so
-                                exit 1
-                            fi
-                            set -e
-                        """
-                    }
-                }
+        }
+
+        error "NYI"
+
+//        CONFIGURATIONS.collect { config ->
+//            buildSummary.stageWithSummary("Build ${config.name.toUpperCase()} with ${params.targetOS}") {
+//                try {
+//                    timeout(time: 60, unit: 'MINUTES') {
+//                        docker.withRegistry("https://${REGISTRY}") {
+//                            docker.image(dockerImage).inside("--init") {
+//                                sh '''
+//                                    id
+//                                    printenv
+//                                '''
+//
+//                                sh """
+//                                    cd ${WORKSPACE}
+//
+//                                    make clean_all
+//
+//                                    mkdir -p build ci_build
+//                                    cd build
+//
+//                                    ${getBuildScript(config.useCuda, config.useOmp)}
+//
+//                                    cd ${WORKSPACE}/jvm-packages
+//                                    ${getJvmPackagesBuildScript(config.useCuda, config.useOmp)}
+//                                """
+//                                xgbVersion = sh(script: "(ls ${WORKSPACE}/jvm-packages/target/h2o | egrep -o [0-9]+.[0-9]+ | head -1)", returnStdout: true).trim()
+//                                sh """
+//                                    cd ${WORKSPACE}/jvm-packages
+//
+//                                    cp target/h2o/xgboost4j-${xgbVersion}.jar ${WORKSPACE}/ci_build/xgboost4j-${xgbVersion}.jar
+//                                    cp target/h2o/xgboost4j-native-linux-${xgbVersion}.jar ${WORKSPACE}/ci_build/xgboost4j-native-linux_${config.name}-${xgbVersion}.jar
+//                                """
+//                            }
+//                        }
+//                    }
+//                } finally {
+//                    archiveArtifacts artifacts: 'ci_build/*.jar', allowEmptyArchive: true
+//                }
+//            }
+//            CHECK_IMAGES.collect { image ->
+//                buildSummary.stageWithSummary("Check ${config.name.toUpperCase()} with ${image.name}") {
+//                    docker.image(image.image).inside("--init") {
+//                        sh """
+//                            cd ${WORKSPACE}/ci_build
+//                            echo "Checking for lib/linux_64/libxgboost4j_${config.name}.so"
+//                            rm -rf check
+//                            mkdir check
+//                            cp xgboost4j-native-linux_${config.name}-${xgbVersion}.jar check/xgboost4j-native-linux_${config.name}-${xgbVersion}.jar
+//                            cd check
+//                            unzip xgboost4j-native-linux_${config.name}-${xgbVersion}.jar
+//                            chmod +x lib/linux_64/libxgboost4j_${config.name}.so
+//                            ldd lib/linux_64/libxgboost4j_${config.name}.so
+//                            set +e
+//                            ldd lib/linux_64/libxgboost4j_${config.name}.so | grep -v 'libjvm.so => not found' | grep 'not found' > /dev/null
+//                            if [ \$? -eq 0 ]; then
+//                                echo "ldd check failed! Please check the following output:"
+//                                ldd lib/linux_64/libxgboost4j_${config.name}.so
+//                                exit 1
+//                            fi
+//                            set -e
+//                        """
+//                    }
+//                }
+//            }
+//        }
+
+        node('osx') {
+            buildSummary.stageWithSummary('Check MINIMAL with OS X') {
+                unstash 'xgboost-osx-stash'
+                sh """
+                    cd ci_build
+                    mkdir check
+                    cp xgboost4j-native-osx_minimal-${xgbVersion}.jar check
+                    cd check
+                    unzip xgboost4j-native-osx_minimal-${xgbVersion}.jarchmod +x lib/linux_64/libxgboost4j_${config.name}.so
+                    ldd lib/linux_64/libxgboost4j_minimal.so
+                    set +e
+                    ldd lib/linux_64/libxgboost4j_minimal.so | grep -v 'libjvm.so => not found' | grep 'not found' > /dev/null
+                    if [ \$? -eq 0 ]; then
+                        echo "ldd check failed! Please check the following output:"
+                        ldd lib/linux_64/libxgboost4j_minimal.so
+                        exit 1
+                    fi
+                    set -e
+
+                """
             }
         }
-        if (params.publish) {
-            final String nexusIP = sh(script: 'dig +short nexus', returnStdout: true)
-            docker.image(dockerImage).inside("--init --add-host=nexus:${nexusIP}") {
-                withCredentials([file(credentialsId: 'local-nexus-settings-xml', variable: 'MAVEN_SETTINGS_PATH')]) {
-                    sh """
-                        mkdir -p ~/.m2
-                        cp ${MAVEN_SETTINGS_PATH} ~/.m2/settings.xml
-                    """
-                }
-                CONFIGURATIONS.eachWithIndex { config, index ->
-                    buildSummary.stageWithSummary("Publish ${config.name.toUpperCase()}") {
-                        sh """
-                            export JAVA_HOME=/usr/lib/jvm/java-1.8.0-openjdk-1.8.0.161-3.b14.el6_9.x86_64
-                            cd ${WORKSPACE}/ci_build
-                            mvn deploy:deploy-file -DgeneratePom=true -Dfile=xgboost4j-native-linux_${config.name}-${xgbVersion}.jar -Durl=${NEXUS_BASE_URL}/${REPO_URL} -DgroupId=ai.h2o -DartifactId=xgboost4j-${config.name} -Dversion=0.7 -Dpackaging=jar -DrepositoryId=LocalNexus
-                        """
-                    }
-                }
-                buildSummary.stageWithSummary("Publish lib") {
-                    sh """
-                        cd ${WORKSPACE}/ci_build
-                        export JAVA_HOME=/usr/lib/jvm/java-1.8.0-openjdk-1.8.0.161-3.b14.el6_9.x86_64
-                
-                        mvn deploy:deploy-file -DgeneratePom=true -Dfile=xgboost4j-${xgbVersion}.jar -Durl=${NEXUS_BASE_URL}/${REPO_URL} -DgroupId=ai.h2o -DartifactId=xgboost4j -Dversion=0.7 -Dpackaging=jar -DrepositoryId=LocalNexus
-                    """
-                }
-            }
-        }
+
+//        if (params.publish) {
+//            final String nexusIP = sh(script: 'dig +short nexus', returnStdout: true)
+//            docker.image(dockerImage).inside("--init --add-host=nexus:${nexusIP}") {
+//                withCredentials([file(credentialsId: 'local-nexus-settings-xml', variable: 'MAVEN_SETTINGS_PATH')]) {
+//                    sh """
+//                        mkdir -p ~/.m2
+//                        cp ${MAVEN_SETTINGS_PATH} ~/.m2/settings.xml
+//                    """
+//                }
+//                CONFIGURATIONS.eachWithIndex { config, index ->
+//                    buildSummary.stageWithSummary("Publish ${config.name.toUpperCase()}") {
+//                        sh """
+//                            export JAVA_HOME=/usr/lib/jvm/java-1.8.0-openjdk-1.8.0.161-3.b14.el6_9.x86_64
+//                            cd ${WORKSPACE}/ci_build
+//                            mvn deploy:deploy-file -DgeneratePom=true -Dfile=xgboost4j-native-linux_${config.name}-${xgbVersion}.jar -Durl=${NEXUS_BASE_URL}/${REPO_URL} -DgroupId=ai.h2o -DartifactId=xgboost4j-native-linux_${config.name} -Dversion=0.7 -Dpackaging=jar -DrepositoryId=LocalNexus
+//                        """
+//                    }
+//                }
+//                buildSummary.stageWithSummary("Publish lib") {
+//                    sh """
+//                        cd ${WORKSPACE}/ci_build
+//                        export JAVA_HOME=/usr/lib/jvm/java-1.8.0-openjdk-1.8.0.161-3.b14.el6_9.x86_64
+//
+//                        mvn deploy:deploy-file -DgeneratePom=true -Dfile=xgboost4j-${xgbVersion}.jar -Durl=${NEXUS_BASE_URL}/${REPO_URL} -DgroupId=ai.h2o -DartifactId=xgboost4j -Dversion=0.7 -Dpackaging=jar -DrepositoryId=LocalNexus
+//                    """
+//                }
+//            }
+//        }
     }
     result = BuildResult.SUCCESS
 } finally {

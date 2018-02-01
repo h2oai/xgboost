@@ -31,6 +31,9 @@ def test_binary_classification():
         err = sum(1 for i in range(len(preds))
                   if int(preds[i] > 0.5) != labels[i]) / float(len(preds))
         assert err < 0.1
+        
+        pred_contribs = xgb_model.predict_proba(X[test_index], pred_contribs=True)
+        assert pred_contribs.shape[1] == X.shape[1] + 1
 
 
 def test_multiclass_classification():
@@ -53,11 +56,15 @@ def test_multiclass_classification():
     for train_index, test_index in kf:
         xgb_model = xgb.XGBClassifier().fit(X[train_index], y[train_index])
         preds = xgb_model.predict(X[test_index])
-        # test other params in XGBClassifier().fit
+        # test other params in XGBClassifier().predict
         preds2 = xgb_model.predict(X[test_index], output_margin=True, ntree_limit=3)
         preds3 = xgb_model.predict(X[test_index], output_margin=True, ntree_limit=0)
         preds4 = xgb_model.predict(X[test_index], output_margin=False, ntree_limit=3)
         labels = y[test_index]
+
+        pred_contribs = xgb_model.predict_proba(X[test_index], pred_contribs=True)
+        probas = xgb_model.predict_proba(X[test_index])
+        assert pred_contribs.shape[1] == probas.shape[1] * (X.shape[1] + 1)
 
         check_pred(preds, labels)
         check_pred(preds2, labels)
@@ -113,11 +120,14 @@ def test_boston_housing_regression():
         xgb_model = xgb.XGBRegressor().fit(X[train_index], y[train_index])
 
         preds = xgb_model.predict(X[test_index])
-        # test other params in XGBRegressor().fit
+        # test other params in XGBRegressor().predict
         preds2 = xgb_model.predict(X[test_index], output_margin=True, ntree_limit=3)
         preds3 = xgb_model.predict(X[test_index], output_margin=True, ntree_limit=0)
         preds4 = xgb_model.predict(X[test_index], output_margin=False, ntree_limit=3)
         labels = y[test_index]
+
+        pred_contribs = xgb_model.predict(X[test_index], pred_contribs=True)
+        assert np.isclose(np.sum(pred_contribs, axis=1), preds).all()
 
         assert mean_squared_error(preds, labels) < 25
         assert mean_squared_error(preds2, labels) < 350

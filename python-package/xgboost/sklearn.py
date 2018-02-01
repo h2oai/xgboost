@@ -324,13 +324,17 @@ class XGBModel(XGBModelBase):
         trainDmatrix.__del__()
         return self
 
-    def predict(self, data, output_margin=False, ntree_limit=0):
+    def predict(self, data, output_margin=False, ntree_limit=0,
+                pred_leaf=False, pred_contribs=False, approx_contribs=False):
         # pylint: disable=missing-docstring,invalid-name
         test_dmatrix = DMatrix(data, missing=self.missing, nthread=self.n_jobs)
 
         result = self.get_booster().predict(test_dmatrix,
-                                          output_margin=output_margin,
-                                          ntree_limit=ntree_limit)
+                                            output_margin=output_margin,
+                                            ntree_limit=ntree_limit,
+                                            pred_leaf=pred_leaf,
+                                            pred_contribs=pred_contribs,
+                                            approx_contribs=approx_contribs)
         test_dmatrix.__del__()
         return result
 
@@ -560,35 +564,43 @@ class XGBClassifier(XGBModel, XGBClassifierBase):
         train_dmatrix.__del__()
         return self
 
-    def predict(self, data, output_margin=False, ntree_limit=0):
+    def predict(self, data, output_margin=False, ntree_limit=0,
+                pred_leaf=False, pred_contribs=False, approx_contribs=False):
         test_dmatrix = DMatrix(data, missing=self.missing, nthread=self.n_jobs)
-        class_probs = self.get_booster().predict(test_dmatrix,
-                                                 output_margin=output_margin,
-                                                 ntree_limit=ntree_limit)
-        if len(class_probs.shape) > 1:
-            column_indexes = np.argmax(class_probs, axis=1)
-        else:
-            column_indexes = np.repeat(0, class_probs.shape[0])
-            column_indexes[class_probs > 0.5] = 1
-        result = self._le.inverse_transform(column_indexes)
+        preds = self.get_booster().predict(test_dmatrix,
+                                           output_margin=output_margin,
+                                           ntree_limit=ntree_limit,
+                                           pred_leaf=pred_leaf,
+                                           pred_contribs=pred_contribs,
+                                           approx_contribs=approx_contribs)
+        if not pred_leaf and not pred_contribs and not approx_contribs:
+            if len(preds.shape) > 1:
+                column_indexes = np.argmax(preds, axis=1)
+            else:
+                column_indexes = np.repeat(0, preds.shape[0])
+                column_indexes[preds > 0.5] = 1
+            preds = self._le.inverse_transform(column_indexes)
 
         test_dmatrix.__del__()
-        return result
+        return preds
 
-    def predict_proba(self, data, output_margin=False, ntree_limit=0):
+    def predict_proba(self, data, output_margin=False, ntree_limit=0,
+                      pred_leaf=False, pred_contribs=False, approx_contribs=False):
         test_dmatrix = DMatrix(data, missing=self.missing, nthread=self.n_jobs)
-        class_probs = self.get_booster().predict(test_dmatrix,
-                                                 output_margin=output_margin,
-                                                 ntree_limit=ntree_limit)
-        if self.objective == "multi:softprob":
-            result = class_probs
-        else:
-            classone_probs = class_probs
-            classzero_probs = 1.0 - classone_probs
-            result = np.vstack((classzero_probs, classone_probs)).transpose()
+        preds = self.get_booster().predict(test_dmatrix,
+                                           output_margin=output_margin,
+                                           ntree_limit=ntree_limit,
+                                           pred_leaf=pred_leaf,
+                                           pred_contribs=pred_contribs,
+                                           approx_contribs=approx_contribs)
+        if not pred_leaf and not pred_contribs and not approx_contribs:
+            if self.objective == "binary:logistic":
+                classone_probs = preds
+                classzero_probs = 1.0 - classone_probs
+                preds = np.vstack((classzero_probs, classone_probs)).transpose()
 
         test_dmatrix.__del__()
-        return result
+        return preds
 
 
     def evals_result(self):

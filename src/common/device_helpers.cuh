@@ -373,6 +373,16 @@ class dvec {
     }
     thrust::copy(begin, end, this->tbegin());
   }
+
+  void copy(thrust::device_ptr<T> begin, thrust::device_ptr<T> end) {
+    safe_cuda(cudaSetDevice(this->device_idx()));
+    if (end - begin != size()) {
+      throw std::runtime_error(
+                               "Cannot copy assign vector to dvec, sizes are different");
+    }
+    safe_cuda(cudaMemcpy(this->data(), begin.get(),
+                         size() * sizeof(T), cudaMemcpyDefault));
+  }
 };
 
 /**
@@ -490,6 +500,13 @@ class bulk_allocator {
   }
 
  public:
+  bulk_allocator() {}
+  // prevent accidental copying, moving or assignment of this object
+  bulk_allocator(const bulk_allocator<MemoryT>&) = delete;
+  bulk_allocator(bulk_allocator<MemoryT>&&) = delete;
+  void operator=(const bulk_allocator<MemoryT>&) = delete;
+  void operator=(bulk_allocator<MemoryT>&&) = delete;
+  
   ~bulk_allocator() {
     for (size_t i = 0; i < d_ptr.size(); i++) {
       if (!(d_ptr[i] == nullptr)) {

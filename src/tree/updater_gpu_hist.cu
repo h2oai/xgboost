@@ -314,7 +314,7 @@ struct DeviceShard {
       std::cout << "gmat.cut->cut.size() " << gmat.cut->cut.size() << std::endl;
       std::cout << "gmat.cut->min_val.size() " << gmat.cut->min_val.size() << std::endl;
       std::cout << "param.monotone_constraints.size() " << param.monotone_constraints.size() << std::endl;
-      std::cout << "compressed_size_bytes " << compressed_size_bytes << std::endl;
+      std::cerr << "compressed_size_bytes " << compressed_size_bytes << std::endl;
       std::cerr << "n_rows*3 " << n_rows*3 << std::endl;
       std::cerr << "gmat.cut->row_ptr.size() " << gmat.cut->row_ptr.size() << std::endl;
       std::cerr << "gmat.cut->cut.size() " << gmat.cut->cut.size() << std::endl;

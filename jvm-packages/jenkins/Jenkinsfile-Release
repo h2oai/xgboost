@@ -1,0 +1,362 @@
+@Library('test-shared-library@mr/ita/190-build-summary-emailer') _
+
+
+import ai.h2o.ci.BuildResult
+import ai.h2o.ci.buildsummary.DetailsSummary
+import ai.h2o.ci.buildsummary.StagesSummary
+
+// initialize build summary
+buildSummary('https://github.com/h2oai/xgboost', true)
+
+final String NEXUS_BASE_URL = 'http://nexus:8081/nexus'
+final String REPO_URL = 'repository/releases'
+final String REGISTRY = 'docker.h2o.ai'
+// list of OSs for which to build the docker image,
+// for each OS there must by a jvm-packages/docker/Dockerfile-gpu-<OS>
+final List<String> IMAGES_MAP = ['centos6']
+
+properties([
+        parameters([
+                choice(name: 'targetOS', choices: IMAGES_MAP.join('\n'), description: 'Image used to build the artifacts '),
+                booleanParam(name: 'publish', defaultValue: false, description: 'If true, publish the local Nexus'),
+        ]),
+        pipelineTriggers([])
+])
+
+BuildResult result = BuildResult.FAILURE
+
+final String dockerImage = "${REGISTRY}/opsh2oai/h2o-3-xgboost-build-${params.targetOS}"
+// configurations which will be built; the name is used also inside generated .jar,
+// for example the configuration with name 'gpu' will produce 'xgboost4j-native-linux_gpu-0.7.jar'
+final List CONFIGURATIONS = [
+        [name: 'minimal', useCuda: false, useOmp: false, os: 'linux', dockerImage: dockerImage],
+        [name: 'omp', useCuda: false, useOmp: true, os: 'linux', dockerImage: dockerImage],
+        [name: 'gpu', useCuda: true, useOmp: true, os: 'linux', dockerImage: dockerImage],
+        [name: 'minimal', useCuda: false, useOmp: false, os: 'osx', node: 'osx'],
+]
+final Map CHECK_IMAGES = [
+        minimal: [
+                [name: 'CentOS 6', dockerImage: "${REGISTRY}/opsh2oai/h2o-3-xgboost-build-centos6", os: 'linux'],
+                [name: 'Ubuntu 16', dockerImage: "${REGISTRY}/opsh2oai/h2o-3-runtime:107", os: 'linux'],
+                [name: 'OS X', os: 'osx', node: 'osx']
+        ],
+        omp    : [
+                [name: 'CentOS 6', dockerImage: "${REGISTRY}/opsh2oai/h2o-3-xgboost-build-centos6", os: 'linux'],
+                [name: 'Ubuntu 16', dockerImage: "${REGISTRY}/opsh2oai/h2o-3-runtime:107", os: 'linux'],
+        ],
+        gpu    : [
+                [name: 'CentOS 6', dockerImage: "${REGISTRY}/opsh2oai/h2o-3-xgboost-build-centos6", os: 'linux'],
+                [name: 'Ubuntu 16', dockerImage: "${REGISTRY}/opsh2oai/h2o-3-runtime:107", os: 'linux'],
+        ]
+
+]
+
+// setup custom DetailsSummary
+DetailsSummary detailsSummary = new DetailsSummary()
+detailsSummary.setEntry(this, 'Build OS', "${params.targetOS} + OS X")
+detailsSummary.setEntry(this, 'Publish', params.publish ? 'Yes' : 'No')
+detailsSummary.setEntry(this, 'Docker image', dockerImage)
+buildSummary.get().addDetailsSummary(this, detailsSummary)
+
+// use default StagesSummary implementation
+buildSummary.get().addStagesSummary(this, new StagesSummary())
+
+def xgbVersion = '0.7'
+
+try {
+    node('docker && !mr-0xc8') {
+        buildSummary.stageWithSummary('Checkout and Pull') {
+            deleteDir()
+            checkout scm
+            sh 'git submodule update --init --recursive'
+            withCredentials([usernamePassword(credentialsId: REGISTRY, usernameVariable: 'REGISTRY_USERNAME', passwordVariable: 'REGISTRY_PASSWORD')]) {
+                sh """
+                    docker login -u $REGISTRY_USERNAME -p $REGISTRY_PASSWORD ${REGISTRY}
+                    docker pull ${dockerImage}
+                """
+            }
+        }
+
+        buildSummary.stageWithSummary('Patch and Stash') {
+            sh """
+                cd ${WORKSPACE}
+
+                cd dmlc-core/
+                wget https://raw.githubusercontent.com/h2oai/xgboost/master/patches/01_dmlc_core_imports.patch
+                git apply 01_dmlc_core_imports.patch
+                cd ..
+            """
+            stash 'xgboost-sources'
+        }
+
+        CONFIGURATIONS.collect { config ->
+            buildSummary.stageWithSummary("Build ${config.name.toUpperCase()} with ${config.os}") {
+                try {
+                    timeout(time: 60, unit: 'MINUTES') {
+                        if (config.node) {
+                            node(config.node) {
+                                try {
+                                    unstash 'xgboost-sources'
+                                    executeBuild(config)
+                                    stash name: "xgboost-${config.os}-artifacts", includes: 'ci_build/*.jar'
+                                } finally {
+                                    archiveArtifacts artifacts: 'ci_build/*.jar', allowEmptyArchive: true
+                                }
+                            }
+                        } else if (config.dockerImage) {
+                            docker.withRegistry("https://${REGISTRY}") {
+                                docker.image(config.dockerImage).inside("--init") {
+                                    executeBuild(config)
+                                }
+                            }
+                        } else {
+                            error "Configuration must specify either node or dockerImage"
+                        }
+                    }
+                } finally {
+                    archiveArtifacts artifacts: 'ci_build/*.jar', allowEmptyArchive: true
+                }
+            }
+        }
+
+        CHECK_IMAGES.each { target, checkConfigs ->
+            checkConfigs.collect { checkConfig ->
+                buildSummary.stageWithSummary("Check ${target} with ${checkConfig.name}") {
+                    if (checkConfig.node) {
+                        node(checkConfig.node) {
+                            unstash "xgboost-${checkConfig.os}-artifacts"
+                            executeCheck(checkConfig.os, target, xgbVersion)
+                        }
+                    } else if (checkConfig.dockerImage) {
+                        docker.withRegistry("https://${REGISTRY}") {
+                            docker.image(checkConfig.dockerImage).inside("--init") {
+                                executeCheck(checkConfig.os, target, xgbVersion)
+                            }
+                        }
+                    } else {
+                        error "Configuration must specify either node or dockerImage"
+                    }
+                }
+            }
+        }
+
+        if (params.publish) {
+            final String nexusIP = sh(script: 'dig +short nexus', returnStdout: true)
+            docker.image(dockerImage).inside("--init --add-host=nexus:${nexusIP}") {
+                withCredentials([file(credentialsId: 'local-nexus-settings-xml', variable: 'MAVEN_SETTINGS_PATH')]) {
+                    sh """
+                        mkdir -p ~/.m2
+                        cp ${MAVEN_SETTINGS_PATH} ~/.m2/settings.xml
+                    """
+                }
+                CONFIGURATIONS.eachWithIndex { config, index ->
+                    buildSummary.stageWithSummary("Publish ${config.os}-${config.name}") {
+                        if (config.os != 'linux') {
+                            unstash "xgboost-${config.os}-artifacts"
+                        }
+                        sh """
+                            export JAVA_HOME=/usr/lib/jvm/java-1.8.0-openjdk-1.8.0.161-3.b14.el6_9.x86_64
+                            cd ${WORKSPACE}/ci_build
+                            mvn deploy:deploy-file -DgeneratePom=true -Dfile=xgboost4j-native-${config.os}_${config.name}-${xgbVersion}.jar -Durl=${NEXUS_BASE_URL}/${REPO_URL} -DgroupId=ai.h2o -DartifactId=xgboost4j-native-${config.os}_${config.name} -Dversion=0.7 -Dpackaging=jar -DrepositoryId=LocalNexus
+                        """
+                    }
+                }
+                buildSummary.stageWithSummary("Publish lib") {
+                    sh """
+                        cd ${WORKSPACE}/ci_build
+                        export JAVA_HOME=/usr/lib/jvm/java-1.8.0-openjdk-1.8.0.161-3.b14.el6_9.x86_64
+
+                        mvn deploy:deploy-file -DgeneratePom=true -Dfile=xgboost4j-${xgbVersion}.jar -Durl=${
+                        NEXUS_BASE_URL
+                    }/${REPO_URL} -DgroupId=ai.h2o -DartifactId=xgboost4j -Dversion=0.7 -Dpackaging=jar -DrepositoryId=LocalNexus
+                    """
+                }
+            }
+        }
+    }
+    result = BuildResult.SUCCESS
+} finally {
+    sendEmailNotif(result, buildSummary.get().toEmail(this), ['michalr@h2o.ai'])
+}
+
+private void executeBuild(final config) {
+    sh '''
+        id
+        printenv
+    '''
+
+    sh """
+        cd ${WORKSPACE}
+
+        make clean_all
+
+        mkdir -p build ci_build
+        cd build
+
+        ${getBuildScript(config.os, config.useCuda, config.useOmp)}
+
+        cd ${WORKSPACE}/jvm-packages
+        ${getJvmPackagesBuildScript(config.os, config.useCuda, config.useOmp)}
+    """
+    xgbVersion = sh(script: "(ls ${WORKSPACE}/jvm-packages/target/h2o | egrep -o [0-9]+.[0-9]+ | head -1)", returnStdout: true).trim()
+    sh """
+        cd ${WORKSPACE}/jvm-packages
+
+        cp target/h2o/xgboost4j-${xgbVersion}.jar ${WORKSPACE}/ci_build/xgboost4j-${xgbVersion}.jar
+        cp target/h2o/xgboost4j-native-${config.os}-${xgbVersion}.jar ${WORKSPACE}/ci_build/xgboost4j-native-${
+        config.os
+    }_${config.name}-${xgbVersion}.jar
+    """
+}
+
+private String getBuildScript(final String os, final boolean useCuda, final boolean useOmp) {
+    switch (os) {
+        case 'linux':
+            return getCentOS6BuildScript(useCuda, useOmp)
+        case 'osx':
+            return getOSXBuildScript(useCuda, useOmp)
+        default:
+            error "OS ${os} not supported"
+    }
+}
+
+private String getCentOS6BuildScript(final boolean useCuda, final boolean useOmp) {
+    return """
+        export JAVA_HOME=/usr/lib/jvm/java-1.8.0-openjdk-1.8.0.161-3.b14.el6_9.x86_64
+        source /opt/rh/devtoolset-3/enable
+        if [ "\$(gcc --version | head -1)" != 'gcc (GCC) 4.9.2 20150212 (Red Hat 4.9.2-6)' ]; then 
+            echo "UNEXPECTED GCC VERSION"
+            gcc --version
+            exit 1; 
+        fi
+        if [ "\$(cmake --version | head -1)" != 'cmake version 3.5.2' ]; then 
+            echo "UNEXPECTED CMAKE VERSION"
+            cmake --version
+            exit 1; 
+        fi
+
+        cmake .. ${getCMakeOpts(useCuda, useOmp)}
+        make
+    """
+}
+
+private String getOSXBuildScript(final boolean useCuda, final boolean useOmp) {
+    return """
+        export JAVA_HOME=\$(/usr/libexec/java_home)
+        
+        cmake .. ${getCMakeOpts(useCuda, useOmp)}
+        make
+    """
+}
+
+private String getJvmPackagesBuildScript(final String os, final boolean useCuda, final boolean useOmp) {
+    switch (os) {
+        case 'linux':
+            return getCentOS6JvmPackagesBuildScript(useCuda, useOmp)
+        case 'osx':
+            return getOSXJvmPackagesBuildScript(useCuda, useOmp)
+        default:
+            error "OS ${os} not supported"
+    }
+}
+
+private String getCentOS6JvmPackagesBuildScript(final boolean useCuda, final boolean useOmp) {
+    return """
+        export JAVA_HOME=/usr/lib/jvm/java-1.8.0-openjdk-1.8.0.161-3.b14.el6_9.x86_64
+        source /opt/rh/devtoolset-3/enable
+        source /opt/rh/python27/enable
+        if [ "\$(python --version 2>&1 | head -1)" != 'Python 2.7.13' ]; then 
+            echo "UNEXPECTED PYTHON VERSION"
+            python --version
+        fi
+        ${getBuildJARsOpts(useCuda, useOmp)} ./build_jars.sh
+    """
+}
+
+private String getOSXJvmPackagesBuildScript(final boolean useCuda, final boolean useOmp) {
+    return """
+        export JAVA_HOME=\$(/usr/libexec/java_home)
+        ${getBuildJARsOpts(useCuda, useOmp)} ./build_jars.sh
+    """
+}
+
+private String getCMakeOpts(final boolean useCuda, final boolean useOmp) {
+    String opts = '-DJVM_BINDINGS:BOOL=ON'
+    if (useCuda) {
+        opts += ' -DUSE_CUDA:BOOL=ON'
+    }
+    if (useOmp) {
+        opts += ' -DUSE_OPENMP:BOOL=ON'
+    } else {
+        opts += ' -DUSE_OPENMP:BOOL=OFF'
+    }
+    return opts
+}
+
+private String getBuildJARsOpts(final boolean useCuda, final boolean useOmp) {
+    List<String> opts = []
+    if (useCuda) {
+        opts += 'USE_GPU=TRUE'
+    }
+    if (useOmp) {
+        opts += 'USE_OMP=TRUE'
+    }
+    return opts.join(' ')
+}
+
+private void executeCheck(final String os, final String target, final String xgbVersion) {
+    sh """
+        cd ${WORKSPACE}/ci_build
+        echo "Checking for lib/${os}_64/libxgboost4j_${target}.*"
+        rm -rf check
+        mkdir check
+        cp xgboost4j-native-${os}_${target}-${xgbVersion}.jar check/xgboost4j-native-${os}_${target}-${xgbVersion}.jar
+        cd check
+        unzip xgboost4j-native-${os}_${target}-${xgbVersion}.jar
+        chmod +x lib/${os}_64/libxgboost4j_${target}.*
+        
+        ${getCheckScript(os, target)}
+        
+    """
+}
+
+private String getCheckScript(final String os, final String target) {
+    switch (os) {
+        case 'linux':
+            return getCentOS6CheckScript(target)
+        case 'osx':
+            return getOSXCheckScript(target)
+        default:
+            error "OS ${os} not supported"
+    }
+}
+
+private String getCentOS6CheckScript(final String target) {
+    final GString lddCmd = "ldd lib/linux_64/libxgboost4j_${target}.so"
+    return """
+        ${lddCmd}
+        set +e
+        ${lddCmd} | grep -v 'libjvm.so => not found' | grep 'not found' > /dev/null
+        if [ \$? -eq 0 ]; then
+            echo "ldd check failed! Please check the following output:"
+            ${lddCmd}
+            exit 1
+        fi
+        set -e
+    """
+}
+
+private String getOSXCheckScript(final String target) {
+    final GString otoolCmd = "otool -L lib/osx_64/libxgboost4j_${target}.dylib"
+    return """
+        ${otoolCmd}
+        set +e
+        ${otoolCmd} | grep 'not' > /dev/null
+        if [ \$? -eq 0 ]; then
+            echo "otool check failed! Please check the following output:"
+            ${otoolCmd}
+            exit 1
+        fi
+        set -e
+    """
+}

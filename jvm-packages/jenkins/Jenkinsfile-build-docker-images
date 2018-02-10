@@ -1,0 +1,66 @@
+@Library('test-shared-library@mr/ita/190-build-summary-emailer') _
+
+import ai.h2o.ci.buildsummary.StagesSummary
+import ai.h2o.ci.buildsummary.DetailsSummary
+import ai.h2o.ci.BuildResult
+
+properties([
+        buildDiscarder(logRotator(artifactDaysToKeepStr: '', artifactNumToKeepStr: '', daysToKeepStr: '', numToKeepStr: '25')),
+        parameters([
+                string(name: 'registry', defaultValue: 'docker.h2o.ai', description: 'Docker registry to push images to'),
+                booleanParam(name: 'publish', defaultValue: true, description: 'If true, publish the docker image'),
+                booleanParam(name: 'noCache', defaultValue: false, description: 'If true, build the docker image using the --no-cache flag')
+        ]),
+        pipelineTriggers([])
+])
+
+BuildResult result = BuildResult.FAILURE
+
+// define list of OSs for which to build the docker image,
+// for each OS there must by a jvm-packages/docker/Dockerfile-gpu-<OS>
+final List<String> IMAGES_MAP = ['centos6', 'ubuntu14']
+// base of the image name
+final String IMAGE_NAME = "${params.registry}/opsh2oai/h2o-3-xgboost-build"
+
+// initialize build summary
+buildSummary('https://github.com/h2oai/xgboost', true)
+// setup custom DetailsSummary
+DetailsSummary detailsSummary = new DetailsSummary()
+detailsSummary.setEntry(this, 'Build images for', IMAGES_MAP.join(', '))
+detailsSummary.setEntry(this, 'Publish', params.publish ? 'Yes' : 'No')
+buildSummary.get().addDetailsSummary(this, detailsSummary)
+// use default StagesSummary implementation
+buildSummary.get().addStagesSummary(this, new StagesSummary())
+
+try {
+    node('docker && !mr-0xc8') {
+        buildSummary.stage('Checkout') {
+            checkout scm
+        }
+
+        for (String image : IMAGES_MAP) {
+            buildSummary.stage("Build ${image.capitalize()} Image") {
+                dir('jvm-packages/docker') {
+                    sh "docker build -t ${IMAGE_NAME}-${image} -f Dockerfile-gpu-${image} ."
+                }
+            }
+        }
+
+        if (params.publish) {
+            for (String image : IMAGES_MAP) {
+                buildSummary.stage("Publish h2o-3-xgboost-build-${image}") {
+                    withCredentials([usernamePassword(credentialsId: "${params.registry}", usernameVariable: 'REGISTRY_USERNAME', passwordVariable: 'REGISTRY_PASSWORD')]) {
+                        sh """
+                            docker login -u $REGISTRY_USERNAME -p $REGISTRY_PASSWORD ${params.registry}
+                            docker push ${IMAGE_NAME}-${image}
+                        """
+                        echo "###### Docker image ${IMAGE_NAME}-${image} built and pushed. ######"
+                    }
+                }
+            }
+        }
+    }
+    result = BuildResult.SUCCESS
+} finally {
+    sendEmailNotif(result, buildSummary.get().toEmail(this), ['michalr@h2o.ai'])
+}

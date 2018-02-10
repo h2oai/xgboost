@@ -98,24 +98,6 @@ public class NativeLibraryLoaderChain implements INativeLibLoader {
     }
   }
 
-  /**
-   * Returns suffix of library which marks binary version (gpu, omp)
-   *
-   * @return  library suffix
-   * @throws IOException  if no library was found, or library loading fails, or suffix cannot
-   * be extracted
-   */
-  @Deprecated
-  public String getLoadedLibrarySuffix() throws IOException {
-    String libName = getLoadedLibraryName();
-    int lastIndex;
-    if (libName != null && (lastIndex = libName.lastIndexOf('_')) >= 0) {
-      return libName.substring(lastIndex + 1);
-    } else {
-      throw new IOException("Inconsistency in library name detected! libName = " + libName);
-    }
-  }
-
   /** Return compilation flags for loaded library or throws exception if no library was loaded
    *
    * @return  compilation flags of loaded XGBoost library

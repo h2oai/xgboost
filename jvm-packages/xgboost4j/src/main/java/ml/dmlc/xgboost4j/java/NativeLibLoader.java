@@ -21,12 +21,6 @@ import java.lang.reflect.Field;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 
-import static ml.dmlc.xgboost4j.java.NativeLibrary.CompilationFlags;
-import static ml.dmlc.xgboost4j.java.NativeLibrary.CompilationFlags.*;
-import static ml.dmlc.xgboost4j.java.NativeLibrary.EMPTY_COMPILATION_FLAGS;
-import static ml.dmlc.xgboost4j.java.NativeLibrary.nativeLibrary;
-import static ml.dmlc.xgboost4j.java.NativeLibraryLoaderChain.loaderChain;
-
 
 /**
  * class to load native library
@@ -37,88 +31,43 @@ public class NativeLibLoader {
   private static final Log logger = LogFactory.getLog(NativeLibLoader.class);
 
   private static boolean initialized = false;
+  private static INativeLibLoader loader = null;
   private static final String nativePath = "../../lib/";
   private static final String nativeResourcePath = "/lib/";
   private static final String[] libNames = new String[]{"xgboost4j"};
 
-  /** Default empty suffix for library which marks minimal binary lib. */
-  public static final String MINIMAL_LIB_SUFFIX = "minimal";
-
-  // Safe path in case we need to switch to original code path
-  private static final boolean ORIGINAL_LOAD_PATH = Boolean.valueOf(
-      System.getProperty("sys.xgboost.jni.original", "false"));
-
-  private static final NativeLibraryLoaderChain loader = loaderChain(
-      // GPU support enabled
-      nativeLibrary("xgboost4j_gpu", new CompilationFlags[] {WITH_GPU, WITH_OMP}),
-      // OMP support enabled
-      nativeLibrary("xgboost4j_omp", new CompilationFlags[] {WITH_OMP}),
-      // Minimum version of library - no gpu, no omp
-      nativeLibrary("xgboost4j_minimal", EMPTY_COMPILATION_FLAGS)
-  );
-
   public static synchronized void initXGBoost() throws IOException {
-    if (ORIGINAL_LOAD_PATH) {
-      if (!initialized) {
-        for (String libName : libNames) {
-          smartLoad(libName);
-        }
-        initialized = true;
-      }
-    } else {
-      if (!loader.isLoaded()) {
-        // patch classloader class
-        addNativeDir(nativePath);
-        loader.load();
-      }
+    if (!initialized) {
+      // patch classloader class
+      addNativeDir(nativePath);
+      // initialize the Loader
+      NativeLibLoaderService loaderService = NativeLibLoaderService.getInstance();
+      loader = loaderService.createLoader();
+      // load the native libs
+      loader.loadNativeLibs();
+      initialized = true;
     }
   }
 
-  /**
-   * Full name of loaded library.
-   * @return  library name (e.g., 'xgboost4j_gpu`), never returns null.
-   * @throws IOException  if no library was found or library loading fails
-   */
-  public static synchronized String getLoadedLibraryName() throws IOException {
+  public static synchronized INativeLibLoader getLoader() throws IOException {
     initXGBoost();
-    if (loader.getSuccesfullyLoaded() != null) {
-      return loader.getSuccesfullyLoaded().getName();
-    } else {
-      throw new IOException("No binary library found!");
-    }
+    return loader;
   }
 
-  /**
-   * Returns suffix of library which marks binary version (gpu, omp)
-   *
-   * @return  library suffix
-   * @throws IOException  if no library was found, or library loading fails, or suffix cannot
-   * be extracted
-   */
-  @Deprecated
-  public static synchronized String getLoadedLibrarySuffix() throws IOException {
-    String libName = getLoadedLibraryName();
-    int lastIndex = -1;
-    if (libName != null && (lastIndex = libName.lastIndexOf('_')) >= 0) {
-      return libName.substring(lastIndex + 1);
-    } else {
-      throw new IOException("Inconsistency in library name detected! libName = " + libName);
+  public static class DefaultNativeLibLoader implements INativeLibLoader {
+    @Override
+    public String name() {
+      return "DefaultNativeLibLoader";
     }
-  }
-
-  /** Return compilation flags for loaded library or throws exception if no library was loaded
-   *
-   * @return  compilation flags of loaded XGBoost library
-   * @throws IOException  if no XGBoost library was found
-   */
-  public static synchronized CompilationFlags[] getLoadedLibraryCompilationFlags()
-      throws IOException {
-    initXGBoost();
-    NativeLibrary lib = null;
-    if ((lib = (NativeLibrary) loader.getSuccesfullyLoaded()) != null) {
-      return lib.getCompilationFlags();
-    } else {
-      throw new IOException("No binary library found!");
+    @Override
+    public int priority() {
+      return 0;
+    }
+    @Override
+    public void loadNativeLibs() throws IOException {
+      for (String libName : libNames) {
+        smartLoad(libName);
+      }
     }
   }
 
@@ -222,7 +171,6 @@ public class NativeLibLoader {
    * @throws IOException exception
    */
   private static void smartLoad(String libName) throws IOException {
-    addNativeDir(nativePath);
     try {
       System.loadLibrary(libName);
     } catch (UnsatisfiedLinkError e) {

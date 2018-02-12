@@ -34,7 +34,7 @@ EOF
 
 # Build only basic package
 echo "Building package...."
-mvn -Dmaven.test.skip=true -DskipTests clean package -pl xgboost4j -am > /dev/null
+mvn -Dmaven.test.skip=true -DskipTests clean package -pl xgboost4j -am > build-log-$(date +%s).log
 
 # Create output
 rm -rf "${OUTDIR}"

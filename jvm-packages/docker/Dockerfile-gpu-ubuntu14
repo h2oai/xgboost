@@ -10,7 +10,7 @@ RUN \
     add-apt-repository -y ppa:webupd8team/java && \
     apt-get update && \
     echo oracle-java8-installer shared/accepted-oracle-license-v1-1 select true | debconf-set-selections && \
-    apt-get install -y zip oracle-java8-installer maven wget git unzip
+    apt-get install -y zip oracle-java8-installer maven wget git unzip python
 
 RUN \
     # Install CMake
@@ -27,4 +27,4 @@ RUN \
 # Add the Jenkins user
 RUN \
     groupadd -g ${JENKINS_GID} jenkins && \
-    useradd jenkins -u ${JENKINS_UID} -g jenkins
+    useradd jenkins -m -u ${JENKINS_UID} -g jenkins

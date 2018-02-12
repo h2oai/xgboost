@@ -5,6 +5,9 @@ import ai.h2o.ci.BuildResult
 import ai.h2o.ci.buildsummary.DetailsSummary
 import ai.h2o.ci.buildsummary.StagesSummary
 
+PUBLISHABLE_BRANCH_NAME = 'h2o3'
+IMAGES_MAP = ['centos6']
+
 // initialize build summary
 buildSummary('https://github.com/h2oai/xgboost', true)
 
@@ -13,27 +16,14 @@ final String REPO_URL = 'repository/releases'
 final String REGISTRY = 'docker.h2o.ai'
 // list of OSs for which to build the docker image,
 // for each OS there must by a jvm-packages/docker/Dockerfile-gpu-<OS>
-final List<String> IMAGES_MAP = ['centos6']
-
-properties([
-        parameters([
-                choice(name: 'targetOS', choices: IMAGES_MAP.join('\n'), description: 'Image used to build the artifacts '),
-                booleanParam(name: 'publish', defaultValue: false, description: 'If true, publish the local Nexus'),
-        ]),
-        pipelineTriggers([])
-])
 
 BuildResult result = BuildResult.FAILURE
 
-final String dockerImage = "${REGISTRY}/opsh2oai/h2o-3-xgboost-build-${params.targetOS}"
+def dockerImage = null
 // configurations which will be built; the name is used also inside generated .jar,
 // for example the configuration with name 'gpu' will produce 'xgboost4j-native-linux_gpu-0.7.jar'
-final List CONFIGURATIONS = [
-        [name: 'minimal', useCuda: false, useOmp: false, os: 'linux', dockerImage: dockerImage],
-        [name: 'omp', useCuda: false, useOmp: true, os: 'linux', dockerImage: dockerImage],
-        [name: 'gpu', useCuda: true, useOmp: true, os: 'linux', dockerImage: dockerImage],
-        [name: 'minimal', useCuda: false, useOmp: false, os: 'osx', node: 'osx'],
-]
+def configurations = null
+
 final Map CHECK_IMAGES = [
         minimal: [
                 [name: 'CentOS 6', dockerImage: "${REGISTRY}/opsh2oai/h2o-3-xgboost-build-centos6", os: 'linux'],
@@ -67,7 +57,17 @@ try {
     node('docker && !mr-0xc8') {
         buildSummary.stageWithSummary('Checkout and Pull') {
             deleteDir()
-            checkout scm
+            def scmEnv = checkout scm
+            setJobProperties(scmEnv)
+
+            dockerImage = "${REGISTRY}/opsh2oai/h2o-3-xgboost-build-${params.targetOS}"
+            configurations = [
+                [name: 'minimal', useCuda: false, useOmp: false, os: 'linux', dockerImage: dockerImage],
+                [name: 'omp', useCuda: false, useOmp: true, os: 'linux', dockerImage: dockerImage],
+                [name: 'gpu', useCuda: true, useOmp: true, os: 'linux', dockerImage: dockerImage],
+                [name: 'minimal', useCuda: false, useOmp: false, os: 'osx', node: 'osx'],
+            ]
+
             sh 'git submodule update --init --recursive'
             withCredentials([usernamePassword(credentialsId: REGISTRY, usernameVariable: 'REGISTRY_USERNAME', passwordVariable: 'REGISTRY_PASSWORD')]) {
                 sh """
@@ -89,7 +89,7 @@ try {
             stash 'xgboost-sources'
         }
 
-        CONFIGURATIONS.collect { config ->
+        configurations.collect { config ->
             buildSummary.stageWithSummary("Build ${config.name.toUpperCase()} with ${config.os}") {
                 try {
                     timeout(time: 60, unit: 'MINUTES') {
@@ -149,7 +149,7 @@ try {
                         cp ${MAVEN_SETTINGS_PATH} ~/.m2/settings.xml
                     """
                 }
-                CONFIGURATIONS.eachWithIndex { config, index ->
+                configurations.eachWithIndex { config, index ->
                     buildSummary.stageWithSummary("Publish ${config.os}-${config.name}") {
                         if (config.os != 'linux') {
                             unstash "xgboost-${config.os}-artifacts"
@@ -177,6 +177,19 @@ try {
     result = BuildResult.SUCCESS
 } finally {
     sendEmailNotif(result, buildSummary.get().toEmail(this), ['michalr@h2o.ai'])
+}
+
+private void setJobProperties(final scmEnv) {
+    List parametersList = []
+    parametersList += choice(name: 'targetOS', choices: IMAGES_MAP.join('\n'), description: 'Image used to build the artifacts ')
+    if (scmEnv.GIT_BRANCH == PUBLISHABLE_BRANCH_NAME) {
+        parametersList += booleanParam(name: 'publish', defaultValue: false, description: 'If true, publish the local Nexus')
+    }
+
+    properties([
+            parameters(parametersList),
+            pipelineTriggers([])
+    ])
 }
 
 private void executeBuild(final config) {

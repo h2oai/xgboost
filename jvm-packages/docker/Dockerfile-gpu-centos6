@@ -27,4 +27,4 @@ RUN \
 # Add the Jenkins user
 RUN \
     groupadd -g ${JENKINS_GID} jenkins && \
-    useradd jenkins -u ${JENKINS_UID} -g jenkins
+    useradd jenkins -m -u ${JENKINS_UID} -g jenkins

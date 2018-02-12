@@ -34,12 +34,12 @@ buildSummary.get().addStagesSummary(this, new StagesSummary())
 
 try {
     node('docker && !mr-0xc8') {
-        buildSummary.stage('Checkout') {
+        buildSummary.stageWithSummary('Checkout') {
             checkout scm
         }
 
         for (String image : IMAGES_MAP) {
-            buildSummary.stage("Build ${image.capitalize()} Image") {
+            buildSummary.stageWithSummary("Build ${image.capitalize()} Image") {
                 dir('jvm-packages/docker') {
                     sh "docker build -t ${IMAGE_NAME}-${image} -f Dockerfile-gpu-${image} ."
                 }
@@ -48,7 +48,7 @@ try {
 
         if (params.publish) {
             for (String image : IMAGES_MAP) {
-                buildSummary.stage("Publish h2o-3-xgboost-build-${image}") {
+                buildSummary.stageWithSummary("Publish h2o-3-xgboost-build-${image}") {
                     withCredentials([usernamePassword(credentialsId: "${params.registry}", usernameVariable: 'REGISTRY_USERNAME', passwordVariable: 'REGISTRY_PASSWORD')]) {
                         sh """
                             docker login -u $REGISTRY_USERNAME -p $REGISTRY_PASSWORD ${params.registry}

@@ -1,6 +1,5 @@
 @Library('test-shared-library@mr/ita/190-build-summary-emailer') _
 
-
 import ai.h2o.ci.BuildResult
 import ai.h2o.ci.buildsummary.DetailsSummary
 import ai.h2o.ci.buildsummary.StagesSummary
@@ -9,45 +8,67 @@ CENTOS_6 = 'centos6'
 UBUNTU_14 = 'ubuntu14'
 
 PUBLISHABLE_BRANCH_NAME = 'h2o3'
-IMAGES_MAP = [CENTOS_6, UBUNTU_14]
+
+ARCHIVED_FILES = 'ci_build/*.jar,**/build-log-*.log,**/ldd_check_*.log'
+
+NEXUS_BASE_URL = 'http://nexus:8081/nexus'
+REPO_URL = 'repository/releases'
+REGISTRY = 'docker.h2o.ai'
+CENTOS_DOCKER_IMAGE = "${REGISTRY}/opsh2oai/h2o-3-xgboost-build-${CENTOS_6}"
+UBUNTU_DOCKER_IMAGE = "${REGISTRY}/opsh2oai/h2o-3-xgboost-build-${UBUNTU_14}"
+XGB_MAJOR_VERSION = '0.7'
+XGB_VERSION = "${XGB_MAJOR_VERSION}.${currentBuild.number}"
 
 // initialize build summary
 buildSummary('https://github.com/h2oai/xgboost', true)
-
-final String NEXUS_BASE_URL = 'http://nexus:8081/nexus'
-final String REPO_URL = 'repository/releases'
-final String REGISTRY = 'docker.h2o.ai'
 // list of OSs for which to build the docker image,
 // for each OS there must by a jvm-packages/docker/Dockerfile-gpu-<OS>
 
 BuildResult result = BuildResult.FAILURE
 
-def dockerImage = null
-// configurations which will be built; the name is used also inside generated .jar,
-// for example the configuration with name 'gpu' will produce 'xgboost4j-native-linux_gpu-0.7.jar'
-def configurations = null
+CONFIGURATIONS = [
+    [stageName: 'Build MINIMAL with OS X', name: 'minimal', useCuda: false, useOmp: false, os: 'osx', node: 'osx', distribution: ''],
+    [stageName: 'Build MINIMAL with CentOS 6', name: 'minimal', useCuda: false, useOmp: false, os: 'linux', distribution: CENTOS_6, dockerImage: CENTOS_DOCKER_IMAGE],
 
-final Map CHECK_IMAGES = [
-    minimal: [
-        [name: 'CentOS 6', dockerImage: "${REGISTRY}/opsh2oai/h2o-3-xgboost-build-centos6", os: 'linux'],
-        [name: 'Ubuntu 16', dockerImage: "${REGISTRY}/opsh2oai/h2o-3-runtime:107", os: 'linux'],
-        [name: 'OS X', os: 'osx', node: 'osx']
+    [stageName: 'Build OMP with CentOS 6', name: 'omp', useCuda: false, useOmp: true, os: 'linux', distribution: CENTOS_6, dockerImage: CENTOS_DOCKER_IMAGE, ompVersion: 4],
+    [stageName: 'Build GPU with CentOS 6', name: 'gpu', useCuda: true, useOmp: true, os: 'linux', distribution: CENTOS_6, dockerImage: CENTOS_DOCKER_IMAGE, ompVersion: 4],
+
+    [stageName: 'Build OMP with Ubuntu 14', name: 'omp', useCuda: false, useOmp: true, os: 'linux', distribution: UBUNTU_14, dockerImage: UBUNTU_DOCKER_IMAGE, ompVersion: 3],
+    [stageName: 'Build GPU with Ubuntu 14', name: 'gpu', useCuda: true, useOmp: true, os: 'linux', distribution: UBUNTU_14, dockerImage: UBUNTU_DOCKER_IMAGE, ompVersion: 3],
+]
+
+Map CHECK_IMAGES = [
+    minimal_linux: [
+        [name: 'Check MINIMAL with CentOS 6.5', file: "xgboost4j-native-linux_minimal-${XGB_VERSION}.jar", dockerImage: "${REGISTRY}/opsh2oai/h2o-3-xgb-runtime-minimal:centos6.5", target: 'minimal', os: 'linux'],
+        [name: 'Check MINIMAL with CentOS 6.8', file: "xgboost4j-native-linux_minimal-${XGB_VERSION}.jar", dockerImage: "${REGISTRY}/opsh2oai/h2o-3-xgb-runtime-minimal:centos6.8", target: 'minimal', os: 'linux'],
+        [name: 'Check MINIMAL with CentOS 7.3', file: "xgboost4j-native-linux_minimal-${XGB_VERSION}.jar", dockerImage: "${REGISTRY}/opsh2oai/h2o-3-xgb-runtime-minimal:centos7.3", target: 'minimal', os: 'linux'],
+        [name: 'Check MINIMAL with Ubuntu 14', file: "xgboost4j-native-linux_minimal-${XGB_VERSION}.jar", dockerImage: "${REGISTRY}/opsh2oai/h2o-3-xgb-runtime-minimal:ubuntu14", target: 'minimal', os: 'linux'],
+        [name: 'Check MINIMAL with Ubuntu 16', file: "xgboost4j-native-linux_minimal-${XGB_VERSION}.jar", dockerImage: "${REGISTRY}/opsh2oai/h2o-3-xgb-runtime-minimal:ubuntu16", target: 'minimal', os: 'linux']
     ],
-    omp: [
-        [name: 'CentOS 6', dockerImage: "${REGISTRY}/opsh2oai/h2o-3-xgboost-build-centos6", os: 'linux'],
-        [name: 'Ubuntu 16', dockerImage: "${REGISTRY}/opsh2oai/h2o-3-runtime:107", os: 'linux'],
+    minimal_osx: [
+        [name: 'Check MINIMAL with OS X', file: "xgboost4j-native-osx_minimal-${XGB_VERSION}.jar", node: 'osx', target: 'minimal', os: 'osx'],
     ],
-    gpu: [
-        [name: 'CentOS 6', dockerImage: "${REGISTRY}/opsh2oai/h2o-3-xgboost-build-centos6", os: 'linux'],
-        [name: 'Ubuntu 16', dockerImage: "${REGISTRY}/opsh2oai/h2o-3-runtime:107", os: 'linux'],
+    ompv3: [
+        [name: 'Check OMP with Ubuntu 14', file: "xgboost4j-native-linux_ompv3-${XGB_VERSION}.jar", dockerImage: "${REGISTRY}/opsh2oai/h2o-3-xgb-runtime-omp:ubuntu14", target: 'omp', os: 'linux'],
+    ],
+    ompv4: [
+        [name: 'Check OMP with CentOS 6.5', file: "xgboost4j-native-linux_ompv4-${XGB_VERSION}.jar", dockerImage: "${REGISTRY}/opsh2oai/h2o-3-xgb-runtime-omp:centos6.5", target: 'omp', os: 'linux'],
+        [name: 'Check OMP with CentOS 6.8', file: "xgboost4j-native-linux_ompv4-${XGB_VERSION}.jar", dockerImage: "${REGISTRY}/opsh2oai/h2o-3-xgb-runtime-omp:centos6.8", target: 'omp', os: 'linux'],
+        [name: 'Check OMP with CentOS 7.3', file: "xgboost4j-native-linux_ompv4-${XGB_VERSION}.jar", dockerImage: "${REGISTRY}/opsh2oai/h2o-3-xgb-runtime-omp:centos7.3", target: 'omp', os: 'linux'],
+        [name: 'Check OMP with Ubuntu 16', file: "xgboost4j-native-linux_ompv4-${XGB_VERSION}.jar", dockerImage: "${REGISTRY}/opsh2oai/h2o-3-xgb-runtime-omp:ubuntu16", target: 'omp', os: 'linux']
+    ],
+    gpuv3: [
+        [name: 'Check GPU with Ubuntu 14', file: "xgboost4j-native-linux_gpuv3-${XGB_VERSION}.jar", dockerImage: "${REGISTRY}/opsh2oai/h2o-3-xgb-runtime-omp:ubuntu14", target: 'gpu', os: 'linux'],
+    ],
+    gpuv4: [
+        [name: 'Check GPU with CentOS 6.9', file: "xgboost4j-native-linux_gpuv4-${XGB_VERSION}.jar", dockerImage: "${REGISTRY}/opsh2oai/h2o-3-xgb-runtime-gpu:centos6.9", target: 'gpu', os: 'linux'],
+        [name: 'Check GPU with CentOS 7.4', file: "xgboost4j-native-linux_gpuv4-${XGB_VERSION}.jar", dockerImage: "${REGISTRY}/opsh2oai/h2o-3-xgb-runtime-gpu:centos7.4", target: 'gpu', os: 'linux'],
+        [name: 'Check GPU with Ubuntu 16', file: "xgboost4j-native-linux_gpuv4-${XGB_VERSION}.jar", dockerImage: "${REGISTRY}/opsh2oai/h2o-3-xgb-runtime-gpu:ubuntu16", target: 'gpu', os: 'linux']
     ]
 ]
 
 // use default StagesSummary implementation
 buildSummary.get().addStagesSummary(this, new StagesSummary())
-
-XGB_MAJOR_VERSION = '0.7'
-XGB_VERSION = "${XGB_MAJOR_VERSION}.${currentBuild.number}"
 
 try {
     node('docker && !mr-0xc8') {
@@ -56,26 +77,17 @@ try {
             def scmEnv = checkout scm
             setJobProperties(scmEnv)
 
-            dockerImage = "${REGISTRY}/opsh2oai/h2o-3-xgboost-build-${params.targetOS}"
-            configurations = [
-                [name: 'minimal', useCuda: false, useOmp: false, os: 'linux', dockerImage: dockerImage],
-                [name: 'omp', useCuda: false, useOmp: true, os: 'linux', dockerImage: dockerImage],
-                [name: 'gpu', useCuda: true, useOmp: true, os: 'linux', dockerImage: dockerImage],
-                [name: 'minimal', useCuda: false, useOmp: false, os: 'osx', node: 'osx'],
-            ]
-            
             // setup custom DetailsSummary
             DetailsSummary detailsSummary = new DetailsSummary()
-            detailsSummary.setEntry(this, 'Build OS', "${params.targetOS} + OS X")
             detailsSummary.setEntry(this, 'Publish', params.publish ? 'Yes' : 'No')
-            detailsSummary.setEntry(this, 'Docker image', dockerImage)
             buildSummary.get().addDetailsSummary(this, detailsSummary)
 
             sh 'git submodule update --init --recursive'
             withCredentials([usernamePassword(credentialsId: REGISTRY, usernameVariable: 'REGISTRY_USERNAME', passwordVariable: 'REGISTRY_PASSWORD')]) {
                 sh """
                     docker login -u $REGISTRY_USERNAME -p $REGISTRY_PASSWORD ${REGISTRY}
-                    docker pull ${dockerImage}
+                    docker pull ${CENTOS_DOCKER_IMAGE}
+                    docker pull ${UBUNTU_DOCKER_IMAGE}
                 """
             }
         }
@@ -90,21 +102,23 @@ try {
                 cd ..
             """
             stash 'xgboost-sources'
+            stash name: "xgboost-jar-artifacts", includes: 'ci_build/*.jar', allowEmpty: true
         }
 
-        configurations.collect { config ->
-            buildSummary.stageWithSummary("Build ${config.name.toUpperCase()} with ${config.os}") {
+        CONFIGURATIONS.collect { config ->
+            buildSummary.stageWithSummary(config.stageName) {
                 try {
                     timeout(time: 60, unit: 'MINUTES') {
                         if (config.node) {
                             node(config.node) {
                                 try {
                                     deleteDir()
+                                    unstash "xgboost-jar-artifacts"
                                     unstash 'xgboost-sources'
                                     executeBuild(config)
-                                    stash name: "xgboost-${config.os}-artifacts", includes: 'ci_build/*.jar'
+                                    stash name: "xgboost-jar-artifacts", includes: 'ci_build/*.jar'
                                 } finally {
-                                    archiveArtifacts artifacts: 'ci_build/*.jar', allowEmptyArchive: true
+                                    archiveArtifacts artifacts: ARCHIVED_FILES, allowEmptyArchive: true
                                 }
                             }
                         } else if (config.dockerImage) {
@@ -118,23 +132,23 @@ try {
                         }
                     }
                 } finally {
-                    archiveArtifacts artifacts: 'ci_build/*.jar,**/build-log-*.log,**/ldd_check_*.log', allowEmptyArchive: true
+                    archiveArtifacts artifacts: ARCHIVED_FILES, allowEmptyArchive: true
                 }
             }
         }
 
         CHECK_IMAGES.each { target, checkConfigs ->
-            checkConfigs.collect { checkConfig ->
-                buildSummary.stageWithSummary("Check ${target} with ${checkConfig.name}") {
+            checkConfigs.each { checkConfig ->
+                buildSummary.stageWithSummary(checkConfig.name) {
                     if (checkConfig.node) {
                         node(checkConfig.node) {
-                            unstash "xgboost-${checkConfig.os}-artifacts"
-                            executeCheck(checkConfig.os, target)
+                            unstash "xgboost-jar-artifacts"
+                            executeCheck(checkConfig)
                         }
                     } else if (checkConfig.dockerImage) {
                         docker.withRegistry("https://${REGISTRY}") {
                             docker.image(checkConfig.dockerImage).inside("--init") {
-                                executeCheck(checkConfig.os, target)
+                                executeCheck(checkConfig)
                             }
                         }
                     } else {
@@ -145,24 +159,29 @@ try {
         }
 
         if (params.publish) {
-            final String nexusIP = sh(script: 'dig +short nexus', returnStdout: true)
-            docker.image(dockerImage).inside("--init --add-host=nexus:${nexusIP}") {
+            String nexusIP = sh(script: 'dig +short nexus', returnStdout: true)
+            docker.image(CENTOS_DOCKER_IMAGE).inside("--init --add-host=nexus:${nexusIP}") {
                 withCredentials([file(credentialsId: 'local-nexus-settings-xml', variable: 'MAVEN_SETTINGS_PATH')]) {
                     sh """
                         mkdir -p ~/.m2
                         cp ${MAVEN_SETTINGS_PATH} ~/.m2/settings.xml
                     """
                 }
-                configurations.eachWithIndex { config, index ->
+
+                unstash "xgboost-jar-artifacts"
+
+                CONFIGURATIONS.eachWithIndex { config, index ->
                     buildSummary.stageWithSummary("Publish ${config.os}-${config.name}") {
-                        if (config.os != 'linux') {
-                            unstash "xgboost-${config.os}-artifacts"
+                        def filename = "xgboost4j-native-${config.os}_${config.name}"
+                        if (config.ompVersion != null) {
+                            filename += "v${config.ompVersion}"
                         }
+                        filename += "-${XGB_VERSION}"
                         sh """
                             cd ${WORKSPACE}/ci_build
                             export JAVA_HOME=/usr/lib/jvm/java-1.8.0-openjdk-1.8.0.161-3.b14.el6_9.x86_64
 
-                            mvn deploy:deploy-file -DgeneratePom=true -Dfile=xgboost4j-native-${config.os}_${config.name}-${XGB_VERSION}.jar -Durl=${NEXUS_BASE_URL}/${REPO_URL} -DgroupId=ai.h2o -DartifactId=xgboost4j-native-${config.os}_${config.name} -Dversion=${XGB_VERSION} -Dpackaging=jar -DrepositoryId=LocalNexus
+                            mvn deploy:deploy-file -DgeneratePom=true -Dfile=${filename}.jar -Durl=${NEXUS_BASE_URL}/${REPO_URL} -DgroupId=ai.h2o -DartifactId=${filename} -Dversion=${XGB_VERSION} -Dpackaging=jar -DrepositoryId=LocalNexus
                         """
                     }
                 }
@@ -184,15 +203,16 @@ try {
 
 private void setJobProperties(final scmEnv) {
     List parametersList = []
-    parametersList += choice(name: 'targetOS', choices: IMAGES_MAP.join('\n'), description: 'Image used to build the artifacts ')
     if (scmEnv.GIT_BRANCH == PUBLISHABLE_BRANCH_NAME) {
-        parametersList += booleanParam(name: 'publish', defaultValue: false, description: 'If true, publish the local Nexus')
+        properties([
+                parameters([booleanParam(name: 'publish', defaultValue: false, description: 'If true, publish the local Nexus')]),
+                pipelineTriggers([])
+        ])
+    } else {
+        properties([
+                pipelineTriggers([])
+        ])
     }
-
-    properties([
-            parameters(parametersList),
-            pipelineTriggers([])
-    ])
 }
 
 private void executeBuild(final config) {
@@ -209,29 +229,32 @@ private void executeBuild(final config) {
         mkdir -p build ci_build
         cd build
 
-        ${getBuildScript(config.os, config.useCuda, config.useOmp)}
+        ${getBuildScript(config.os, config.distribution, config.useCuda, config.useOmp)}
 
         cd ${WORKSPACE}/jvm-packages
         mvn versions:set -DnewVersion=${XGB_VERSION}
-        ${getJvmPackagesBuildScript(config.os, config.useCuda, config.useOmp)}
+        ${getJvmPackagesBuildScript(config.os, config.distribution, config.useCuda, config.useOmp)}
     """
+    String destFile = "${WORKSPACE}/ci_build/xgboost4j-native-${config.os}_${config.name}"
+    if (config.ompVersion != null) {
+        destFile += "v${config.ompVersion}"
+    }
+    destFile += "-${XGB_VERSION}.jar"
     sh """
         cd ${WORKSPACE}/jvm-packages
 
         cp target/h2o/xgboost4j-${XGB_VERSION}.jar ${WORKSPACE}/ci_build/xgboost4j-${XGB_VERSION}.jar
-        cp target/h2o/xgboost4j-native-${config.os}-${XGB_VERSION}.jar ${WORKSPACE}/ci_build/xgboost4j-native-${
-        config.os
-    }_${config.name}-${XGB_VERSION}.jar
+        cp target/h2o/xgboost4j-native-${config.os}-${XGB_VERSION}.jar ${destFile}
     """
 }
 
-private String getBuildScript(final String os, final boolean useCuda, final boolean useOmp) {
+private String getBuildScript(os, distribution, useCuda, useOmp) {
     switch (os) {
         case 'linux':
-            if (params.targetOS == CENTOS_6) {
+            if (distribution == CENTOS_6) {
                 return getCentOS6BuildScript(useCuda, useOmp)
             }
-            if (params.targetOS == UBUNTU_14) {
+            if (distribution == UBUNTU_14) {
                 return getUbuntu14BuildScript(useCuda, useOmp)
             }
             error "targetOS ${params.targetOS} not supported"
@@ -285,13 +308,13 @@ private String getOSXBuildScript(final boolean useCuda, final boolean useOmp) {
     """
 }
 
-private String getJvmPackagesBuildScript(final String os, final boolean useCuda, final boolean useOmp) {
+private String getJvmPackagesBuildScript(final os, final distribution, final useCuda, final useOmp) {
     switch (os) {
         case 'linux':
-            if (params.targetOS == CENTOS_6) {
+            if (distribution == CENTOS_6) {
                 return getCentOS6JvmPackagesBuildScript(useCuda, useOmp)
             }
-            if (params.targetOS == UBUNTU_14) {
+            if (distribution == UBUNTU_14) {
                 return getUbuntu14JvmPackagesBuildScript(useCuda, useOmp)
             }
             error "targetOS ${params.targetOS} not supported"
@@ -318,7 +341,7 @@ private String getCentOS6JvmPackagesBuildScript(final boolean useCuda, final boo
 private String getUbuntu14JvmPackagesBuildScript(final boolean useCuda, final boolean useOmp) {
     return """
         export JAVA_HOME=/usr/lib/jvm/java-8-oracle
-        ${getBuildJARsOpts(useCuda, useOmp)} ./build_jars.sh
+        XGB_VERSION=${XGB_VERSION} ${getBuildJARsOpts(useCuda, useOmp)} ./build_jars.sh
     """
 }
 
@@ -353,28 +376,28 @@ private String getBuildJARsOpts(final boolean useCuda, final boolean useOmp) {
     return opts.join(' ')
 }
 
-private void executeCheck(final String os, final String target) {
+private void executeCheck(final config) {
     sh """
         cd ${WORKSPACE}/ci_build
-        echo "Checking for lib/${os}_64/libxgboost4j_${target}.*"
+        echo "Checking ${config.file}"
         rm -rf check
         mkdir check
-        cp xgboost4j-native-${os}_${target}-${XGB_VERSION}.jar check/xgboost4j-native-${os}_${target}-${XGB_VERSION}.jar
+        cp ${config.file} check/${config.file}
         cd check
-        unzip xgboost4j-native-${os}_${target}-${XGB_VERSION}.jar
-        chmod +x lib/${os}_64/libxgboost4j_${target}.*
+        unzip ${config.file}
+        chmod +x lib/${config.os}_64/libxgboost4j_${config.target}.*
         
-        ${getCheckScript(os, target)}
+        ${getCheckScript(config)}
         
     """
 }
 
-private String getCheckScript(final String os, final String target) {
-    switch (os) {
+private String getCheckScript(final config) {
+    switch (config.os) {
         case 'linux':
-            return getLinuxCheckScript(target)
+            return getLinuxCheckScript(config.target)
         case 'osx':
-            return getOSXCheckScript(target)
+            return getOSXCheckScript(config.target)
         default:
             error "OS ${os} not supported"
     }

@@ -46,7 +46,8 @@ final Map CHECK_IMAGES = [
 // use default StagesSummary implementation
 buildSummary.get().addStagesSummary(this, new StagesSummary())
 
-def xgbVersion = '0.7'
+XGB_MAJOR_VERSION = '0.7'
+XGB_VERSION = "${XGB_MAJOR_VERSION}.${currentBuild.number}"
 
 try {
     node('docker && !mr-0xc8') {
@@ -98,6 +99,7 @@ try {
                         if (config.node) {
                             node(config.node) {
                                 try {
+                                    deleteDir()
                                     unstash 'xgboost-sources'
                                     executeBuild(config)
                                     stash name: "xgboost-${config.os}-artifacts", includes: 'ci_build/*.jar'
@@ -127,12 +129,12 @@ try {
                     if (checkConfig.node) {
                         node(checkConfig.node) {
                             unstash "xgboost-${checkConfig.os}-artifacts"
-                            executeCheck(checkConfig.os, target, xgbVersion)
+                            executeCheck(checkConfig.os, target)
                         }
                     } else if (checkConfig.dockerImage) {
                         docker.withRegistry("https://${REGISTRY}") {
                             docker.image(checkConfig.dockerImage).inside("--init") {
-                                executeCheck(checkConfig.os, target, xgbVersion)
+                                executeCheck(checkConfig.os, target)
                             }
                         }
                     } else {
@@ -157,9 +159,10 @@ try {
                             unstash "xgboost-${config.os}-artifacts"
                         }
                         sh """
-                            export JAVA_HOME=/usr/lib/jvm/java-1.8.0-openjdk-1.8.0.161-3.b14.el6_9.x86_64
                             cd ${WORKSPACE}/ci_build
-                            mvn deploy:deploy-file -DgeneratePom=true -Dfile=xgboost4j-native-${config.os}_${config.name}-${xgbVersion}.jar -Durl=${NEXUS_BASE_URL}/${REPO_URL} -DgroupId=ai.h2o -DartifactId=xgboost4j-native-${config.os}_${config.name} -Dversion=0.7 -Dpackaging=jar -DrepositoryId=LocalNexus
+                            export JAVA_HOME=/usr/lib/jvm/java-1.8.0-openjdk-1.8.0.161-3.b14.el6_9.x86_64
+
+                            mvn deploy:deploy-file -DgeneratePom=true -Dfile=xgboost4j-native-${config.os}_${config.name}-${XGB_VERSION}.jar -Durl=${NEXUS_BASE_URL}/${REPO_URL} -DgroupId=ai.h2o -DartifactId=xgboost4j-native-${config.os}_${config.name} -Dversion=${XGB_VERSION} -Dpackaging=jar -DrepositoryId=LocalNexus
                         """
                     }
                 }
@@ -168,9 +171,7 @@ try {
                         cd ${WORKSPACE}/ci_build
                         export JAVA_HOME=/usr/lib/jvm/java-1.8.0-openjdk-1.8.0.161-3.b14.el6_9.x86_64
 
-                        mvn deploy:deploy-file -DgeneratePom=true -Dfile=xgboost4j-${xgbVersion}.jar -Durl=${
-                        NEXUS_BASE_URL
-                    }/${REPO_URL} -DgroupId=ai.h2o -DartifactId=xgboost4j -Dversion=0.7 -Dpackaging=jar -DrepositoryId=LocalNexus
+                        mvn deploy:deploy-file -DgeneratePom=true -Dfile=xgboost4j-${XGB_VERSION}.jar -Durl=${NEXUS_BASE_URL}/${REPO_URL} -DgroupId=ai.h2o -DartifactId=xgboost4j -Dversion=${XGB_VERSION} -Dpackaging=jar -DrepositoryId=LocalNexus
                     """
                 }
             }
@@ -211,16 +212,16 @@ private void executeBuild(final config) {
         ${getBuildScript(config.os, config.useCuda, config.useOmp)}
 
         cd ${WORKSPACE}/jvm-packages
+        mvn versions:set -DnewVersion=${XGB_VERSION}
         ${getJvmPackagesBuildScript(config.os, config.useCuda, config.useOmp)}
     """
-    xgbVersion = sh(script: "(ls ${WORKSPACE}/jvm-packages/target/h2o | egrep -o [0-9]+.[0-9]+ | head -1)", returnStdout: true).trim()
     sh """
         cd ${WORKSPACE}/jvm-packages
 
-        cp target/h2o/xgboost4j-${xgbVersion}.jar ${WORKSPACE}/ci_build/xgboost4j-${xgbVersion}.jar
-        cp target/h2o/xgboost4j-native-${config.os}-${xgbVersion}.jar ${WORKSPACE}/ci_build/xgboost4j-native-${
+        cp target/h2o/xgboost4j-${XGB_VERSION}.jar ${WORKSPACE}/ci_build/xgboost4j-${XGB_VERSION}.jar
+        cp target/h2o/xgboost4j-native-${config.os}-${XGB_VERSION}.jar ${WORKSPACE}/ci_build/xgboost4j-native-${
         config.os
-    }_${config.name}-${xgbVersion}.jar
+    }_${config.name}-${XGB_VERSION}.jar
     """
 }
 
@@ -310,7 +311,7 @@ private String getCentOS6JvmPackagesBuildScript(final boolean useCuda, final boo
             echo "UNEXPECTED PYTHON VERSION"
             python --version
         fi
-        ${getBuildJARsOpts(useCuda, useOmp)} ./build_jars.sh
+        XGB_VERSION=${XGB_VERSION} ${getBuildJARsOpts(useCuda, useOmp)} ./build_jars.sh
     """
 }
 
@@ -324,7 +325,7 @@ private String getUbuntu14JvmPackagesBuildScript(final boolean useCuda, final bo
 private String getOSXJvmPackagesBuildScript(final boolean useCuda, final boolean useOmp) {
     return """
         export JAVA_HOME=\$(/usr/libexec/java_home)
-        ${getBuildJARsOpts(useCuda, useOmp)} ./build_jars.sh
+        XGB_VERSION=${XGB_VERSION} ${getBuildJARsOpts(useCuda, useOmp)} ./build_jars.sh
     """
 }
 
@@ -352,15 +353,15 @@ private String getBuildJARsOpts(final boolean useCuda, final boolean useOmp) {
     return opts.join(' ')
 }
 
-private void executeCheck(final String os, final String target, final String xgbVersion) {
+private void executeCheck(final String os, final String target) {
     sh """
         cd ${WORKSPACE}/ci_build
         echo "Checking for lib/${os}_64/libxgboost4j_${target}.*"
         rm -rf check
         mkdir check
-        cp xgboost4j-native-${os}_${target}-${xgbVersion}.jar check/xgboost4j-native-${os}_${target}-${xgbVersion}.jar
+        cp xgboost4j-native-${os}_${target}-${XGB_VERSION}.jar check/xgboost4j-native-${os}_${target}-${XGB_VERSION}.jar
         cd check
-        unzip xgboost4j-native-${os}_${target}-${xgbVersion}.jar
+        unzip xgboost4j-native-${os}_${target}-${XGB_VERSION}.jar
         chmod +x lib/${os}_64/libxgboost4j_${target}.*
         
         ${getCheckScript(os, target)}

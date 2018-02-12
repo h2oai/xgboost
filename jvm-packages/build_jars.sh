@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
 set -e
 
+if [ -z ${XGB_VERSION} ]; then
+    echo "XGB_VERSION must be set"
+    exit 1
+fi
+
 OUTDIR="target/h2o"
-JAR_FILE="xgboost4j/target/xgboost4j-0.7.jar"
+JAR_FILE="xgboost4j/target/xgboost4j-${XGB_VERSION}.jar"
 JAR_FILENAME=$(basename "$JAR_FILE")
 OS=$(uname | sed -e 's/Darwin/osx/' | tr '[:upper:]' '[:lower:]')
 BITS=$(getconf LONG_BIT)
@@ -27,6 +32,7 @@ cat <<EOF
       PLATFORM=${PLATFORM}
       USE_GPU=${USE_GPU}
       USE_OMP=${USE_OMP}
+      XGB_VERSION=${XGB_VERSION}
 
 ===========
 

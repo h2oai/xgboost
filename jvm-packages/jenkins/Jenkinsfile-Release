@@ -58,7 +58,7 @@ Map CHECK_IMAGES = [
         [name: 'Check OMP with Ubuntu 16', file: "xgboost4j-native-linux_ompv4-${XGB_VERSION}.jar", dockerImage: "${REGISTRY}/opsh2oai/h2o-3-xgb-runtime-omp:ubuntu16", target: 'omp', os: 'linux']
     ],
     gpuv3: [
-        [name: 'Check GPU with Ubuntu 14', file: "xgboost4j-native-linux_gpuv3-${XGB_VERSION}.jar", dockerImage: "${REGISTRY}/opsh2oai/h2o-3-xgb-runtime-omp:ubuntu14", target: 'gpu', os: 'linux'],
+        [name: 'Check GPU with Ubuntu 14', file: "xgboost4j-native-linux_gpuv3-${XGB_VERSION}.jar", dockerImage: "${REGISTRY}/opsh2oai/h2o-3-xgb-runtime-gpu:ubuntu14", target: 'gpu', os: 'linux'],
     ],
     gpuv4: [
         [name: 'Check GPU with CentOS 6.9', file: "xgboost4j-native-linux_gpuv4-${XGB_VERSION}.jar", dockerImage: "${REGISTRY}/opsh2oai/h2o-3-xgb-runtime-gpu:centos6.9", target: 'gpu', os: 'linux'],
@@ -377,6 +377,11 @@ private String getBuildJARsOpts(final boolean useCuda, final boolean useOmp) {
 }
 
 private void executeCheck(final config) {
+    sh '''
+        id
+        printenv
+    '''
+
     sh """
         cd ${WORKSPACE}/ci_build
         echo "Checking ${config.file}"

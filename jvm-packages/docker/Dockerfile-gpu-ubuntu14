@@ -3,6 +3,7 @@ MAINTAINER h2oai "h2o.ai"
 
 ARG JENKINS_UID='2117'
 ARG JENKINS_GID='2117'
+ARG H2O_BRANCH='h2o3'
 
 RUN \
     apt-get update && \
@@ -10,7 +11,14 @@ RUN \
     add-apt-repository -y ppa:webupd8team/java && \
     apt-get update && \
     echo oracle-java8-installer shared/accepted-oracle-license-v1-1 select true | debconf-set-selections && \
-    apt-get install -y zip oracle-java8-installer maven wget git unzip python
+    apt-get install -y zip oracle-java8-installer wget git unzip python
+
+RUN \
+    cd opt && \
+    wget http://www-us.apache.org/dist/maven/maven-3/3.5.2/binaries/apache-maven-3.5.2-bin.zip && \
+    unzip apache-maven-3.5.2-bin.zip && \
+    rm apache-maven-3.5.2-bin.zip
+ENV PATH /opt/apache-maven-3.5.2/bin:${PATH}
 
 RUN \
     # Install CMake
@@ -28,3 +36,13 @@ RUN \
 RUN \
     groupadd -g ${JENKINS_GID} jenkins && \
     useradd jenkins -m -u ${JENKINS_UID} -g jenkins
+
+COPY scripts/warmup-caches /usr/bin/
+RUN \
+    chmod a+x /usr/bin/warmup-caches
+
+USER jenkins
+RUN \
+    /usr/bin/warmup-caches
+
+USER root

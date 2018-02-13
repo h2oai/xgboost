@@ -4,9 +4,9 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <groupId>ml.dmlc</groupId>
+    <groupId>ai.h2o</groupId>
     <artifactId>xgboost-jvm</artifactId>
-    <version>0.7</version>
+    <version>0.7.1</version>
     <packaging>pom</packaging>
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
@@ -45,9 +45,74 @@
             <!--<scala.binary.version>2.11</scala.binary.version>-->
             <!--</properties>-->
         </profile>
+        <profile>
+            <id>local-nexus-snapshot</id>
+            <activation>
+                <property>
+                    <name>target.nexus</name>
+                    <value>snapshot</value>
+                </property>
+            </activation>
+            <properties/>
+            <distributionManagement>
+                <repository>
+                    <id>LocalNexus</id>
+                    <name>Local Nexus</name>
+                    <url>http://nexus:8081/nexus/repository/snapshots</url>
+                </repository>
+            </distributionManagement>
+        </profile>
+        <profile>
+            <id>local-nexus</id>
+            <activation>
+                <property>
+                    <name>target.nexus</name>
+                    <value>local</value>
+                </property>
+            </activation>
+            <properties/>
+            <distributionManagement>
+                <repository>
+                    <id>LocalNexus</id>
+                    <name>Local Nexus</name>
+                    <url>http://nexus:8081/nexus/repository/releases</url>
+                </repository>
+            </distributionManagement>
+        </profile>
+        <profile>
+            <id>public-nexus</id>
+            <activation>
+                <property>
+                    <name>target.nexus</name>
+                    <value>public</value>
+                </property>
+            </activation>
+            <properties/>
+            <distributionManagement>
+                <repository>
+                    <id>PublicNexus</id>
+                    <name>Central Maven</name>
+                    <url>https://oss.sonatype.org/service/local/staging/deploy/maven2/</url>
+                </repository>
+            </distributionManagement>
+        </profile>
     </profiles>
     <build>
         <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-gpg-plugin</artifactId>
+                <version>1.5</version>
+                <executions>
+                    <execution>
+                        <id>sign-artifacts</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>sign</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
             <plugin>
                 <groupId>org.scalastyle</groupId>
                 <artifactId>scalastyle-maven-plugin</artifactId>
@@ -74,12 +139,15 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-javadoc-plugin</artifactId>
-                <version>2.10.3</version>
-                <configuration>
-                    <excludePackageNames>
-                        ml.dmlc.xgboost4j.java.example
-                    </excludePackageNames>
-                </configuration>
+                <version>2.9.1</version>
+                <executions>
+                    <execution>
+                        <id>attach-javadocs</id>
+                        <goals>
+                            <goal>jar</goal>
+                        </goals>
+                    </execution>
+                </executions>
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
@@ -88,38 +156,37 @@
                 <executions>
                     <execution>
                         <id>attach-sources</id>
-                        <phase>verify</phase>
                         <goals>
                             <goal>jar-no-fork</goal>
                         </goals>
                     </execution>
                 </executions>
             </plugin>
-            <plugin>
-                <groupId>net.alchim31.maven</groupId>
-                <artifactId>maven-site-plugin</artifactId>
-                <version>3.0</version>
-                <configuration>
-                    <reportPlugins>
-                        <plugin>
-                            <artifactId>maven-project-info-reports-plugin</artifactId>
-                            <version>2.2</version>
-                        </plugin>
-                        <plugin>
-                            <groupId>net.alchim31.maven</groupId>
-                            <artifactId>scala-maven-plugin</artifactId>
-                            <version>3.2.1</version>
-                            <configuration>
-                                <jvmArgs>
-                                    <jvmArg>-Xms64m</jvmArg>
-                                    <jvmArg>-Xmx1024m</jvmArg>
-                                </jvmArgs>
-                            </configuration>
-                        </plugin>
-                        ...
-                    </reportPlugins>
-                </configuration>
-            </plugin>
+            <!--<plugin>-->
+                <!--<groupId>net.alchim31.maven</groupId>-->
+                <!--<artifactId>maven-site-plugin</artifactId>-->
+                <!--<version>3.0</version>-->
+                <!--<configuration>-->
+                    <!--<reportPlugins>-->
+                        <!--<plugin>-->
+                            <!--<artifactId>maven-project-info-reports-plugin</artifactId>-->
+                            <!--<version>2.2</version>-->
+                        <!--</plugin>-->
+                        <!--<plugin>-->
+                            <!--<groupId>net.alchim31.maven</groupId>-->
+                            <!--<artifactId>scala-maven-plugin</artifactId>-->
+                            <!--<version>3.2.1</version>-->
+                            <!--<configuration>-->
+                                <!--<jvmArgs>-->
+                                    <!--<jvmArg>-Xms64m</jvmArg>-->
+                                    <!--<jvmArg>-Xmx1024m</jvmArg>-->
+                                <!--</jvmArgs>-->
+                            <!--</configuration>-->
+                        <!--</plugin>-->
+                        <!--...-->
+                    <!--</reportPlugins>-->
+                <!--</configuration>-->
+            <!--</plugin>-->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-checkstyle-plugin</artifactId>
@@ -269,4 +336,30 @@
             <scope>test</scope>
         </dependency>
     </dependencies>
+
+
+    <name>xgboost-jvm</name>
+    <description>H2O XGBoost Libraries</description>
+    <url>https://github.com/h2oai/xgboost</url>
+    <inceptionYear>2013</inceptionYear>
+    <organization>
+        <name>H2O.ai</name>
+        <url>http://h2o.ai/</url>
+    </organization>
+    <licenses>
+        <license>
+            <name>The Apache Software License, Version 2.0</name>
+            <url>http://www.apache.org/licenses/LICENSE-2.0.txt</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
+    <scm>
+        <url>https://github.com/h2oai/xgboost</url>
+        <connection>scm:git:https://github.com/h2oai/xgboost.git</connection>
+        <developerConnection>scm:git:git@github.com:h2oai/xgboost.git</developerConnection>
+    </scm>
+    <issueManagement>
+        <system>Jira</system>
+        <url>http://jira.h2o.ai</url>
+    </issueManagement>
 </project>

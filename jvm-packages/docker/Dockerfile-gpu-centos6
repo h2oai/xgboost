@@ -3,6 +3,7 @@ MAINTAINER h2oai "h2o.ai"
 
 ARG JENKINS_UID='2117'
 ARG JENKINS_GID='2117'
+ARG H2O_BRANCH='h2o3'
 
 RUN \
     curl -s https://repos.fedorapeople.org/repos/dchen/apache-maven/epel-apache-maven.repo | sed 's/\$releasever/6/g' > /etc/yum.repos.d/epel-apache-maven.repo && \
@@ -28,3 +29,15 @@ RUN \
 RUN \
     groupadd -g ${JENKINS_GID} jenkins && \
     useradd jenkins -m -u ${JENKINS_UID} -g jenkins
+
+COPY scripts/warmup-caches /usr/bin/
+RUN \
+    chmod a+x /usr/bin/warmup-caches
+
+USER jenkins
+RUN \
+    source /opt/rh/python27/enable && \
+    source /opt/rh/devtoolset-3/enable && \
+    /usr/bin/warmup-caches
+
+USER root

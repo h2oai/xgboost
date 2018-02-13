@@ -1450,7 +1450,7 @@ class Booster(object):
             return nph
 
     def get_feature_interactions(self, max_fi_depth=2, max_tree_depth=-1, max_deepening=-1,
-                                 ntrees=-1, fmap='', nthread=1):
+                                 ntrees=-1, fmap='', nthread=1, varimp_sep='|'):
         """XGBoost Feature Interactions & Importance (Xgbfi)
         Parameters
         ----------
@@ -1477,8 +1477,8 @@ class Booster(object):
         length = c_bst_ulong()
         sarr = ctypes.POINTER(ctypes.c_char_p)()
         if self.feature_names is not None and fmap == '':
-            fmap = "|".join(self.feature_names) + "|"
-        elif '|' not in fmap:
+            fmap = varimp_sep.join(self.feature_names) + varimp_sep
+        elif varimp_sep not in fmap:
             if fmap != '' and not os.path.exists(fmap):
                 raise ValueError("No such file: {0}".format(fmap))
         else:

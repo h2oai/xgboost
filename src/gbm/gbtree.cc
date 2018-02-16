@@ -455,7 +455,7 @@ class Dart : public GBTree {
       unsigned tree_begin,
       unsigned tree_end) {
     const MetaInfo& info = p_fmat->info();
-    const int nthread = omp_get_max_threads();
+    const int nthread = 1;//omp_get_max_threads();
     CHECK_EQ(num_group, model_.param.num_output_group);
     InitThreadTemp(nthread);
     std::vector<bst_float>& preds = *out_preds;
@@ -472,9 +472,9 @@ class Dart : public GBTree {
       const int K = 8;
       const bst_omp_uint nsize = static_cast<bst_omp_uint>(batch.size);
       const bst_omp_uint rest = nsize % K;
-      #pragma omp parallel for schedule(static)
+      //#pragma omp parallel for schedule(static)
       for (bst_omp_uint i = 0; i < nsize - rest; i += K) {
-        const int tid = omp_get_thread_num();
+        const int tid = 0; //omp_get_thread_num();
         RegTree::FVec& feats = thread_temp[tid];
         int64_t ridx[K];
         RowBatch::Inst inst[K];

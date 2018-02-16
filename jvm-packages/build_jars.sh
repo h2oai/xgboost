@@ -46,7 +46,7 @@ EOF
 
 # Build only basic package
 echo "Building package...."
-mvn -Dmaven.test.skip=true -DskipTests -Dxgboost.jar.type=lib -Dxgboost.backend.type=${XGB_BACKEND} clean package -pl xgboost4j -am > build-log-$(date +%s).log
+mvn -Dmaven.test.skip=true -DskipTests -Dxgboost.jar.type=lib -Dxgboost.backend.type=${XGB_BACKEND} clean package -pl xgboost4j -am > build-log-${OS}-${XGB_BACKEND}-$(date +%s).log
 
 # Create output
 rm -rf "${OUTDIR}"

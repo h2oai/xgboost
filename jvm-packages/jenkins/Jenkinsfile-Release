@@ -4,6 +4,8 @@ import ai.h2o.ci.BuildResult
 import ai.h2o.ci.buildsummary.DetailsSummary
 import ai.h2o.ci.buildsummary.StagesSummary
 
+DEFAULT_NODE_LABEL = 'docker && !mr-0xc8 && !mr-0xc2'
+
 NEXUS_TARGET_LOCAL='local'
 NEXUS_TARGET_PUBLIC='public'
 
@@ -37,29 +39,29 @@ CONFIGURATIONS = [
 ]
 
 Map CHECK_IMAGES = [
-    minimal_linux: [
+    linux_minimal: [
         [name: 'Check MINIMAL with CentOS 6.5', file: "xgboost4j-native-linux_minimal-${XGB_VERSION}.jar", dockerImage: "${REGISTRY}/opsh2oai/h2o-3-xgb-runtime-minimal:centos6.5", target: 'minimal', os: 'linux'],
         [name: 'Check MINIMAL with CentOS 6.8', file: "xgboost4j-native-linux_minimal-${XGB_VERSION}.jar", dockerImage: "${REGISTRY}/opsh2oai/h2o-3-xgb-runtime-minimal:centos6.8", target: 'minimal', os: 'linux'],
         [name: 'Check MINIMAL with CentOS 7.3', file: "xgboost4j-native-linux_minimal-${XGB_VERSION}.jar", dockerImage: "${REGISTRY}/opsh2oai/h2o-3-xgb-runtime-minimal:centos7.3", target: 'minimal', os: 'linux'],
         [name: 'Check MINIMAL with Ubuntu 14', file: "xgboost4j-native-linux_minimal-${XGB_VERSION}.jar", dockerImage: "${REGISTRY}/opsh2oai/h2o-3-xgb-runtime-minimal:ubuntu14", target: 'minimal', os: 'linux'],
         [name: 'Check MINIMAL with Ubuntu 16', file: "xgboost4j-native-linux_minimal-${XGB_VERSION}.jar", dockerImage: "${REGISTRY}/opsh2oai/h2o-3-xgb-runtime-minimal:ubuntu16", target: 'minimal', os: 'linux']
     ],
-    minimal_osx: [
+    osx_minimal: [
         [name: 'Check MINIMAL with OS X', file: "xgboost4j-native-osx_minimal-${XGB_VERSION}.jar", node: 'osx', target: 'minimal', os: 'osx'],
     ],
-    ompv3: [
+    linux_ompv3: [
         [name: 'Check OMP with Ubuntu 14', file: "xgboost4j-native-linux_ompv3-${XGB_VERSION}.jar", dockerImage: "${REGISTRY}/opsh2oai/h2o-3-xgb-runtime-omp:ubuntu14", target: 'omp', os: 'linux'],
     ],
-    ompv4: [
+    linux_ompv4: [
         [name: 'Check OMP with CentOS 6.5', file: "xgboost4j-native-linux_ompv4-${XGB_VERSION}.jar", dockerImage: "${REGISTRY}/opsh2oai/h2o-3-xgb-runtime-omp:centos6.5", target: 'omp', os: 'linux'],
         [name: 'Check OMP with CentOS 6.8', file: "xgboost4j-native-linux_ompv4-${XGB_VERSION}.jar", dockerImage: "${REGISTRY}/opsh2oai/h2o-3-xgb-runtime-omp:centos6.8", target: 'omp', os: 'linux'],
         [name: 'Check OMP with CentOS 7.3', file: "xgboost4j-native-linux_ompv4-${XGB_VERSION}.jar", dockerImage: "${REGISTRY}/opsh2oai/h2o-3-xgb-runtime-omp:centos7.3", target: 'omp', os: 'linux'],
         [name: 'Check OMP with Ubuntu 16', file: "xgboost4j-native-linux_ompv4-${XGB_VERSION}.jar", dockerImage: "${REGISTRY}/opsh2oai/h2o-3-xgb-runtime-omp:ubuntu16", target: 'omp', os: 'linux']
     ],
-    gpuv3: [
+    linux_gpuv3: [
         [name: 'Check GPU with Ubuntu 14', file: "xgboost4j-native-linux_gpuv3-${XGB_VERSION}.jar", dockerImage: "${REGISTRY}/opsh2oai/h2o-3-xgb-runtime-gpu:ubuntu14", target: 'gpu', os: 'linux'],
     ],
-    gpuv4: [
+    linux_gpuv4: [
         [name: 'Check GPU with CentOS 6.9', file: "xgboost4j-native-linux_gpuv4-${XGB_VERSION}.jar", dockerImage: "${REGISTRY}/opsh2oai/h2o-3-xgb-runtime-gpu:centos6.9", target: 'gpu', os: 'linux'],
         [name: 'Check GPU with CentOS 7.4', file: "xgboost4j-native-linux_gpuv4-${XGB_VERSION}.jar", dockerImage: "${REGISTRY}/opsh2oai/h2o-3-xgb-runtime-gpu:centos7.4", target: 'gpu', os: 'linux'],
         [name: 'Check GPU with Ubuntu 16', file: "xgboost4j-native-linux_gpuv4-${XGB_VERSION}.jar", dockerImage: "${REGISTRY}/opsh2oai/h2o-3-xgb-runtime-gpu:ubuntu16", target: 'gpu', os: 'linux']
@@ -75,7 +77,7 @@ buildSummary.get().addStagesSummary(this, new StagesSummary())
 BuildResult result = BuildResult.FAILURE
 
 try {
-    node('docker && !mr-0xc8 && !mr-0xc2') {
+    node(DEFAULT_NODE_LABEL) {
         sh 'env'
 
         buildSummary.stageWithSummary('Checkout and Pull') {
@@ -85,17 +87,12 @@ try {
 
             // setup custom DetailsSummary
             DetailsSummary detailsSummary = new DetailsSummary()
-            detailsSummary.setEntry(this, 'Publish', params.publish ? 'Yes' : 'No')
+            detailsSummary.setEntry(this, 'XGBoost Version', XGB_VERSION)
+            detailsSummary.setEntry(this, 'Publish to Local Nexus', params.publishToLocalNexus ? 'Yes' : 'No')
+            detailsSummary.setEntry(this, 'Publish to Public Nexus', params.publishToPublicNexus ? 'Yes' : 'No')
             buildSummary.get().addDetailsSummary(this, detailsSummary)
 
             sh 'git submodule update --init --recursive'
-            withCredentials([usernamePassword(credentialsId: REGISTRY, usernameVariable: 'REGISTRY_USERNAME', passwordVariable: 'REGISTRY_PASSWORD')]) {
-                sh """
-                    docker login -u $REGISTRY_USERNAME -p $REGISTRY_PASSWORD ${REGISTRY}
-                    docker pull ${CENTOS_DOCKER_IMAGE}
-                    docker pull ${UBUNTU_DOCKER_IMAGE}
-                """
-            }
         }
 
         buildSummary.stageWithSummary('Patch and Stash') {
@@ -108,77 +105,74 @@ try {
                 cd ..
             """
             stash 'xgboost-sources'
-            stash name: "xgboost-jar-artifacts", includes: 'ci-build/*.jar', allowEmpty: true
         }
+    }
 
-        CONFIGURATIONS.collect { config ->
-            buildSummary.stageWithSummary(config.stageName) {
-                try {
-                    timeout(time: 60, unit: 'MINUTES') {
-                        if (config.node) {
-                            node(config.node) {
-                                try {
-                                    deleteDir()
-                                    unstash "xgboost-jar-artifacts"
-                                    unstash 'xgboost-sources'
-                                    executeBuild(config)
-                                    stash name: "xgboost-jar-artifacts", includes: 'ci-build/*.jar'
-                                } finally {
-                                    archiveArtifacts artifacts: ARCHIVED_FILES, allowEmptyArchive: true
-                                }
-                            }
-                        } else if (config.dockerImage) {
-                            docker.withRegistry("https://${REGISTRY}") {
-                                docker.image(config.dockerImage).inside("--init") {
-                                    executeBuild(config)
-                                }
-                            }
-                        } else {
-                            error "Configuration must specify either node or dockerImage"
-                        }
-                    }
-                } finally {
-                    archiveArtifacts artifacts: ARCHIVED_FILES, allowEmptyArchive: true
+    parallel(CONFIGURATIONS.collectEntries { config ->
+        [
+            config.stageName, {
+                def nodeLabel = config.node
+                if (nodeLabel == null) {
+                    nodeLabel = DEFAULT_NODE_LABEL
                 }
-            }
-        }
-
-        CHECK_IMAGES.each { target, checkConfigs ->
-            checkConfigs.each { checkConfig ->
-                buildSummary.stageWithSummary(checkConfig.name) {
-                    if (checkConfig.node) {
-                        node(checkConfig.node) {
-                            unstash "xgboost-jar-artifacts"
-                            executeCheck(checkConfig)
-                        }
-                    } else if (checkConfig.dockerImage) {
-                        docker.withRegistry("https://${REGISTRY}") {
-                            docker.image(checkConfig.dockerImage).inside("--init") {
-                                executeCheck(checkConfig)
+                buildSummary.stageWithSummary(config.stageName) {
+                    node(nodeLabel) {
+                        buildSummary.refreshStage(config.stageName)
+                        timeout(time: 60, unit: 'MINUTES') {
+                            try {
+                                deleteDir()
+                                unstash 'xgboost-sources'
+                                if (config.dockerImage) {
+                                    docker.withRegistry("https://${REGISTRY}") {
+                                        docker.image(config.dockerImage).inside("--init") {
+                                            executeBuild(config)
+                                        }
+                                    }
+                                } else {
+                                    executeBuild(config)
+                                }
+                                stash name: "xgboost-${config.os}-${getBackendFromConfiguration(config)}-artifacts", includes: 'ci-build/*.jar'
+                            } finally {
+                                archiveArtifacts artifacts: ARCHIVED_FILES, allowEmptyArchive: true
                             }
                         }
-                    } else {
-                        error "Configuration must specify either node or dockerImage"
+                        CHECK_IMAGES["${config.os}_${getBackendFromConfiguration(config)}"].each {checkConfig ->
+                            buildSummary.stageWithSummary(checkConfig.name) {
+                                if (checkConfig.dockerImage) {
+                                    docker.withRegistry("https://${REGISTRY}") {
+                                        docker.image(checkConfig.dockerImage).inside("--init") {
+                                            executeCheck(checkConfig)
+                                        }
+                                    }
+                                } else {
+                                    executeCheck(checkConfig)
+
+                                }
+                            }
+                        }
                     }
                 }
             }
-        }
+        ]
+    })
 
+    node(DEFAULT_NODE_LABEL) {
         if (params.publishToLocalNexus || params.publishToPublicNexus) {
             String nexusIP = sh(script: 'dig +short nexus', returnStdout: true)
             docker.image(CENTOS_DOCKER_IMAGE).inside("--init --add-host=nexus:${nexusIP}") {
                 withCredentials([file(credentialsId: 'nexus-settings-xml', variable: 'MAVEN_SETTINGS_PATH'), file(credentialsId: 'release-secret-key-ring-file', variable: 'SECRING_PATH')]) {
                     sh """
-                        cat ${MAVEN_SETTINGS_PATH}
-                        mkdir -p ~/.m2
-                        cp ${MAVEN_SETTINGS_PATH} ~/.m2/settings.xml
+                    cat ${MAVEN_SETTINGS_PATH}
+                    mkdir -p ~/.m2
+                    cp ${MAVEN_SETTINGS_PATH} ~/.m2/settings.xml
 
-                        gpg --import ${SECRING_PATH}
-                    """
+                    gpg --import ${SECRING_PATH}
+                """
                 }
-                unstash "xgboost-jar-artifacts"
-                CONFIGURATIONS.each {configuration ->
+                CONFIGURATIONS.each { configuration ->
                     buildSummary.stageWithSummary("Publish ${configuration.os}-${getBackendFromConfiguration(configuration)}") {
+                        stash name: "xgboost-${configuration.os}-${getBackendFromConfiguration(configuration)}-artifacts", includes: 'ci-build/*.jar'
+
                         if (params.publishToLocalNexus) {
                             uploadToNexus(configuration, NEXUS_TARGET_LOCAL)
                         }
@@ -199,9 +193,10 @@ private void setJobProperties(final scmEnv) {
     List parametersList = [
             booleanParam(name: 'publishToLocalNexus', defaultValue: false, description: 'If true, publish the local Nexus')
     ]
-    if (scmEnv.GIT_BRANCH == PUBLISHABLE_BRANCH_NAME) {
+// FIXME
+//    if (scmEnv.GIT_BRANCH == PUBLISHABLE_BRANCH_NAME) {
         parametersList += booleanParam(name: 'publishToPublicNexus', defaultValue: false, description: 'If true, publish the public Nexus')
-    }
+//    }
     properties([
             parameters(parametersList),
             pipelineTriggers([])
@@ -227,6 +222,9 @@ private void executeBuild(final config) {
         ${getBuildScript(config.os, config.distribution, config.useCuda, config.useOmp)}
 
         cd ${WORKSPACE}/jvm-packages
+        
+        mvn --version
+        
         mvn -DnewVersion=${XGB_VERSION} \
             -Dxgboost.backend.type=${backend} \
             versions:set
@@ -240,7 +238,6 @@ private void executeBuild(final config) {
     sh """
         cd ${WORKSPACE}/jvm-packages
 
-        cp target/h2o/xgboost4j-${backend}-${XGB_VERSION}.jar ${WORKSPACE}/ci-build/
         cp target/h2o/xgboost4j-native-${config.os}-${XGB_VERSION}.jar ${destFile}
     """
 }

@@ -55,6 +55,10 @@
 
 //xgbfi
 #include "../src/analysis/xgbfi.cc"
+// linear
+#include "../src/linear/linear_updater.cc"
+#include "../src/linear/updater_coordinate.cc"
+#include "../src/linear/updater_shotgun.cc"
 
 // global
 #include "../src/learner.cc"

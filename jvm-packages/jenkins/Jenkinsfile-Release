@@ -14,7 +14,7 @@ UBUNTU_14 = 'ubuntu14'
 
 PUBLISHABLE_BRANCH_NAME = 'h2o3'
 
-ARCHIVED_FILES = '**/ci-build/*.jar, **/ci-build/*.log'
+ARCHIVED_FILES = '**/ci-build/*.jar, **/ci-build/*.log, **/jvm-packages/*.jar, **/jvm-packages/*.log'
 
 REGISTRY = 'docker.h2o.ai'
 CENTOS_DOCKER_IMAGE = "${REGISTRY}/opsh2oai/h2o-3-xgboost-build-${CENTOS_6}"
@@ -23,9 +23,12 @@ UBUNTU_DOCKER_IMAGE = "${REGISTRY}/opsh2oai/h2o-3-xgboost-build-${UBUNTU_14}"
 XGB_MAJOR_VERSION = '0.7'
 XGB_VERSION = "${XGB_MAJOR_VERSION}.${currentBuild.number}"
 if (env.BRANCH_NAME != PUBLISHABLE_BRANCH_NAME) {
-    XGB_VERSION = "0.8.9"
+// FIXME
+    XGB_VERSION = "0.8.${currentBuild.number}"
 //    NEXUS_TARGET_LOCAL='snapshot'
 }
+
+CENTOS_JAVA_HOME = '/usr/lib/jvm/java-1.8.0-openjdk-1.8.0.161-3.b14.el6_9.x86_64'
 
 CONFIGURATIONS = [
     [stageName: 'Build MINIMAL with OS X', name: 'minimal', useCuda: false, useOmp: false, os: 'osx', node: 'osx', distribution: ''],
@@ -62,7 +65,7 @@ Map CHECK_IMAGES = [
         [name: 'Check GPU with Ubuntu 14', file: "xgboost4j-native-linux_gpuv3-${XGB_VERSION}.jar", dockerImage: "${REGISTRY}/opsh2oai/h2o-3-xgb-runtime-gpu:ubuntu14", target: 'gpu', os: 'linux'],
     ],
     linux_gpuv4: [
-            // FIXME handle permission denied on some nodes (mr-0xc2, mr-0xc10, ...)
+//        FIXME handle permission denied on some nodes (mr-0xc2, mr-0xc10, ...)
 //        [name: 'Check GPU with CentOS 6.9', file: "xgboost4j-native-linux_gpuv4-${XGB_VERSION}.jar", dockerImage: "${REGISTRY}/opsh2oai/h2o-3-xgb-runtime-gpu:centos6.9", target: 'gpu', os: 'linux'],
 //        [name: 'Check GPU with CentOS 7.4', file: "xgboost4j-native-linux_gpuv4-${XGB_VERSION}.jar", dockerImage: "${REGISTRY}/opsh2oai/h2o-3-xgb-runtime-gpu:centos7.4", target: 'gpu', os: 'linux'],
 //        [name: 'Check GPU with Ubuntu 16', file: "xgboost4j-native-linux_gpuv4-${XGB_VERSION}.jar", dockerImage: "${REGISTRY}/opsh2oai/h2o-3-xgb-runtime-gpu:ubuntu16", target: 'gpu', os: 'linux']
@@ -89,23 +92,62 @@ try {
             // setup custom DetailsSummary
             DetailsSummary detailsSummary = new DetailsSummary()
             detailsSummary.setEntry(this, 'XGBoost Version', XGB_VERSION)
-            detailsSummary.setEntry(this, 'Publish to Local Nexus', params.publishToLocalNexus ? 'Yes' : 'No')
-            detailsSummary.setEntry(this, 'Publish to Public Nexus', params.publishToPublicNexus ? 'Yes' : 'No')
+            detailsSummary.setEntry(this, 'Deploy to Local Nexus', params.publishToLocalNexus ? 'Yes' : 'No')
+            detailsSummary.setEntry(this, 'Deploy to Public Nexus', params.publishToPublicNexus ? 'Yes' : 'No')
             buildSummary.get().addDetailsSummary(this, detailsSummary)
 
             sh 'git submodule update --init --recursive'
         }
 
         buildSummary.stageWithSummary('Patch and Stash') {
-            sh """
-                cd ${WORKSPACE}
+            pullDockerImage(CENTOS_DOCKER_IMAGE)
+            docker.withRegistry("https://${REGISTRY}") {
+                docker.image(CENTOS_DOCKER_IMAGE).inside("--init") {
+                    sh """
+                        ${getCentOSEnvCmds()}
 
-                cd dmlc-core/
-                wget https://raw.githubusercontent.com/h2oai/xgboost/master/patches/01_dmlc_core_imports.patch
-                git apply 01_dmlc_core_imports.patch
-                cd ..
-            """
+                        cd ${WORKSPACE}
+        
+                        cd dmlc-core/
+                        wget https://raw.githubusercontent.com/h2oai/xgboost/master/patches/01_dmlc_core_imports.patch
+                        git apply 01_dmlc_core_imports.patch
+                        cd ..
+                    """
+                }
+            }
             stash 'xgboost-sources'
+        }
+    }
+
+    node(DEFAULT_NODE_LABEL) {
+        try {
+            final String stageDir = 'build-library'
+            buildSummary.stageWithSummary('Build Library', stageDir) {
+                dir(stageDir) {
+                    deleteDir()
+                    unstash 'xgboost-sources'
+                }
+                String nexusIP = sh(script: 'dig +short nexus', returnStdout: true)
+                docker.withRegistry("https://${REGISTRY}") {
+                    docker.image(CENTOS_DOCKER_IMAGE).inside("--init --add-host=nexus:${nexusIP}") {
+                        prepareMavenEnv()
+                        sh """
+                            ${getCentOSEnvCmds()}
+                            cd ${WORKSPACE}/${stageDir}/jvm-packages
+                            
+                            ${getMvnVersionChangeCmd()}
+                        """
+                        if (params.publishToLocalNexus) {
+                            deployLib(stageDir, NEXUS_TARGET_LOCAL)
+                        }
+                        if (params.publishToPublicNexus) {
+                            deployLib(stageDir, NEXUS_TARGET_PUBLIC)
+                        }
+                    }
+                }
+            }
+        } finally {
+            archiveArtifacts artifacts: ARCHIVED_FILES, allowEmptyArchive: true
         }
     }
 
@@ -130,7 +172,7 @@ try {
                                     unstash 'xgboost-sources'
                                 }
                                 if (config.dockerImage) {
-                                    pullRequiredDockerImage(config)
+                                    pullDockerImage(config)
                                     docker.withRegistry("https://${REGISTRY}") {
                                         docker.image(config.dockerImage).inside("--init") {
                                             executeBuild(config)
@@ -145,7 +187,7 @@ try {
 
                                     buildSummary.stageWithSummary(checkConfig.name, checkConfig.stageDir) {
                                         if (checkConfig.dockerImage) {
-                                            pullRequiredDockerCheckImage(checkConfig)
+                                            pullDockerCheckImage(checkConfig)
                                             docker.withRegistry("https://${REGISTRY}") {
                                                 docker.image(checkConfig.dockerImage).inside("--init") {
                                                     executeCheck(checkConfig)
@@ -173,32 +215,52 @@ try {
             cleanWs()
 
             String nexusIP = sh(script: 'dig +short nexus', returnStdout: true)
-            buildSummary.stageWithSummary('Publish') {
+            buildSummary.stageWithSummary('Deploy') {
+                pullDockerImage(CENTOS_DOCKER_IMAGE)
                 docker.image(CENTOS_DOCKER_IMAGE).inside("--init --add-host=nexus:${nexusIP}") {
-                    withCredentials([file(credentialsId: 'nexus-settings-xml', variable: 'MAVEN_SETTINGS_PATH'), file(credentialsId: 'release-secret-key-ring-file', variable: 'SECRING_PATH')]) {
-                        sh """
-                            cat ${MAVEN_SETTINGS_PATH}
-                            mkdir -p ~/.m2
-                            cp ${MAVEN_SETTINGS_PATH} ~/.m2/settings.xml
-        
-                            gpg --import ${SECRING_PATH}
-                        """
-                    }
-                    CONFIGURATIONS.each { configuration ->
-                        buildSummary.stageWithSummary("Publish ${configuration.os}-${getBackendFromConfiguration(configuration)}") {
-                            configuration.stageDir = getStageDirFromConfiguration(configuration)
+                    prepareMavenEnv()
+                    CONFIGURATIONS.each { config ->
+                        buildSummary.stageWithSummary("Deploy ${config.os}-${getBackendFromConfiguration(config)}") {
+                            config.stageDir = getStageDirFromConfiguration(config)
 
-                            dir(getStageDirFromConfiguration(configuration)) {
+                            dir(getStageDirFromConfiguration(config)) {
                                 unstash 'xgboost-sources'
                             }
-                            unstash name: "xgboost-linux-minimal-artifacts"
-                            unstash name: "xgboost-${configuration.os}-${getBackendFromConfiguration(configuration)}-artifacts"
+                            unstash name: "xgboost-${config.os}-${getBackendFromConfiguration(config)}-artifacts"
+
+                            final String backend = getBackendFromConfiguration(config)
+                            final String jarFile = "xgboost4j-native-${config.os}_${backend}-${XGB_VERSION}.jar"
+
+                            sh """
+                                export JAVA_HOME=${CENTOS_JAVA_HOME}
+
+                                cd ${WORKSPACE}/${config.stageDir}/ci-build/xgboost4j-${config.os}-${backend}
+                                
+                                echo "Copy ${jarFile}"
+                                rm -rf check
+                                mkdir -p src/main/resources
+                                cp ../${jarFile} src/main/resources
+                                
+                                echo "Prepare jar content for packaging"
+                                cd src/main/resources
+                                unzip ${jarFile}
+                                find . -maxdepth 1 -not -name '.' -and -not -name 'lib' -exec rm -rf '{}' \\;
+                                cd ../../..
+                        
+                                echo "Set correct backend and version constants in Java class"
+                                sed -i 's/!SUBST_VERSION/${XGB_VERSION}/' src/main/java/ai/h2o/*.java
+                                sed -i 's/!SUBST_BACKEND/${backend}/' src/main/java/ai/h2o/*.java
+                                sed -i 's/!SUBST_OS/${config.os}/' src/main/java/ai/h2o/*.java
+                        
+                                echo "Set correct version in POM file"
+                                ${getMvnVersionChangeCmd()}
+                            """
 
                             if (params.publishToLocalNexus) {
-                                uploadToNexus(configuration, NEXUS_TARGET_LOCAL)
+                                deployToNexus(config, NEXUS_TARGET_LOCAL)
                             }
                             if (params.publishToPublicNexus) {
-                                uploadToNexus(configuration, NEXUS_TARGET_PUBLIC)
+                                deployToNexus(config, NEXUS_TARGET_PUBLIC)
                             }
                         }
                     }
@@ -212,6 +274,49 @@ try {
     sendEmailNotif(result, buildSummary.get().toEmail(this), ['michalr@h2o.ai'])
 }
 
+/**
+ * @return Shell script used to set required CentOS environment. Exports JAVA_HOME and enables python 2.7 and devtoolset-3
+ */
+private String getCentOSEnvCmds() {
+    return """
+        export JAVA_HOME=${CENTOS_JAVA_HOME}
+        source /opt/rh/python27/enable
+        source /opt/rh/devtoolset-3/enable
+    """
+}
+
+/**
+ * Copies the maven settings file and imports the secring.gpg
+ */
+private void prepareMavenEnv() {
+    withCredentials([file(credentialsId: 'nexus-settings-xml', variable: 'MAVEN_SETTINGS_PATH'), file(credentialsId: 'release-secret-key-ring-file', variable: 'SECRING_PATH')]) {
+        sh """
+            mkdir -p ~/.m2
+            cp ${MAVEN_SETTINGS_PATH} ~/.m2/settings.xml
+
+            gpg --import ${SECRING_PATH}
+        """
+    }
+}
+
+/**
+ * Deploys the Java library to specified nexus
+ * @param targetNexus Nexus ID to deploy to
+ */
+private void deployLib(final String stageDir, final String targetNexus) {
+    sh """
+        ${getCentOSEnvCmds()}
+        cd ${WORKSPACE}/${stageDir}/jvm-packages
+        
+        mvn -Dmaven.test.skip=true -DskipTests -Dtarget.nexus=${targetNexus} -Dexclude.xgboost.lib=true clean deploy -pl xgboost4j > build-log-lib-\$(date +%s).log
+    """
+}
+
+/**
+ * Sets job properties based on the env variables from SCM. For all branches enables the option to upload to local Nexus.
+ * For h2o3 branch enables the option to upload to public Nexus.
+ * @param scmEnv env variables from SCM
+ */
 private void setJobProperties(final scmEnv) {
     List parametersList = [
             booleanParam(name: 'publishToLocalNexus', defaultValue: false, description: 'If true, publish the local Nexus')
@@ -226,6 +331,18 @@ private void setJobProperties(final scmEnv) {
     ])
 }
 
+/**
+ * 
+ * @return Returns snipped used to set the required version in POM files.
+ */
+private String getMvnVersionChangeCmd() {
+    return "mvn -DnewVersion=${XGB_VERSION} versions:set"
+}
+
+/**
+ * Builds the library (with particular backend) for provided configuration.
+ * @param config configuration used for build
+ */
 private void executeBuild(final config) {
     final String backend = getBackendFromConfiguration(config)
 
@@ -247,13 +364,12 @@ private void executeBuild(final config) {
         ${getBuildScript(config.os, config.distribution, config.useCuda, config.useOmp)}
 
         cd ${WORKSPACE}/${config.stageDir}/jvm-packages
-        
-        mvn -DnewVersion=${XGB_VERSION} \
-            -Dxgboost.backend.type=${backend} \
-            versions:set
+        ${getMvnVersionChangeCmd()}
+
         ${getJvmPackagesBuildScript(config)}
     """
-    GString destFile = "${WORKSPACE}/${config.stageDir}/ci-build/xgboost4j-native-${config.os}_${config.name}"
+    final String destDir = "${WORKSPACE}/${config.stageDir}/ci-build"
+    GString destFile = "${destDir}/xgboost4j-native-${config.os}_${config.name}"
     if (config.ompVersion != null) {
         destFile += "v${config.ompVersion}"
     }
@@ -261,11 +377,19 @@ private void executeBuild(final config) {
     sh """
         cd ${WORKSPACE}/${config.stageDir}/jvm-packages
 
-        cp build-log-* ${WORKSPACE}/${config.stageDir}/ci-build/
-        cp target/h2o/xgboost4j-native-${config.os}-${XGB_VERSION}.jar ${destFile}
+        mv build-log-* ${WORKSPACE}/${config.stageDir}/ci-build/
+        mv target/h2o/xgboost4j-native-${config.os}-${XGB_VERSION}.jar ${destFile}
     """
 }
 
+/**
+ * Returns build script for given environment 
+ * @param os OS to build for, cannot be null
+ * @param distribution Distribution to build for, might be null
+ * @param useCuda whether GPU support should be enabled
+ * @param useOmp whether OpenMP support should be enabled
+ * @return Build script for given environment
+ */
 private String getBuildScript(os, distribution, useCuda, useOmp) {
     switch (os) {
         case 'linux':
@@ -283,10 +407,16 @@ private String getBuildScript(os, distribution, useCuda, useOmp) {
     }
 }
 
+/**
+ * Returns build script for CentOS 6.
+ * @param useCuda whether GPU support should be enabled
+ * @param useOmp whether OpenMP support should be enabled
+ * @return Build script for CentOS 6
+ */
 private GString getCentOS6BuildScript(final boolean useCuda, final boolean useOmp) {
     return """
-        export JAVA_HOME=/usr/lib/jvm/java-1.8.0-openjdk-1.8.0.161-3.b14.el6_9.x86_64
-        source /opt/rh/devtoolset-3/enable
+        ${getCentOSEnvCmds()}
+        
         if [ "\$(gcc --version | head -1)" != 'gcc (GCC) 4.9.2 20150212 (Red Hat 4.9.2-6)' ]; then 
             echo "UNEXPECTED GCC VERSION"
             gcc --version
@@ -303,6 +433,12 @@ private GString getCentOS6BuildScript(final boolean useCuda, final boolean useOm
     """
 }
 
+/**
+ * Returns build script for Ubuntu 14.
+ * @param useCuda whether GPU support should be enabled
+ * @param useOmp whether OpenMP support should be enabled
+ * @return Build script for Ubuntu 14
+ */
 private GString getUbuntu14BuildScript(final boolean useCuda, final boolean useOmp) {
     return """
         export JAVA_HOME=/usr/lib/jvm/java-8-oracle
@@ -317,6 +453,12 @@ private GString getUbuntu14BuildScript(final boolean useCuda, final boolean useO
     """
 }
 
+/**
+ * Returns build script for Mac OS X.
+ * @param useCuda whether GPU support should be enabled
+ * @param useOmp whether OpenMP support should be enabled
+ * @return Build script for Mac OS X
+ */
 private GString getOSXBuildScript(final boolean useCuda, final boolean useOmp) {
     return """
         export JAVA_HOME=\$(/usr/libexec/java_home)
@@ -326,6 +468,11 @@ private GString getOSXBuildScript(final boolean useCuda, final boolean useOmp) {
     """
 }
 
+/**
+ * Returns script used to build jar library for given environment.
+ * @param config configuration of the environment being checked
+ * @return Script used to build jar library for given environment
+ */
 private String getJvmPackagesBuildScript(final config) {
     switch (config.os) {
         case 'linux':
@@ -343,11 +490,15 @@ private String getJvmPackagesBuildScript(final config) {
     }
 }
 
+/**
+ * Returns script used to build jar library for CentOS 6.
+ * @param config configuration of the environment being checked
+ * @return Script used to build jar library for CentOS 6
+ */
 private GString getCentOS6JvmPackagesBuildScript(final config) {
     return """
-        export JAVA_HOME=/usr/lib/jvm/java-1.8.0-openjdk-1.8.0.161-3.b14.el6_9.x86_64
-        source /opt/rh/devtoolset-3/enable
-        source /opt/rh/python27/enable
+        ${getCentOSEnvCmds()}
+
         if [ "\$(python --version 2>&1 | head -1)" != 'Python 2.7.13' ]; then 
             echo "UNEXPECTED PYTHON VERSION"
             python --version
@@ -357,6 +508,11 @@ private GString getCentOS6JvmPackagesBuildScript(final config) {
     """
 }
 
+/**
+ * Returns script used to build jar library for Ubuntu 14.
+ * @param config configuration of the environment being checked
+ * @return Script used to build jar library for Ubuntu 14
+ */
 private GString getUbuntu14JvmPackagesBuildScript(final config) {
     return """
         export JAVA_HOME=/usr/lib/jvm/java-8-oracle
@@ -365,6 +521,11 @@ private GString getUbuntu14JvmPackagesBuildScript(final config) {
     """
 }
 
+/**
+ * Returns script used to build jar library for Mac OS X.
+ * @param config configuration of the environment being checked
+ * @return Script used to build jar library for Mac OS X
+ */
 private GString getOSXJvmPackagesBuildScript(final config) {
     return """
         export JAVA_HOME=\$(/usr/libexec/java_home)
@@ -373,6 +534,12 @@ private GString getOSXJvmPackagesBuildScript(final config) {
     """
 }
 
+/**
+ * Returns String with options for CMake
+ * @param useCuda whether GPU support should be enabled
+ * @param useOmp whether OpenMP support should be enabled
+ * @return String with options for CMake
+ */
 private String getCMakeOpts(final boolean useCuda, final boolean useOmp) {
     String opts = '-DJVM_BINDINGS:BOOL=ON'
     if (useCuda) {
@@ -386,6 +553,12 @@ private String getCMakeOpts(final boolean useCuda, final boolean useOmp) {
     return opts
 }
 
+/**
+ * Returns String with options for build_jars.sh script
+ * @param useCuda whether GPU support should be enabled
+ * @param useOmp whether OpenMP support should be enabled
+ * @return String with options for build_jars.sh script
+ */
 private String getBuildJARsOpts(final boolean useCuda, final boolean useOmp) {
     List<String> opts = []
     if (useCuda) {
@@ -397,6 +570,10 @@ private String getBuildJARsOpts(final boolean useCuda, final boolean useOmp) {
     return opts.join(' ')
 }
 
+/**
+ * Executes check that all dependencies are satisfied for given environment.
+ * @param config configuration of the environment being checked
+ */
 private void executeCheck(final config) {
     sh '''
         id
@@ -417,6 +594,11 @@ private void executeCheck(final config) {
     """
 }
 
+/**
+ * Returns script used to check that all dependencies are satisfied for given environment.
+ * @param config configuration of the environment being checked
+ * @return Script used to check that all dependencies are satisfied for given environment
+ */
 private String getCheckScript(final config) {
     switch (config.os) {
         case 'linux':
@@ -428,9 +610,15 @@ private String getCheckScript(final config) {
     }
 }
 
+/**
+ * Returns script to check dependencies inside a linux environment.
+ * @param config configuration of the environment being checked
+ * @return script to check dependencies inside a linux environment
+ */
 private GString getLinuxCheckScript(final config) {
     final GString lddCmd = "ldd lib/linux_64/libxgboost4j_${config.target}.so"
-    final GString lddCheckFile = "ldd-check-${config.dockerImage.replaceAll('/', '-')}-linux-${config.target}.log"
+    final String dockerImage = config.dockerImage.replaceAll("${REGISTRY}/opsh2oai/", '').replaceAll('/', '-').replaceAll(':', '_')
+    final GString lddCheckFile = "ldd-check-${dockerImage}-linux-${config.target}.log"
     return """
         ${lddCmd} > ${lddCheckFile} 2>&1
         cp ${lddCheckFile} ../
@@ -442,6 +630,11 @@ private GString getLinuxCheckScript(final config) {
     """
 }
 
+/**
+ * Returns script to check dependencies inside the Mac OS X environment.
+ * @param config configuration of the environment being checked
+ * @return script to check dependencies inside the Mac OS X environment
+ */
 private GString getOSXCheckScript(final config) {
     final GString otoolCmd = "otool -L lib/osx_64/libxgboost4j_${config.target}.dylib"
     final GString lddCheckFile = "ldd-check-osx-${config.target}.log"
@@ -456,51 +649,51 @@ private GString getOSXCheckScript(final config) {
     """
 }
 
-private void uploadToNexus(final configuration, final String targetNexus) {
-    String backend = getBackendFromConfiguration(configuration)
-    if (configuration.os == 'osx') {
-        sh """
-            cp ${WORKSPACE}/linux-minimal/lib/*.so ${WORKSPACE}/${configuration.stageDir}/lib/
-        """
-    }
+/**
+ * Deploys package created from given configuration into specified Nexus.
+ * @param config configuration used to build the package
+ * @param targetNexus Nexus to deploy the package to
+ */
+private void deployToNexus(final config, final String targetNexus) {
+    String backend = getBackendFromConfiguration(config)
     sh """
-        cd ${WORKSPACE}/${configuration.stageDir}/jvm-packages
-        export JAVA_HOME=/usr/lib/jvm/java-1.8.0-openjdk-1.8.0.161-3.b14.el6_9.x86_64
-        source /opt/rh/devtoolset-3/enable
-        source /opt/rh/python27/enable  
+        ${getCentOSEnvCmds()}
         
-        rm -rf xgboost4j/check
-        rm -rf xgboost4j/ci-build
-        mkdir -p xgboost4j/ci-build
-        cp ../ci-build/xgboost4j-native-${configuration.os}_${backend}-${XGB_VERSION}.jar xgboost4j/ci-build/
-
-        mvn -DnewVersion=${XGB_VERSION} \
-            -Dxgboost.backend.type=${backend} \
-            versions:set
-        mvn -Dmaven.test.skip=true \
-            -DskipTests -Dtarget.nexus=${targetNexus} \
-            -Dxgboost.backend.type=${configuration.os}-${backend} \
-            -Dxgboost.jar.type=fat \
-            clean deploy -pl xgboost4j
-
-        rm -rf ../xgboost4j/ci-build
+        cd ${WORKSPACE}/${config.stageDir}/ci-build/xgboost4j-${config.os}-${backend}
+        
+        echo "Upload to ${targetNexus}"
+        mvn -Dtarget.nexus=${targetNexus} clean deploy
     """
 }
 
-private String getBackendFromConfiguration(final configuration) {
-    String backend = configuration.name
-    if (configuration.ompVersion) {
-        backend += "v${configuration.ompVersion}"
+/**
+ * Returns backend name created from the specified configuration
+ * @param config
+ * @return Backend name created from the specified configuration
+ */
+private String getBackendFromConfiguration(final config) {
+    String backend = config.name
+    if (config.ompVersion) {
+        backend += "v${config.ompVersion}"
     }
     return backend
 }
 
-private void pullRequiredDockerImage(final config) {
+/**
+ * Returns folder where stage handling specified configuration should be executed.
+ * @param config configuration handled by the stage
+ * @return Folder where stage handling specified configuration should be executed.
+ */
+private GString getStageDirFromConfiguration(final config) {
+    return "${config.os}-${getBackendFromConfiguration(config)}"
+}
+
+/**
+ * Pulls the required image
+ * @param requiredImage image to pull
+ */
+private void pullDockerImage(final String requiredImage) {
     withCredentials([usernamePassword(credentialsId: REGISTRY, usernameVariable: 'REGISTRY_USERNAME', passwordVariable: 'REGISTRY_PASSWORD')]) {
-        String requiredImage = CENTOS_DOCKER_IMAGE
-        if (config.distribution == UBUNTU_14) {
-            requiredImage = UBUNTU_DOCKER_IMAGE
-        }
         sh """
             docker login -u $REGISTRY_USERNAME -p $REGISTRY_PASSWORD ${REGISTRY}
             docker pull ${requiredImage}
@@ -508,15 +701,22 @@ private void pullRequiredDockerImage(final config) {
     }
 }
 
-private void pullRequiredDockerCheckImage(final config) {
-    withCredentials([usernamePassword(credentialsId: REGISTRY, usernameVariable: 'REGISTRY_USERNAME', passwordVariable: 'REGISTRY_PASSWORD')]) {
-        sh """
-            docker login -u $REGISTRY_USERNAME -p $REGISTRY_PASSWORD ${REGISTRY}
-            docker pull ${config.dockerImage}
-        """
+/**
+ * Gets the name of the image from the provided configuration and pulls this image
+ * @param config configuration to get the image name from
+ */
+private void pullDockerImage(final Map config) {
+    String requiredImage = CENTOS_DOCKER_IMAGE
+    if (config.distribution == UBUNTU_14) {
+        requiredImage = UBUNTU_DOCKER_IMAGE
     }
+    pullDockerImage(requiredImage)
 }
 
-private GString getStageDirFromConfiguration(final config) {
-    return "${config.os}-${getBackendFromConfiguration(config)}"
+/**
+ * Gets the check image from the provided configuration and pulls this image
+ * @param config configuration to get the image name from
+ */
+private void pullDockerCheckImage(final config) {
+    pullDockerImage(config.dockerImage)
 }

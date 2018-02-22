@@ -251,25 +251,34 @@ XgbModel XgbModelParser::GetXgbModelFromDump(const std::string& file_path, int m
 
 XgbModel XgbModelParser::GetXgbModelFromDump(const XgbModelDump& dump, int max_trees,
   int nthread) {
+  std::cout << "COOL1" << std::endl;
   const int nthreadmax = std::max(omp_get_num_procs() / 2 - 1, 1);
   //  const int nthreadmax = omp_get_max_threads();
   if (nthread <= 0) nthread=nthreadmax;
 
 
+  std::cout << "COOL2" << std::endl;
   int n_backup = omp_get_num_threads();
+  std::cout << "COOL3" << std::endl;
   int ntrees = static_cast<int>(dump.size());
+  std::cout << "COOL4: ntrees " << ntrees << std::endl;
   if ((max_trees < ntrees) && (max_trees >= 0)) ntrees = max_trees;
 
+  std::cout << "COOL5" << std::endl;
   XgbModel xgb_model(ntrees);
+  std::cout << "COOL6" << std::endl;
   XgbNodeLists xgb_node_lists = {};
 
   for (int i = 0; i < ntrees; ++i) {
+    std::cout << "COOL7 " << i << std::endl;
     xgb_node_lists.push_back(XgbNodeList{});
   }
 
+  std::cout << "COOL8" << std::endl;
   omp_set_num_threads(nthread);
-#pragma omp parallel for schedule(auto) num_threads(nthread)
+//#pragma omp parallel for schedule(auto) num_threads(nthread)
   for (int i = 0; i < ntrees; ++i) {
+    std::cout << "COOL9 " << i << std::endl;
     std::istringstream iss(dump[i]);
     std::string line;
     auto nodes = &xgb_node_lists[i];
@@ -279,13 +288,17 @@ XgbModel XgbModelParser::GetXgbModelFromDump(const XgbModelDump& dump, int max_t
     }
   }
 
-#pragma omp parallel for schedule(auto) num_threads(nthread)
+//#pragma omp parallel for schedule(auto) num_threads(nthread)
   for (int i = 0; i < ntrees; ++i) {
+    std::cout << "COOL10a " << i << std::endl;
     auto&& tree = std::make_shared<XgbTree>(XgbTree(xgb_node_lists[i][0], i));
+    std::cout << "COOL10b " << i << std::endl;
     ConstructXgbTree(tree, xgb_node_lists[i]);
+    std::cout << "COOL10c " << i << std::endl;
     xgb_model.trees[i] = std::move(tree);
   }
 
+  std::cout << "COOL11" << std::endl;
   omp_set_num_threads(n_backup);
   return xgb_model;
 }
@@ -293,12 +306,18 @@ XgbModel XgbModelParser::GetXgbModelFromDump(const XgbModelDump& dump, int max_t
 
 void XgbModelParser::ConstructXgbTree(XgbTreePtr tree, const XgbNodeList& nodes) {
   if (tree->root.left_child != -1) {
+    std::cout << "HELLO1a " << tree->root.left_child << std::endl;
     tree->left = std::make_shared<XgbTree>(XgbTree(nodes.at(tree->root.left_child)));
+    std::cout << "HELLO1b " << tree->root.left_child << std::endl;
     ConstructXgbTree(tree->left, nodes);
+    std::cout << "HELLO1c " << tree->root.left_child << std::endl;
   }
   if (tree->root.right_child != -1) {
+    std::cout << "HELLO2a " << tree->root.left_child << std::endl;
     tree->right = std::make_shared<XgbTree>(XgbTree(nodes.at(tree->root.right_child)));
+    std::cout << "HELLO2b " << tree->root.left_child << std::endl;
     ConstructXgbTree(tree->right, nodes);
+    std::cout << "HELLO3b " << tree->root.left_child << std::endl;
   }
 }
 
@@ -437,19 +456,27 @@ FeatureInteractions XgbModel::GetFeatureInteractions(int max_interaction_depth,
                                                      int nthread) {
   const int nthreadmax = std::max(omp_get_num_procs() / 2 - 1, 1);
   //  const int nthreadmax = omp_get_max_threads();
+  std::cout << "RUN1" << std::endl;
   if (nthread <= 0) nthread=nthreadmax;
 
+  std::cout << "RUN2" << std::endl;
   int n_backup = omp_get_num_threads();
+  std::cout << "RUN3" << std::endl;
   max_interaction_depth_ = max_interaction_depth;
+  std::cout << "RUN4" << std::endl;
   max_tree_depth_ = max_tree_depth;
+  std::cout << "RUN5" << std::endl;
   max_deepening_ = max_deepening;
 
+  std::cout << "RUN6" << std::endl;
   std::vector<FeatureInteractions> trees_feature_interactions(ntrees);
 
   //LOG(CONSOLE) << "Start get feature interactions from model parallel";
+  std::cout << "RUN7" << std::endl;
   omp_set_num_threads(nthread);
 #pragma omp parallel for schedule(auto) num_threads(nthread)
   for (int i = 0; i < ntrees; ++i) {
+  std::cout << "RUN8 " << i << std::endl;
     FeatureInteractions tfis{};
     InteractionPath cfi{};
     PathMemo memo{};
@@ -458,6 +485,7 @@ FeatureInteractions XgbModel::GetFeatureInteractions(int max_interaction_depth,
   }
   //LOG(CONSOLE) << "End get feature interactions from model parallel";
 
+  std::cout << "RUN9" << std::endl;
   FeatureInteractions fis;
 
 /*
@@ -468,13 +496,16 @@ initializer(omp_priv={})
 #pragma omp parallel for reduction(merge:fis)
 #endif //OPENMP 4.0+
 */  
+  std::cout << "RUN10" << std::endl;
   //LOG(CONSOLE) << "Start get feature interactions from model merge";
   for (int i = 0; i < ntrees; ++i) {
     FeatureInteraction::Merge(&fis, trees_feature_interactions[i]);
   }
+  std::cout << "RUN11" << std::endl;
   //LOG(CONSOLE) << "End get feature interactions from model merge";
 
   omp_set_num_threads(n_backup);
+  std::cout << "RUN12" << std::endl;
   return fis;
 }
 
@@ -539,22 +570,31 @@ std::vector<std::string> GetFeatureInteractions(const xgboost::Learner& learner,
   int max_fi_depth, int max_tree_depth, int max_deepening, int ntrees, const char* fmap,
   int nthread) {
 
+  std::cout << "STRING1" << std::endl;
   const int nthreadmax = std::max(omp_get_num_procs() / 2 - 1, 1);
+  std::cout << "STRING2" << std::endl;
   //  const int nthreadmax = omp_get_max_threads();
   if (nthread <= 0) nthread=nthreadmax;
+  std::cout << "STRING3" << std::endl;
   int n_backup = omp_get_max_threads();
+  std::cout << "STRING4" << std::endl;
   omp_set_num_threads(nthread);
+  std::cout << "STRING5" << std::endl;
 
   std::vector<std::string> feature_interactions;
+  std::cout << "STRING6" << std::endl;
   xgboost::FeatureMap feature_map;
+  std::cout << "STRING7" << std::endl;
   if (strchr(fmap, '|') != NULL) {
     int fnum = 0;
     const char* ftype = "q";
     for (auto feat : StringUtils::split(fmap, '|')) {
+      std::cout << "STRING7 " << fnum << std::endl;
       feature_map.PushBack(fnum++, feat.c_str(), ftype);
     }
   } else if (*fmap != '\0') {
     try {
+      std::cout << "STRING8" << std::endl;
       std::unique_ptr<dmlc::Stream> fs(dmlc::Stream::Create(fmap, "r"));
       dmlc::istream is(fs.get());
       feature_map.LoadText(is);
@@ -564,30 +604,39 @@ std::vector<std::string> GetFeatureInteractions(const xgboost::Learner& learner,
         "feature names wont be mapped";
     }
   }
+  std::cout << "STRING9" << std::endl;
   //LOG(CONSOLE) << "Start dump model";
   auto dump = learner.DumpModel(feature_map, true, "text");
+  std::cout << "STRING10" << std::endl;
   //LOG(CONSOLE) << "End dump model";
+  std::cout << "STRING11" << std::endl;
   if (dump.size() == 0) {
     return feature_interactions;
   }
+  std::cout << "STRING12" << std::endl;
   if (dump[0].find_first_of("bias") == 0) {
     return feature_interactions;
   }
+  std::cout << "STRING13: " << ntrees << nthread << std::endl;
   //LOG(CONSOLE) << "Start model from dump";
   auto model = xgbfi::XgbModelParser::GetXgbModelFromDump(dump, ntrees, nthread);
   //LOG(CONSOLE) << "End model from dump";
   //LOG(CONSOLE) << "Start get feature interactions from model";
+  std::cout << "STRING14" << std::endl;
   auto fi = model.GetFeatureInteractions(max_fi_depth,
                                          max_tree_depth,
                                          max_deepening,
                                          nthread);
+  std::cout << "STRING15" << std::endl;
   //LOG(CONSOLE) << "End get feature interactions from model";
   for (auto kv : fi) {
     feature_interactions.push_back(static_cast<std::string>(kv.second));
   }
 
+  std::cout << "STRING16" << std::endl;
   // restore omp state
   omp_set_num_threads(n_backup);
+  std::cout << "STRING17" << std::endl;
 
   return feature_interactions;
 }

@@ -1047,19 +1047,27 @@ XGB_DLL int XGBoosterGetFeatureInteractions(BoosterHandle handle,
                                             const char ***out_fi_array,
                                             int nthread) {
   API_BEGIN();
+  std::cout << "DOG1" << std::endl;
   Booster* bst = static_cast<Booster*>(handle);
+  std::cout << "DOG2" << std::endl;
   std::vector<std::string>& str_vecs = XGBAPIThreadLocalStore::Get()->ret_vec_str;
+  std::cout << "DOG3" << std::endl;
   std::vector<const char*>& charp_vecs = XGBAPIThreadLocalStore::Get()->ret_vec_charp;
+  std::cout << "DOG4" << std::endl;
   str_vecs = xgbfi::GetFeatureInteractions(*(bst->learner()),
                                            max_fi_depth,
                                            max_tree_depth,
                                            max_deepening,
                                            ntrees, fmap, nthread);
+  std::cout << "DOG5" << std::endl;
   charp_vecs.resize(str_vecs.size());
+  std::cout << "DOG6" << std::endl;
   for (size_t i = 0; i < str_vecs.size(); ++i) {
     charp_vecs[i] = str_vecs[i].c_str();
   }
+  std::cout << "DOG7" << std::endl;
   *out_fi_array = dmlc::BeginPtr(charp_vecs);
+  std::cout << "DOG8" << std::endl;
   *out_len = static_cast<xgboost::bst_ulong>(charp_vecs.size());
   API_END();
 }

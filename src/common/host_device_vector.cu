@@ -12,7 +12,8 @@ struct HostDeviceVectorImpl {
     : device_(device), on_d_(device >= 0) {
     if (on_d_) {
       dh::safe_cuda(cudaSetDevice(device_));
-      data_d_.resize(size);
+      if(data_d_ == nullptr) data_d_.reset(new thrust::device_vector<T>());
+      data_d_->resize(size);
     } else {
       data_h_.resize(size);
     }
@@ -22,13 +23,22 @@ struct HostDeviceVectorImpl {
   void operator=(const HostDeviceVectorImpl<T>&) = delete;
   void operator=(HostDeviceVectorImpl<T>&&) = delete;
 
-  size_t size() const { return on_d_ ? data_d_.size() : data_h_.size(); }
+  size_t size() {
+     if(on_d_){
+       if(data_d_ == nullptr) data_d_.reset(new thrust::device_vector<T>());
+       return data_d_->size();
+     }
+     else{
+       return data_h_.size();
+     }
+   }
 
   int device() const { return device_; }
 
   T* ptr_d(int device) {
     lazy_sync_device(device);
-    return data_d_.data().get();
+    if(data_d_ == nullptr) data_d_.reset(new thrust::device_vector<T>());
+    return data_d_->data().get();
   }
   thrust::device_ptr<T> tbegin(int device) {
     return thrust::device_ptr<T>(ptr_d(device));
@@ -51,7 +61,8 @@ struct HostDeviceVectorImpl {
       data_h_.resize(new_size);
     } else {
       dh::safe_cuda(cudaSetDevice(device_));
-      data_d_.resize(new_size);
+      if(data_d_ == nullptr) data_d_.reset(new thrust::device_vector<T>());
+      data_d_->resize(new_size);
       on_d_ = true;
     }
   }
@@ -62,7 +73,8 @@ struct HostDeviceVectorImpl {
     if (data_h_.size() != this->size())
       data_h_.resize(this->size());
     dh::safe_cuda(cudaSetDevice(device_));
-    thrust::copy(data_d_.begin(), data_d_.end(), data_h_.begin());
+    if(data_d_ == nullptr) data_d_.reset(new thrust::device_vector<T>());
+    thrust::copy(data_d_->begin(), data_d_->end(), data_h_.begin());
     on_d_ = false;
   }
 
@@ -73,17 +85,19 @@ struct HostDeviceVectorImpl {
       CHECK_EQ(device_, -1);
       device_ = device;
     }
-    if (data_d_.size() != this->size()) {
+    if(data_d_ == nullptr) data_d_.reset(new thrust::device_vector<T>());
+    if (data_d_->size() != this->size()) {
       dh::safe_cuda(cudaSetDevice(device_));
-      data_d_.resize(this->size());
+      if(data_d_ == nullptr) data_d_.reset(new thrust::device_vector<T>());
+      data_d_->resize(this->size());
     }
     dh::safe_cuda(cudaSetDevice(device_));
-    thrust::copy(data_h_.begin(), data_h_.end(), data_d_.begin());
+    thrust::copy(data_h_.begin(), data_h_.end(), data_d_->begin());
     on_d_ = true;
   }
 
   std::vector<T> data_h_;
-  thrust::device_vector<T> data_d_;
+  std::unique_ptr<thrust::device_vector<T>> data_d_;
   // true if there is an up-to-date copy of data on device, false otherwise
   bool on_d_;
   int device_;

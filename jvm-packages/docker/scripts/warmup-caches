@@ -1,0 +1,32 @@
+#! /bin/bash
+
+set -e
+set -x
+
+id
+env
+
+cd /home/jenkins
+
+git clone https://github.com/h2oai/xgboost
+
+cd xgboost
+
+# Checkout correct branch and init submodules
+git checkout ${H2O_BRANCH}
+git submodule update --init --recursive
+
+# Patch dmlc core
+cd dmlc-core/
+wget https://raw.githubusercontent.com/h2oai/xgboost/master/patches/01_dmlc_core_imports.patch
+git apply 01_dmlc_core_imports.patch
+cd ..
+
+cd jvm-packages
+# Load dependencies
+mvn -Dxgboost.backend.type=minimal dependency:go-offline -pl xgboost4j
+cd ..
+
+cd ..
+
+rm -rf /home/jenkins/xgboost

@@ -4,12 +4,12 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
     <parent>
-        <groupId>ml.dmlc</groupId>
+        <groupId>ai.h2o</groupId>
         <artifactId>xgboost-jvm</artifactId>
-        <version>0.7</version>
+        <version>0.8-SNAPSHOT</version>
     </parent>
     <artifactId>xgboost4j</artifactId>
-    <version>0.7</version>
+    <version>0.8-SNAPSHOT</version>
     <packaging>jar</packaging>
 
     <dependencies>
@@ -33,7 +33,30 @@
         </dependency>
     </dependencies>
 
+    <profiles>
+        <profile>
+            <id>no-lib</id>
+            <activation>
+                <property>
+                    <name>exclude.xgboost.lib</name>
+                    <value>true</value>
+                </property>
+            </activation>
+            <properties>
+                <excludeLibs>lib/*</excludeLibs>
+            </properties>
+        </profile>
+    </profiles>
+
     <build>
+      <resources>
+          <resource>
+              <directory>src/main/resources</directory>
+              <excludes>
+                  <exclude>${excludeLibs}</exclude>
+              </excludes>
+          </resource>
+      </resources>
       <plugins>
           <plugin>
               <groupId>org.apache.maven.plugins</groupId>

@@ -7,6 +7,7 @@ import ai.h2o.ci.BuildResult
 properties([
         buildDiscarder(logRotator(artifactDaysToKeepStr: '', artifactNumToKeepStr: '', daysToKeepStr: '', numToKeepStr: '25')),
         parameters([
+                string(name: 'gitBranch', defaultValue: 'mr/ita/232-upload-to-public-maven', description: 'Branch to load the Dockerfile from.'),
                 string(name: 'registry', defaultValue: 'docker.h2o.ai', description: 'Docker registry to push images to'),
                 booleanParam(name: 'publish', defaultValue: true, description: 'If true, publish the docker image'),
                 booleanParam(name: 'noCache', defaultValue: false, description: 'If true, build the docker image using the --no-cache flag')
@@ -35,13 +36,14 @@ buildSummary.get().addStagesSummary(this, new StagesSummary())
 try {
     node('docker && !mr-0xc8') {
         buildSummary.stageWithSummary('Checkout') {
-            checkout scm
+            def final scmEnv = git url: 'https://github.com/h2oai/xgboost', branch: params.gitBranch
+            env.BRANCH_NAME = scmEnv['GIT_BRANCH'].replaceAll('origin/', '')
         }
 
         for (String image : IMAGES_MAP) {
             buildSummary.stageWithSummary("Build ${image.capitalize()} Image") {
                 dir('jvm-packages/docker') {
-                    sh "docker build -t ${IMAGE_NAME}-${image} -f Dockerfile-gpu-${image} ."
+                    sh "docker build -t ${IMAGE_NAME}-${image} --build-arg H2O_BRANCH=${env.BRANCH_NAME} -f Dockerfile-gpu-${image} ."
                 }
             }
         }

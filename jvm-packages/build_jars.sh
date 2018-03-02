@@ -6,6 +6,11 @@ if [ -z ${XGB_VERSION} ]; then
     exit 1
 fi
 
+if [ -z ${XGB_BACKEND} ]; then
+    echo "XGB_BACKEND must be set"
+    exit 1
+fi
+
 OUTDIR="target/h2o"
 JAR_FILE="xgboost4j/target/xgboost4j-${XGB_VERSION}.jar"
 JAR_FILENAME=$(basename "$JAR_FILE")
@@ -33,6 +38,7 @@ cat <<EOF
       USE_GPU=${USE_GPU}
       USE_OMP=${USE_OMP}
       XGB_VERSION=${XGB_VERSION}
+      XGB_BACKEND=${XGB_BACKEND}
 
 ===========
 
@@ -40,7 +46,7 @@ EOF
 
 # Build only basic package
 echo "Building package...."
-mvn -Dmaven.test.skip=true -DskipTests clean package -pl xgboost4j -am > build-log-$(date +%s).log
+mvn -Dmaven.test.skip=true -DskipTests clean package -pl xgboost4j -am > build-log-${OS}-${XGB_BACKEND}-$(date +%s).log
 
 # Create output
 rm -rf "${OUTDIR}"
@@ -65,7 +71,7 @@ find lib -type f | while read -r f; do
     fname=${fname//./$LIB_SUFFIX.}
     mv "$f" "lib/${PLATFORM}/$fname"
 done
-native_lib_jar=${JAR_FILENAME//-/-native-${OS}-}
+native_lib_jar="xgboost4j-native-${OS}-${XGB_VERSION}.jar"
 jar -cf "${native_lib_jar}" ./lib
 rm -rf ./lib
 )

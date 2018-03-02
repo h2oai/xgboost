@@ -23,9 +23,8 @@ UBUNTU_DOCKER_IMAGE = "${REGISTRY}/opsh2oai/h2o-3-xgboost-build-${UBUNTU_14}"
 XGB_MAJOR_VERSION = '0.7'
 XGB_VERSION = "${XGB_MAJOR_VERSION}.${currentBuild.number}"
 if (env.BRANCH_NAME != PUBLISHABLE_BRANCH_NAME) {
-// FIXME
     XGB_VERSION = "0.8.${currentBuild.number}"
-//    NEXUS_TARGET_LOCAL='snapshot'
+    NEXUS_TARGET_LOCAL='snapshot'
 }
 
 CENTOS_JAVA_HOME = '/usr/lib/jvm/java-1.8.0-openjdk-1.8.0.161-3.b14.el6_9.x86_64'
@@ -321,10 +320,9 @@ private void setJobProperties(final scmEnv) {
     List parametersList = [
             booleanParam(name: 'publishToLocalNexus', defaultValue: false, description: 'If true, publish the local Nexus')
     ]
-// FIXME
-//    if (scmEnv.GIT_BRANCH == PUBLISHABLE_BRANCH_NAME) {
+    if (scmEnv.GIT_BRANCH == PUBLISHABLE_BRANCH_NAME) {
         parametersList += booleanParam(name: 'publishToPublicNexus', defaultValue: false, description: 'If true, publish the public Nexus')
-//    }
+    }
     properties([
             parameters(parametersList),
             pipelineTriggers([])

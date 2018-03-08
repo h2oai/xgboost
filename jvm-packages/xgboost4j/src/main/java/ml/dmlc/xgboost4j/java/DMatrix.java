@@ -205,7 +205,7 @@ public class DMatrix {
    * @param ncol number of columns
    * @throws XGBoostError native error
    */
-  public DMatrix(float[][] data, int nrow, int ncol) throws XGBoostError {
+  public DMatrix(float[][] data, long nrow, int ncol) throws XGBoostError {
     long[] out = new long[1];
     XGBoostJNI.checkCall(XGBoostJNI.XGDMatrixCreateFrom2DMat(data, nrow, ncol, 0.0f, out));
     handle = out[0];
@@ -218,7 +218,7 @@ public class DMatrix {
    * @param ncol number of columns
    * @param missing the specified value to represent the missing value
    */
-  public DMatrix(float[][] data, int nrow, int ncol, float missing) throws XGBoostError {
+  public DMatrix(float[][] data, long nrow, int ncol, float missing) throws XGBoostError {
     long[] out = new long[1];
     XGBoostJNI.checkCall(XGBoostJNI.XGDMatrixCreateFrom2DMat(data, nrow, ncol, missing, out));
     handle = out[0];

@@ -360,9 +360,9 @@ JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGDMatrixCreateFro
  * Signature: ([FIIF)J
  */
 JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGDMatrixCreateFrom2DMat
-  (JNIEnv *jenv, jclass jcls, jobjectArray jdata, jint jnrow, jint jncol, jfloat jmiss, jlongArray jout) {
+  (JNIEnv *jenv, jclass jcls, jobjectArray jdata, jlong jnrow, jint jncol, jfloat jmiss, jlongArray jout) {
 
-  jfloat *data = flatten_float(jenv, jdata, jnrow*jncol, 0);
+  jfloat *data = flatten_float(jenv, jdata, ((jlong)jnrow)*((jlong)jncol), 0);
 
   // OLD
   DMatrixHandle result;

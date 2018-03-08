@@ -78,7 +78,7 @@ JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGDMatrixCreateFro
  * Signature: ([FIIF[J)I
  */
 JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGDMatrixCreateFrom2DMat
-  (JNIEnv *, jclass, jobjectArray, jint, jint, jfloat, jlongArray);
+  (JNIEnv *, jclass, jobjectArray, jlong, jint, jfloat, jlongArray);
 
 
 /*

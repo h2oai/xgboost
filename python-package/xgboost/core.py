@@ -310,8 +310,6 @@ class DMatrix(object):
                  feature_names=None, feature_types=None,
                  nthread=None):
         """
-        Data matrix used in XGBoost.
-
         Parameters
         ----------
         data : string/numpy array/scipy.sparse/pd.DataFrame/DataTable
@@ -817,7 +815,7 @@ class DMatrix(object):
 
 
 class Booster(object):
-    """"A Booster of of XGBoost.
+    """A Booster of of XGBoost.
 
     Booster is the model of xgboost, that contains low level routines for
     training, prediction and evaluation.
@@ -827,8 +825,7 @@ class Booster(object):
 
     def __init__(self, params=None, cache=(), model_file=None):
         # pylint: disable=invalid-name
-        """Initialize the Booster.
-
+        """
         Parameters
         ----------
         params : dict

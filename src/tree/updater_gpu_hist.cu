@@ -224,6 +224,18 @@ struct DeviceHistogram {
   }
 };
 
+struct CalcWeightTrainParam {
+  float min_child_weight;
+  float reg_alpha;
+  float reg_lambda;
+  float max_delta_step;
+  float learning_rate;
+  __host__ __device__ CalcWeightTrainParam(const TrainParam& p)
+    : min_child_weight(p.min_child_weight), reg_alpha(p.reg_alpha),
+      reg_lambda(p.reg_lambda), max_delta_step(p.max_delta_step),
+      learning_rate(p.learning_rate) {}
+};
+
 // Manage memory for a single GPU
 struct DeviceShard {
   struct Segment {
@@ -250,7 +262,9 @@ struct DeviceShard {
   dh::dvec<float> gidx_fvalue_map;
   dh::dvec<float> min_fvalue;
   dh::dvec<int> monotone_constraints;
+  dh::dvec<bst_float> prediction_cache;
   std::vector<bst_gpair> node_sum_gradients;
+  dh::dvec<bst_gpair> node_sum_gradients_d;
   common::CompressedIterator<uint32_t> gidx;
   int row_stride;
   bst_uint row_begin_idx;  // The row offset for this shard
@@ -260,6 +274,7 @@ struct DeviceShard {
   int null_gidx_value;
   DeviceHistogram hist;
   TrainParam param;
+  bool prediction_cache_initialised;
 
   int64_t* tmp_pinned;  // Small amount of staging memory
 
@@ -277,7 +292,8 @@ struct DeviceShard {
         n_rows(row_end - row_begin),
         n_bins(n_bins),
         null_gidx_value(n_bins),
-        param(param) {
+        param(param),
+        prediction_cache_initialised(false) {
     // Convert to ELLPACK matrix representation
     int max_elements_row = 0;
     for (auto i = row_begin; i < row_end; i++) {
@@ -324,6 +340,7 @@ struct DeviceShard {
     }
     ba.allocate(device_idx, param.silent, &gidx_buffer, compressed_size_bytes,
                 &gpair, n_rows, &ridx, n_rows, &position, n_rows,
+                &prediction_cache, n_rows, &node_sum_gradients_d, max_nodes,
                 &feature_segments, gmat.cut->row_ptr.size(), &gidx_fvalue_map,
                 gmat.cut->cut.size(), &min_fvalue, gmat.cut->min_val.size(),
                 &monotone_constraints, param.monotone_constraints.size());
@@ -509,13 +526,46 @@ struct DeviceShard {
         ridx.current() + segment.begin, ridx.other() + segment.begin,
         segment.Size() * sizeof(bst_uint), cudaMemcpyDeviceToDevice));
   }
+
+  void UpdatePredictionCache(bst_float* out_preds_d) {
+    dh::safe_cuda(cudaSetDevice(device_idx));
+    if (!prediction_cache_initialised) {
+      dh::safe_cuda(cudaMemcpy
+                    (prediction_cache.data(), &out_preds_d[row_begin_idx],
+                     prediction_cache.size() * sizeof(bst_float),
+                     cudaMemcpyDefault));
+    }
+    prediction_cache_initialised = true;
+
+    CalcWeightTrainParam param_d(param);
+
+    thrust::copy(node_sum_gradients.begin(), node_sum_gradients.end(),
+                 node_sum_gradients_d.tbegin());
+    auto d_position = position.current();
+    auto d_ridx = ridx.current();
+    auto d_node_sum_gradients = node_sum_gradients_d.data();
+    auto d_prediction_cache = prediction_cache.data();
+
+    dh::launch_n(device_idx, prediction_cache.size(),
+                 [=] __device__(int local_idx) {
+                   int pos = d_position[local_idx];
+                   bst_float weight = CalcWeight(param_d, d_node_sum_gradients[pos]);
+                   d_prediction_cache[d_ridx[local_idx]] +=
+                     weight * param_d.learning_rate;
+                 });
+
+    dh::safe_cuda(cudaMemcpy
+                  (&out_preds_d[row_begin_idx], prediction_cache.data(),
+                   prediction_cache.size() * sizeof(bst_float),
+                   cudaMemcpyDefault));
+  }
 };
 
 class GPUHistMaker : public TreeUpdater {
  public:
   struct ExpandEntry;
 
-  GPUHistMaker() : initialised(false) {}
+  GPUHistMaker() : initialised(false), p_last_fmat_(nullptr) {}
   ~GPUHistMaker() {}
   void Init(
       const std::vector<std::pair<std::string, std::string>>& args) override {
@@ -534,27 +584,9 @@ class GPUHistMaker : public TreeUpdater {
     monitor.Init("updater_gpu_hist", param.debug_verbose);
   }
 
-  void Update(const std::vector<bst_gpair>& gpair, DMatrix* dmat,
-              const std::vector<RegTree*>& trees) override {
-    monitor.Start("Update", dList);
-    // TODO(canonizer): move it into the class if this ever becomes a bottleneck
-    HostDeviceVector<bst_gpair> gpair_d(gpair.size(), param.gpu_id);
-    dh::safe_cuda(cudaSetDevice(param.gpu_id));
-    thrust::copy(gpair.begin(), gpair.end(), gpair_d.tbegin(param.gpu_id));
-    Update(&gpair_d, dmat, trees);
-    monitor.Stop("Update", dList);
-  }
-
   void Update(HostDeviceVector<bst_gpair>* gpair, DMatrix* dmat,
               const std::vector<RegTree*>& trees) override {
     monitor.Start("Update", dList);
-    UpdateHelper(gpair, dmat, trees);
-    monitor.Stop("Update", dList);
-  }
-
- private:
-  void UpdateHelper(HostDeviceVector<bst_gpair>* gpair, DMatrix* dmat,
-                    const std::vector<RegTree*>& trees) {
     GradStats::CheckInfo(dmat->info());
     // rescale learning rate according to size of trees
     float lr = param.learning_rate;
@@ -573,7 +605,6 @@ class GPUHistMaker : public TreeUpdater {
     monitor.Output();
   }
 
- public:
   void InitDataOnce(DMatrix* dmat) {
     info = &dmat->info();
     monitor.Start("Quantiles", dList);
@@ -619,6 +650,7 @@ class GPUHistMaker : public TreeUpdater {
                           row_segments[cpu_thread_id + 1], n_bins, param));
     }
 
+    p_last_fmat_ = dmat;
     initialised = true;
   }
 
@@ -909,14 +941,20 @@ class GPUHistMaker : public TreeUpdater {
     omp_set_num_threads(nthread);
   }
 
-  bool UpdatePredictionCache(const DMatrix* data,
-                             std::vector<bst_float>* p_out_preds) override {
-    return false;
-  }
+  bool UpdatePredictionCache
+  (const DMatrix* data, HostDeviceVector<bst_float>* p_out_preds) override {
+    monitor.Start("UpdatePredictionCache", dList);
+    if (shards.empty() || p_last_fmat_ == nullptr || p_last_fmat_ != data)
+      return false;
 
-  bool UpdatePredictionCache(
-      const DMatrix* data, HostDeviceVector<bst_float>* p_out_preds) override {
-    return false;
+    bst_float *out_preds_d = p_out_preds->ptr_d(param.gpu_id);
+
+    #pragma omp parallel for schedule(static, 1)
+    for (int shard = 0; shard < shards.size(); ++shard) {
+      shards[shard]->UpdatePredictionCache(out_preds_d);
+    }
+    monitor.Stop("UpdatePredictionCache", dList);
+    return true;
   }
 
   struct ExpandEntry {
@@ -986,6 +1024,8 @@ class GPUHistMaker : public TreeUpdater {
   dh::AllReducer reducer;
   std::vector<ValueConstraint> node_value_constraints_;
   std::vector<int> dList;
+
+  DMatrix* p_last_fmat_;
 };
 
 XGBOOST_REGISTER_TREE_UPDATER(GPUHistMaker, "grow_gpu_hist")

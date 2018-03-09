@@ -3,14 +3,127 @@
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
-    <parent>
-        <groupId>ai.h2o</groupId>
-        <artifactId>xgboost-jvm</artifactId>
-        <version>0.8-SNAPSHOT</version>
-    </parent>
+    <groupId>ai.h2o</groupId>
     <artifactId>xgboost4j</artifactId>
     <version>0.8-SNAPSHOT</version>
     <packaging>jar</packaging>
+    <name>xgboost4j</name>
+
+    <properties>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+        <maven.compiler.source>1.7</maven.compiler.source>
+        <maven.compiler.target>1.7</maven.compiler.target>
+        <maven.version>3.3.9</maven.version>
+        <scala.version>2.11.8</scala.version>
+        <scala.binary.version>2.11</scala.binary.version>
+    </properties>
+
+    <description>H2O XGBoost Libraries</description>
+    <url>https://github.com/h2oai/xgboost</url>
+    <inceptionYear>2013</inceptionYear>
+    <organization>
+        <name>H2O.ai</name>
+        <url>http://h2o.ai/</url>
+    </organization>
+
+    <licenses>
+        <license>
+            <name>The Apache Software License, Version 2.0</name>
+            <url>http://www.apache.org/licenses/LICENSE-2.0.txt</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
+
+    <scm>
+        <url>https://github.com/h2oai/xgboost</url>
+        <connection>scm:git:https://github.com/h2oai/xgboost.git</connection>
+        <developerConnection>scm:git:git@github.com:h2oai/xgboost.git</developerConnection>
+    </scm>
+
+    <developers>
+        <developer>
+            <id>oss</id>
+            <name>Open Source Google Group</name>
+            <email>https://groups.google.com/forum/#!forum/h2ostream</email>
+        </developer>
+    </developers>
+
+    <issueManagement>
+        <system>Jira</system>
+        <url>http://jira.h2o.ai</url>
+    </issueManagement>
+    <profiles>
+        <profile>
+            <id>local-nexus-snapshot</id>
+            <activation>
+                <property>
+                    <name>target.nexus</name>
+                    <value>snapshot</value>
+                </property>
+            </activation>
+            <properties/>
+            <distributionManagement>
+                <repository>
+                    <id>LocalNexus</id>
+                    <name>Local Nexus</name>
+                    <url>http://nexus:8081/nexus/repository/snapshots</url>
+                </repository>
+            </distributionManagement>
+        </profile>
+        <profile>
+            <id>local-nexus</id>
+            <activation>
+                <property>
+                    <name>target.nexus</name>
+                    <value>local</value>
+                </property>
+            </activation>
+            <properties/>
+            <distributionManagement>
+                <repository>
+                    <id>LocalNexus</id>
+                    <name>Local Nexus</name>
+                    <url>http://nexus:8081/nexus/repository/releases</url>
+                </repository>
+            </distributionManagement>
+        </profile>
+        <profile>
+            <id>public-nexus</id>
+            <activation>
+                <property>
+                    <name>target.nexus</name>
+                    <value>public</value>
+                </property>
+            </activation>
+            <properties/>
+            <distributionManagement>
+                <repository>
+                    <id>PublicNexus</id>
+                    <name>Central Maven</name>
+                    <url>https://oss.sonatype.org/service/local/staging/deploy/maven2/</url>
+                </repository>
+            </distributionManagement>
+        </profile>
+        <profile>
+            <id>spark-2.x</id>
+            <activation>
+                <activeByDefault>true</activeByDefault>
+            </activation>
+        </profile>
+        <profile>
+            <id>no-lib</id>
+            <activation>
+                <property>
+                    <name>exclude.xgboost.lib</name>
+                    <value>true</value>
+                </property>
+            </activation>
+            <properties>
+                <excludeLibs>lib/*</excludeLibs>
+            </properties>
+        </profile>
+    </profiles>
 
     <dependencies>
         <dependency>
@@ -26,27 +139,37 @@
             <scope>compile</scope>
         </dependency>
         <dependency>
-            <groupId>com.typesafe.akka</groupId>
-            <artifactId>akka-testkit_${scala.binary.version}</artifactId>
-            <version>2.3.11</version>
+            <groupId>com.esotericsoftware.kryo</groupId>
+            <artifactId>kryo</artifactId>
+            <version>2.21</version>
+        </dependency>
+        <dependency>
+            <groupId>org.scala-lang</groupId>
+            <artifactId>scala-compiler</artifactId>
+            <version>${scala.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.scala-lang</groupId>
+            <artifactId>scala-reflect</artifactId>
+            <version>${scala.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.scala-lang</groupId>
+            <artifactId>scala-library</artifactId>
+            <version>${scala.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>commons-logging</groupId>
+            <artifactId>commons-logging</artifactId>
+            <version>1.2</version>
+        </dependency>
+        <dependency>
+            <groupId>org.scalatest</groupId>
+            <artifactId>scalatest_${scala.binary.version}</artifactId>
+            <version>3.0.0</version>
             <scope>test</scope>
         </dependency>
     </dependencies>
-
-    <profiles>
-        <profile>
-            <id>no-lib</id>
-            <activation>
-                <property>
-                    <name>exclude.xgboost.lib</name>
-                    <value>true</value>
-                </property>
-            </activation>
-            <properties>
-                <excludeLibs>lib/*</excludeLibs>
-            </properties>
-        </profile>
-    </profiles>
 
     <build>
       <resources>
@@ -60,12 +183,48 @@
       <plugins>
           <plugin>
               <groupId>org.apache.maven.plugins</groupId>
+              <artifactId>maven-gpg-plugin</artifactId>
+              <version>1.5</version>
+              <executions>
+                  <execution>
+                      <id>sign-artifacts</id>
+                      <phase>verify</phase>
+                      <goals>
+                          <goal>sign</goal>
+                      </goals>
+                  </execution>
+              </executions>
+          </plugin>
+          <plugin>
+              <groupId>org.apache.maven.plugins</groupId>
               <artifactId>maven-javadoc-plugin</artifactId>
               <version>2.10.3</version>
               <configuration>
-                  <show>protected</show>
-                  <nohelp>true</nohelp>
+                  <excludePackageNames>
+                      ai.h2o.xgboost4j.java.example
+                  </excludePackageNames>
               </configuration>
+              <executions>
+                  <execution>
+                      <id>attach-javadocs</id>
+                      <goals>
+                          <goal>jar</goal>
+                      </goals>
+                  </execution>
+              </executions>
+          </plugin>
+          <plugin>
+              <groupId>org.apache.maven.plugins</groupId>
+              <artifactId>maven-source-plugin</artifactId>
+              <version>3.0.1</version>
+              <executions>
+                  <execution>
+                      <id>attach-sources</id>
+                      <goals>
+                          <goal>jar-no-fork</goal>
+                      </goals>
+                  </execution>
+              </executions>
           </plugin>
           <plugin>
               <groupId>org.apache.maven.plugins</groupId>
@@ -89,7 +248,7 @@
                           <arguments>
                             <argument>create_jni.py</argument>
                           </arguments>
-                          <workingDirectory>${user.dir}</workingDirectory>
+                          <workingDirectory>${user.dir}/..</workingDirectory>
                       </configuration>
                   </execution> 
                   <!--
@@ -108,6 +267,41 @@
                           <workingDirectory>${user.dir}</workingDirectory>
                       </configuration>
                   </execution>-->
+              </executions>
+          </plugin>
+          <plugin>
+              <groupId>net.alchim31.maven</groupId>
+              <artifactId>scala-maven-plugin</artifactId>
+              <version>3.2.2</version>
+              <executions>
+                  <execution>
+                      <id>compile</id>
+                      <goals>
+                          <goal>compile</goal>
+                      </goals>
+                      <phase>compile</phase>
+                  </execution>
+                  <execution>
+                      <id>test-compile</id>
+                      <goals>
+                          <goal>testCompile</goal>
+                      </goals>
+                      <phase>test-compile</phase>
+                  </execution>
+                  <execution>
+                      <phase>process-resources</phase>
+                      <goals>
+                          <goal>compile</goal>
+                      </goals>
+                  </execution>
+                  <execution>
+                      <id>scala-compile-first</id>
+                      <phase>process-resources</phase>
+                      <goals>
+                          <goal>compile</goal>
+                          <goal>add-source</goal>
+                      </goals>
+                  </execution>
               </executions>
           </plugin>
       </plugins>

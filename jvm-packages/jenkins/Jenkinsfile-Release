@@ -14,7 +14,7 @@ UBUNTU_14 = 'ubuntu14'
 
 PUBLISHABLE_BRANCH_NAME = 'h2o3'
 
-ARCHIVED_FILES = '**/ci-build/*.jar, **/ci-build/*.log, **/jvm-packages/*.jar, **/jvm-packages/*.log'
+ARCHIVED_FILES = '**/ci-build/*.jar, **/ci-build/*.log, **/jvm-packages/xgboost4j/*.jar, **/jvm-packages/xgboost4j/*.log'
 
 REGISTRY = 'docker.h2o.ai'
 CENTOS_DOCKER_IMAGE = "${REGISTRY}/opsh2oai/h2o-3-xgboost-build-${CENTOS_6}"
@@ -23,7 +23,7 @@ UBUNTU_DOCKER_IMAGE = "${REGISTRY}/opsh2oai/h2o-3-xgboost-build-${UBUNTU_14}"
 XGB_MAJOR_VERSION = '0.7'
 XGB_VERSION = "${XGB_MAJOR_VERSION}.${currentBuild.number}"
 if (env.BRANCH_NAME != PUBLISHABLE_BRANCH_NAME) {
-    XGB_VERSION = "0.8.${currentBuild.number}"
+    XGB_VERSION = "0.8-SNAPSHOT"
     NEXUS_TARGET_LOCAL='snapshot'
 }
 
@@ -132,7 +132,7 @@ try {
                         prepareMavenEnv()
                         sh """
                             ${getCentOSEnvCmds()}
-                            cd ${WORKSPACE}/${stageDir}/jvm-packages
+                            cd ${WORKSPACE}/${stageDir}/jvm-packages/xgboost4j
                             
                             ${getMvnVersionChangeCmd()}
                         """
@@ -305,9 +305,9 @@ private void prepareMavenEnv() {
 private void deployLib(final String stageDir, final String targetNexus) {
     sh """
         ${getCentOSEnvCmds()}
-        cd ${WORKSPACE}/${stageDir}/jvm-packages
+        cd ${WORKSPACE}/${stageDir}/jvm-packages/xgboost4j
         
-        mvn -Dmaven.test.skip=true -DskipTests -Dtarget.nexus=${targetNexus} -Dexclude.xgboost.lib=true clean deploy -pl xgboost4j > build-log-lib-\$(date +%s).log
+        mvn -Dmaven.test.skip=true -DskipTests -Dtarget.nexus=${targetNexus} -Dexclude.xgboost.lib=true clean deploy > build-log-lib-\$(date +%s).log
     """
 }
 
@@ -342,7 +342,6 @@ private String getMvnVersionChangeCmd() {
  * @param config configuration used for build
  */
 private void executeBuild(final config) {
-    final String backend = getBackendFromConfiguration(config)
 
     sh '''
         id
@@ -361,7 +360,7 @@ private void executeBuild(final config) {
 
         ${getBuildScript(config.os, config.distribution, config.useCuda, config.useOmp)}
 
-        cd ${WORKSPACE}/${config.stageDir}/jvm-packages
+        cd ${WORKSPACE}/${config.stageDir}/jvm-packages/xgboost4j
         ${getMvnVersionChangeCmd()}
 
         ${getJvmPackagesBuildScript(config)}
@@ -373,7 +372,7 @@ private void executeBuild(final config) {
     }
     destFile += "-${XGB_VERSION}.jar"
     sh """
-        cd ${WORKSPACE}/${config.stageDir}/jvm-packages
+        cd ${WORKSPACE}/${config.stageDir}/jvm-packages/xgboost4j
 
         mv build-log-* ${WORKSPACE}/${config.stageDir}/ci-build/
         mv target/h2o/xgboost4j-native-${config.os}-${XGB_VERSION}.jar ${destFile}

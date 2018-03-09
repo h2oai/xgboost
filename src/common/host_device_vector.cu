@@ -13,7 +13,7 @@ struct HostDeviceVectorImpl {
     : device_(device), on_d_(device >= 0) {
     if (on_d_) {
       dh::safe_cuda(cudaSetDevice(device_));
-      data_d_.resize(size, v);
+      data_d_->resize(size, v);
     } else {
       data_h_.resize(size, v);
     }
@@ -26,7 +26,7 @@ struct HostDeviceVectorImpl {
       dh::safe_cuda(cudaSetDevice(device_));
       if(data_d_ == nullptr) data_d_.reset(new thrust::device_vector<T>());
       data_d_->resize(init.size());
-      thrust::copy(init.begin(), init.end(), data_d_.begin());
+      thrust::copy(init.begin(), init.end(), data_d_->begin());
     } else {
       data_h_ = init;
     }

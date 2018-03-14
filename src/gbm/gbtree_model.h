@@ -111,6 +111,23 @@ struct GBTreeModel {
   std::vector<std::string> DumpModel(const FeatureMap& fmap, bool with_stats,
                                      std::string format) const {
     std::vector<std::string> dump;
+    if (format == "mojo") {
+      std::stringstream fo("");
+      fo.precision(20);
+      fo << "Version 0.1.0\n"
+         << "num_output_group: " << param.num_output_group << "\n"
+         << "base_margin: " << base_margin << "\n";
+      if (param.num_output_group > 1) {
+        fo << "tree_info: [";
+        for (size_t i = 0; i < tree_info.size(); ++i) {
+          if (i != 0) fo << ",";
+          fo << tree_info[i];
+        }
+        fo << "]\n";
+      }
+      fo << "\n";
+      dump.push_back(fo.str());
+    }
     for (size_t i = 0; i < trees.size(); i++) {
       dump.push_back(trees[i]->DumpModel(fmap, with_stats, format));
     }

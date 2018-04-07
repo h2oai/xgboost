@@ -376,6 +376,7 @@ JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGDMatrixCreateFro
   bst_ulong ncol = (bst_ulong)jncol;
   jint ret = (jint) XGDMatrixCreateFromMat((float const *)data, nrow, ncol, jmiss, &result);
   setHandle(jenv, jout, result);
+  delete[] data;
   return ret;
 }
 

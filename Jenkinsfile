@@ -9,7 +9,7 @@ dockerRun = 'tests/ci_build/ci_build.sh'
 def buildMatrix = [
     [ "enabled": true,  "os" : "linux", "withGpu": true,  "withOmp": true, "pythonVersion": "2.7" ],
     [ "enabled": true,  "os" : "linux", "withGpu": false, "withOmp": true, "pythonVersion": "2.7" ],
-//    [ "enabled": false, "os" : "osx",   "withGpu": false, "withOmp": false, "pythonVersion": "2.7" ],
+    [ "enabled": false, "os" : "osx",   "withGpu": false, "withOmp": false, "pythonVersion": "2.7" ],
 ]
 
 pipeline {

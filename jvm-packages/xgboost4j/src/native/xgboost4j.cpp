@@ -283,6 +283,9 @@ JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGDMatrixCreateFro
   jint ret = (jint) XGDMatrixCreateFromCSREx((size_t const *)indptr, (unsigned int const *)indices, (float const *)data, nindptr, nelem, jcol, &result);
 
   setHandle(jenv, jout, result);
+  delete[] indptr;
+  delete[] indices;
+  delete[] data;
 
   return ret;
 }
@@ -331,6 +334,9 @@ JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGDMatrixCreateFro
 
   jint ret = (jint) XGDMatrixCreateFromCSCEx((size_t const *)indptr, (unsigned int const *)indices, (float const *)data, nindptr, nelem, jrow, &result);
   setHandle(jenv, jout, result);
+  delete[] indptr;
+  delete[] indices;
+  delete[] data;
 
   return ret;
 }
@@ -370,6 +376,7 @@ JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGDMatrixCreateFro
   bst_ulong ncol = (bst_ulong)jncol;
   jint ret = (jint) XGDMatrixCreateFromMat((float const *)data, nrow, ncol, jmiss, &result);
   setHandle(jenv, jout, result);
+  delete[] data;
   return ret;
 }
 

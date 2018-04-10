@@ -14,3 +14,4 @@ global-exclude *.o
 global-exclude *.a
 global-exclude *.pyo
 global-exclude *.pyc
+global-exclude libxgboost4j.*

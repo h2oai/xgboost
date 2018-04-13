@@ -5,6 +5,7 @@ import ai.h2o.ci.buildsummary.DetailsSummary
 import ai.h2o.ci.buildsummary.StagesSummary
 
 DEFAULT_NODE_LABEL = 'docker && !mr-0xc8'
+AWS_CREDENTIALS_ID = 'AWS S3 Credentials'
 
 NEXUS_TARGET_LOCAL='local'
 NEXUS_TARGET_PUBLIC='public'
@@ -214,7 +215,7 @@ try {
             cleanWs()
 
             String nexusIP = sh(script: 'dig +short nexus', returnStdout: true)
-            buildSummary.stageWithSummary('Deploy') {
+            buildSummary.stageWithSummary('Nexus Deploy') {
                 pullDockerImage(CENTOS_DOCKER_IMAGE)
                 docker.image(CENTOS_DOCKER_IMAGE).inside("--init --add-host=nexus:${nexusIP}") {
                     prepareMavenEnv()
@@ -269,27 +270,38 @@ try {
     }
 
     if (params.publicRelease) {
-        stage('Git Release') {
+        stage('Git and S3 Release') {
             node('master') {
+                def files = []
+                CONFIGURATIONS.each { config ->
+                    def backend = getBackendFromConfiguration(config)
+                    unstash name: "xgboost-${config.os}-${backend}-artifacts"
+                    files += "${config.os}-${backend}/ci-build/xgboost4j-native-${config.os}_${backend}-${XGB_VERSION}.jar"
+                    PY_VERSIONS.each { pyVersion ->
+                        files += "${config.os}-${backend}/ci-build/${getWhlNameFromConfiguration(config, pyVersion)}"
+                    }
+                }
+
                 pullDockerImage(UBUNTU_DOCKER_IMAGE)
                 docker.withRegistry("https://${REGISTRY}") {
                     docker.image(UBUNTU_DOCKER_IMAGE).inside("--init -v /home/jenkins/.ssh:/home/jenkins/.ssh:ro -v /home/jenkins/.gitconfig:/home/jenkins/.gitconfig:ro") {
                         buildSummary.stageWithSummary("GitHub Release") {
-                            def files = []
-                            CONFIGURATIONS.each { config ->
-                                def backend = getBackendFromConfiguration(config)
-                                unstash name: "xgboost-${config.os}-${backend}-artifacts"
-                                files += "${config.os}-${backend}/ci-build/xgboost4j-native-${config.os}_${backend}-${XGB_VERSION}.jar"
-                                PY_VERSIONS.each { pyVersion ->
-                                    files += "${config.os}-${backend}/ci-build/${getWhlNameFromConfiguration(config, pyVersion)}"
-                                }
-                            }
-
-                            files = files.collect { f ->
-                                '-a ' + f
-                            }
                             withCredentials([string(credentialsId: 'h2o-ops-personal-auth-token', variable: 'GITHUB_TOKEN')]) {
-                                sh "hub release create -d h2o3-v${XGB_VERSION} -m \"h2o3_v${XGB_VERSION}\" ${files.join(' ')}"
+                                sh "hub release create -d h2o3-v${XGB_VERSION} -m \"h2o3_v${XGB_VERSION}\""
+                            }
+                        }
+                    }
+                }
+
+                def s3cmdDockerImage = 'docker.h2o.ai/s3cmd'
+                pullDockerImage(s3cmdDockerImage)
+                docker.withRegistry("https://${REGISTRY}") {
+                    withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', accessKeyVariable: 'AWS_ACCESS_KEY_ID', credentialsId: AWS_CREDENTIALS_ID, secretKeyVariable: 'AWS_SECRET_ACCESS_KEY']]) {
+                        docker.image(s3cmdDockerImage).inside("--init -e AWS_ACCESS_KEY_ID=\${AWS_ACCESS_KEY_ID} -e AWS_SECRET_ACCESS_KEY=\${AWS_SECRET_ACCESS_KEY}") {
+                            buildSummary.stageWithSummary("S3 Release") {
+                                for (file in files) {
+                                    sh "s3cmd put ${file} s3://h2o-release/xgboost/${env.BRANCH_NAME.replaceAll('/', '-')}/${XGB_VERSION}/"
+                                }
                             }
                         }
                     }

@@ -5,16 +5,20 @@ import ai.h2o.ci.buildsummary.DetailsSummary
 import ai.h2o.ci.buildsummary.StagesSummary
 
 DEFAULT_NODE_LABEL = 'docker && !mr-0xc8'
+AWS_CREDENTIALS_ID = 'AWS S3 Credentials'
 
 NEXUS_TARGET_LOCAL='local'
 NEXUS_TARGET_PUBLIC='public'
+
+PY_27 = '2.7'
+PY_VERSIONS = [PY_27, '3.5', '3.6']
 
 CENTOS_6 = 'centos6'
 UBUNTU_14 = 'ubuntu14'
 
 PUBLISHABLE_BRANCH_NAME = 'h2o3'
 
-ARCHIVED_FILES = '**/ci-build/*.jar, **/ci-build/*.log, **/jvm-packages/xgboost4j/*.jar, **/jvm-packages/xgboost4j/*.log'
+ARCHIVED_FILES = '**/ci-build/*.jar, **/ci-build/*.whl, **/ci-build/*.log, **/jvm-packages/xgboost4j/*.jar, **/jvm-packages/xgboost4j/*.log'
 
 REGISTRY = 'docker.h2o.ai'
 CENTOS_DOCKER_IMAGE = "${REGISTRY}/opsh2oai/h2o-3-xgboost-build-${CENTOS_6}"
@@ -71,28 +75,25 @@ Map CHECK_IMAGES = [
     ]
 ]
 
-// initialize build summary
 buildSummary('https://github.com/h2oai/xgboost', true)
 
-// use default StagesSummary implementation
 buildSummary.get().addStagesSummary(this, new StagesSummary())
 
 BuildResult result = BuildResult.FAILURE
 
 try {
-    node(DEFAULT_NODE_LABEL) {
+    node('master') {
         sh 'env'
 
-        buildSummary.stageWithSummary('Checkout and Pull') {
+        buildSummary.stageWithSummary('Initialize') {
             deleteDir()
             def scmEnv = checkout scm
             setJobProperties(scmEnv)
 
-            // setup custom DetailsSummary
             DetailsSummary detailsSummary = new DetailsSummary()
             detailsSummary.setEntry(this, 'XGBoost Version', XGB_VERSION)
-            detailsSummary.setEntry(this, 'Deploy to Local Nexus', params.publishToLocalNexus ? 'Yes' : 'No')
-            detailsSummary.setEntry(this, 'Deploy to Public Nexus', params.publishToPublicNexus ? 'Yes' : 'No')
+            detailsSummary.setEntry(this, 'Local Release', params.localRelease ? 'Yes' : 'No')
+            detailsSummary.setEntry(this, 'Public Release', params.publicRelease ? 'Yes' : 'No')
             buildSummary.get().addDetailsSummary(this, detailsSummary)
 
             sh 'git submodule update --init --recursive'
@@ -136,10 +137,10 @@ try {
                             
                             ${getMvnVersionChangeCmd()}
                         """
-                        if (params.publishToLocalNexus) {
+                        if (params.localRelease) {
                             deployLib(stageDir, NEXUS_TARGET_LOCAL)
                         }
-                        if (params.publishToPublicNexus) {
+                        if (params.publicRelease) {
                             deployLib(stageDir, NEXUS_TARGET_PUBLIC)
                         }
                     }
@@ -198,7 +199,7 @@ try {
                                     }
                                 }
 
-                                stash name: "xgboost-${config.os}-${getBackendFromConfiguration(config)}-artifacts", includes: '**/ci-build/*.jar, **/lib/*.so, **/lib/*.dylib'
+                                stash name: "xgboost-${config.os}-${getBackendFromConfiguration(config)}-artifacts", includes: '**/ci-build/*.jar, **/ci-build/*.whl, **/lib/*.so, **/lib/*.dylib'
                             } finally {
                                 archiveArtifacts artifacts: ARCHIVED_FILES, allowEmptyArchive: true
                             }
@@ -209,12 +210,12 @@ try {
         ]
     })
 
-    if (params.publishToLocalNexus || params.publishToPublicNexus) {
+    if (params.localRelease || params.publicRelease) {
         node(DEFAULT_NODE_LABEL) {
             cleanWs()
 
             String nexusIP = sh(script: 'dig +short nexus', returnStdout: true)
-            buildSummary.stageWithSummary('Deploy') {
+            buildSummary.stageWithSummary('Nexus Deploy') {
                 pullDockerImage(CENTOS_DOCKER_IMAGE)
                 docker.image(CENTOS_DOCKER_IMAGE).inside("--init --add-host=nexus:${nexusIP}") {
                     prepareMavenEnv()
@@ -255,11 +256,52 @@ try {
                                 ${getMvnVersionChangeCmd()}
                             """
 
-                            if (params.publishToLocalNexus) {
+                            if (params.localRelease) {
                                 deployToNexus(config, NEXUS_TARGET_LOCAL)
                             }
-                            if (params.publishToPublicNexus) {
+                            if (params.publicRelease) {
                                 deployToNexus(config, NEXUS_TARGET_PUBLIC)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (params.publicRelease) {
+        stage('Git and S3 Release') {
+            node('master') {
+                def files = []
+                CONFIGURATIONS.each { config ->
+                    def backend = getBackendFromConfiguration(config)
+                    unstash name: "xgboost-${config.os}-${backend}-artifacts"
+                    files += "${config.os}-${backend}/ci-build/xgboost4j-native-${config.os}_${backend}-${XGB_VERSION}.jar"
+                    PY_VERSIONS.each { pyVersion ->
+                        files += "${config.os}-${backend}/ci-build/${getWhlNameFromConfiguration(config, pyVersion)}"
+                    }
+                }
+
+                pullDockerImage(UBUNTU_DOCKER_IMAGE)
+                docker.withRegistry("https://${REGISTRY}") {
+                    docker.image(UBUNTU_DOCKER_IMAGE).inside("--init -v /home/jenkins/.ssh:/home/jenkins/.ssh:ro -v /home/jenkins/.gitconfig:/home/jenkins/.gitconfig:ro") {
+                        buildSummary.stageWithSummary("GitHub Release") {
+                            withCredentials([string(credentialsId: 'h2o-ops-personal-auth-token', variable: 'GITHUB_TOKEN')]) {
+                                sh "hub release create -d h2o3-v${XGB_VERSION} -m \"h2o3_v${XGB_VERSION}\""
+                            }
+                        }
+                    }
+                }
+
+                def s3cmdDockerImage = 'docker.h2o.ai/s3cmd'
+                pullDockerImage(s3cmdDockerImage)
+                docker.withRegistry("https://${REGISTRY}") {
+                    withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', accessKeyVariable: 'AWS_ACCESS_KEY_ID', credentialsId: AWS_CREDENTIALS_ID, secretKeyVariable: 'AWS_SECRET_ACCESS_KEY']]) {
+                        docker.image(s3cmdDockerImage).inside("--init -e AWS_ACCESS_KEY_ID=\${AWS_ACCESS_KEY_ID} -e AWS_SECRET_ACCESS_KEY=\${AWS_SECRET_ACCESS_KEY}") {
+                            buildSummary.stageWithSummary("S3 Release") {
+                                for (file in files) {
+                                    sh "s3cmd put ${file} s3://h2o-release/xgboost/${env.BRANCH_NAME.replaceAll('/', '-')}/${XGB_VERSION}/"
+                                }
                             }
                         }
                     }
@@ -318,10 +360,10 @@ private void deployLib(final String stageDir, final String targetNexus) {
  */
 private void setJobProperties(final scmEnv) {
     List parametersList = [
-            booleanParam(name: 'publishToLocalNexus', defaultValue: false, description: 'If true, publish the local Nexus')
+            booleanParam(name: 'localRelease', defaultValue: false, description: 'If true, publish the local Nexus')
     ]
     if (scmEnv.GIT_BRANCH == PUBLISHABLE_BRANCH_NAME) {
-        parametersList += booleanParam(name: 'publishToPublicNexus', defaultValue: false, description: 'If true, publish the public Nexus')
+        parametersList += booleanParam(name: 'publicRelease', defaultValue: false, description: 'If true, publish the public Nexus')
     }
     properties([
             parameters(parametersList),
@@ -348,6 +390,11 @@ private void executeBuild(final config) {
         printenv
     '''
 
+    def pythonWheelsBuildScripts = []
+    PY_VERSIONS.each { pyVersion ->
+        pythonWheelsBuildScripts += getPythonWheelBuildScript(config, pyVersion)
+    }
+
     sh """
         cd ${WORKSPACE}
         mkdir -p ${config.os}-${getBackendFromConfiguration(config)}
@@ -364,6 +411,9 @@ private void executeBuild(final config) {
         ${getMvnVersionChangeCmd()}
 
         ${getJvmPackagesBuildScript(config)}
+
+        cd ${WORKSPACE}/${config.stageDir}/python-package
+        ${pythonWheelsBuildScripts.join("\n")}
     """
     final String destDir = "${WORKSPACE}/${config.stageDir}/ci-build"
     GString destFile = "${destDir}/xgboost4j-native-${config.os}_${config.name}"
@@ -513,6 +563,7 @@ private GString getCentOS6JvmPackagesBuildScript(final config) {
 private GString getUbuntu14JvmPackagesBuildScript(final config) {
     return """
         export JAVA_HOME=/usr/lib/jvm/java-8-oracle
+        . /envs/xgb-env-py2.7/bin/activate
         XGB_VERSION=${XGB_VERSION} XGB_BACKEND=${getBackendFromConfiguration(config)} \
             ${getBuildJARsOpts(config.useCuda, config.useOmp)} ./build_jars.sh
     """
@@ -565,6 +616,57 @@ private String getBuildJARsOpts(final boolean useCuda, final boolean useOmp) {
         opts += 'USE_OMP=TRUE'
     }
     return opts.join(' ')
+}
+
+/**
+ * Returns script used to build python wheel for given python version and given configuration.
+ * @param config
+ * @param pyVersion
+ * @return script used to build python wheel for given python version and given configuration.
+ */
+private String getPythonWheelBuildScript(final config, final pyVersion) {
+    final def whlName = "xgboost_${getBackendFromConfiguration(config)}"
+    def envSourceCmd = ''
+    switch (config.os) {
+        case 'linux':
+            if (config.distribution == CENTOS_6) {
+                if (pyVersion == PY_27) {
+                    envSourceCmd = "source /opt/rh/python27/enable"
+                } else {
+                    envSourceCmd = "source /opt/rh/rh-python${pyVersion.replaceAll('\\.', '')}/enable"
+                }
+            } else if (config.distribution == UBUNTU_14) {
+                envSourceCmd = ". /envs/xgb-env-py${pyVersion}/bin/activate"
+            } else {
+                error("Distribution ${config.distribution} not supported")
+            }
+            break
+        case 'osx':
+            envSourceCmd = "export PATH=/Users/jenkins/anaconda/bin:${PATH}; source activate xgb-build-py${pyVersion}"
+            break
+        default:
+            error("OS ${config.os} not supported")
+    }
+    def linkCmds = []
+    def linkedFolders = ['include', 'src', 'make', 'rabit', 'lib', 'dmlc-core']
+    for (def folder in linkedFolders) {
+        linkCmds += "ln -sf ../../${folder} ."
+    }
+    return """
+        echo ${XGB_VERSION} > xgboost/VERSION
+        echo ${whlName} > xgboost/NAME
+        
+        cd xgboost
+        ${linkCmds.join("\n")}
+        ls -alh
+        cd ..
+        
+        ${envSourceCmd}
+        python setup_pip.py bdist_wheel
+        
+        cp dist/${getWhlNameFromConfiguration(config, pyVersion)} ../ci-build
+        ls -alh ../ci-build
+    """
 }
 
 /**
@@ -683,6 +785,24 @@ private String getBackendFromConfiguration(final config) {
  */
 private GString getStageDirFromConfiguration(final config) {
     return "${config.os}-${getBackendFromConfiguration(config)}"
+}
+
+/**
+ * Returns wheel name for given configuration. Returned name contains wildcards.
+ * @param config configuration to create wheel name for
+ * @param pyVersion python version to create wheel name for
+ * @return wheel name for given configuration, contains wildcards.
+ */
+private String getWhlNameFromConfiguration(final config, final pyVersion) {
+    final def backend = getBackendFromConfiguration(config)
+    final def whlVersion = XGB_VERSION.replaceAll('-', '_')
+    final def whlPyVersion = pyVersion.replaceAll('\\.', '')
+
+    def whlOSName = config.os
+    if (whlOSName == 'osx') {
+        whlOSName = 'macosx_*'
+    }
+    return "xgboost_${backend}-${whlVersion}-cp${whlPyVersion}*-${whlOSName}_x86_64.whl"
 }
 
 /**

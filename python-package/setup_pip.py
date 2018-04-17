@@ -12,7 +12,7 @@ sys.path.insert(0, '.')
 # please don't use this file for installing from github
 
 if os.name != 'nt':     # if not windows, compile and install
-    os.system('sh ./xgboost/build-python.sh')
+    pass
 else:
     print('Windows users please use github installation.')
     sys.exit()
@@ -40,16 +40,16 @@ LIB_PATH = libpath['find_lib_path']()
 # make pythonpack
 # python setup.py register sdist upload
 # and be sure to test it firstly using "python setup.py register sdist upload -r pypitest"
-setup(name='xgboost',
-      # version=open(os.path.join(CURRENT_DIR, 'xgboost/VERSION')).read().strip(),
-      version='0.6a2',
+setup(name=open(os.path.join(CURRENT_DIR, 'xgboost/NAME')).read().strip(),
+      version=open(os.path.join(CURRENT_DIR, 'xgboost/VERSION')).read().strip(),
       description='XGBoost Python Package',
       install_requires=[
           'numpy',
           'scipy',
       ],
-      maintainer='Hongliang Liu',
-      maintainer_email='phunter.lau@gmail.com',
+      maintainer='H2O.ai',
+      maintainer_email='support@h2o.ai',
+      license='Apache-2.0',
       zip_safe=False,
       packages=find_packages(),
       # don't need this and don't use this, give everything to MANIFEST.in
@@ -64,4 +64,4 @@ setup(name='xgboost',
       # root directory for some machines, and cause confusions on building
       # data_files=[('xgboost', LIB_PATH)],
       distclass=BinaryDistribution,
-      url='https://github.com/dmlc/xgboost')
+      url='https://github.com/h2oai/xgboost')

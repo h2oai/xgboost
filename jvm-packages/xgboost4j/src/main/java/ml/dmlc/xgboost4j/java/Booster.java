@@ -16,22 +16,36 @@
 package ml.dmlc.xgboost4j.java;
 
 import java.io.*;
+import java.lang.reflect.Constructor;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import com.esotericsoftware.kryo.Kryo;
-import com.esotericsoftware.kryo.KryoSerializable;
-import com.esotericsoftware.kryo.io.Input;
-import com.esotericsoftware.kryo.io.Output;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 
 /**
  * Booster for xgboost, this is a model API that support interactive build of a XGBoost Model
  */
-public class Booster implements Serializable, KryoSerializable {
+public class Booster implements Serializable {
+
   private static final Log logger = LogFactory.getLog(Booster.class);
+
+  private static final boolean USE_KRYO_BOOSTER;
+  private static final Class<?> KRYO_BOOSTER_CLASS;
+  static {
+    Class<?> kryoBoosterClass;
+    try {
+      String kryoBoosterClassName = Booster.class.getPackage().getName() + ".KryoBooster";
+      kryoBoosterClass = Class.forName(kryoBoosterClassName);
+    } catch (ClassNotFoundException e) {
+      logger.debug("KryoBooster is not available", e);
+      kryoBoosterClass = null;
+    }
+    USE_KRYO_BOOSTER = kryoBoosterClass != null;
+    KRYO_BOOSTER_CLASS = kryoBoosterClass;
+  }
+
   // handle to the booster.
   private long handle = 0;
 
@@ -43,10 +57,29 @@ public class Booster implements Serializable, KryoSerializable {
    *                  the prediction of these DMatrices will become faster than not-cached data.
    * @throws XGBoostError native error
    */
-  Booster(Map<String, Object> params, DMatrix[] cacheMats) throws XGBoostError {
+  static Booster newBooster(Map<String, Object> params, DMatrix[] cacheMats) throws XGBoostError {
+    if (USE_KRYO_BOOSTER)
+      return newKryoBooster(params, cacheMats);
+    else
+      return new Booster(params, cacheMats, false);
+  }
+
+  private static Booster newKryoBooster(Map<String, Object> params, DMatrix[] cacheMats) throws XGBoostError {
+    try {
+      Constructor<?> constuctor = KRYO_BOOSTER_CLASS.getDeclaredConstructors()[0];
+      return (Booster) constuctor.newInstance(params, cacheMats);
+    } catch (ReflectiveOperationException | IllegalArgumentException e) {
+      logger.error(e);
+      throw new XGBoostError(e.getMessage());
+    }
+  }
+
+  protected Booster(Map<String, Object> params, DMatrix[] cacheMats, boolean isKryoBooster) throws XGBoostError {
     init(cacheMats);
     setParam("seed", "0");
     setParams(params);
+    if (USE_KRYO_BOOSTER != isKryoBooster)
+      throw new IllegalStateException("Attempt to instantiate a Booster without support for Kryo in an environment that supports Kryo.");
   }
 
   /**
@@ -59,7 +92,7 @@ public class Booster implements Serializable, KryoSerializable {
     if (modelPath == null) {
       throw new NullPointerException("modelPath : null");
     }
-    Booster ret = new Booster(new HashMap<String, Object>(), new DMatrix[0]);
+    Booster ret = newBooster(new HashMap<String, Object>(), new DMatrix[0]);
     XGBoostJNI.checkCall(XGBoostJNI.XGBoosterLoadModel(ret.handle, modelPath));
     return ret;
   }
@@ -82,7 +115,7 @@ public class Booster implements Serializable, KryoSerializable {
       os.write(buf, 0, size);
     }
     in.close();
-    Booster ret = new Booster(new HashMap<String, Object>(), new DMatrix[0]);
+    Booster ret = newBooster(new HashMap<String, Object>(), new DMatrix[0]);
     XGBoostJNI.checkCall(XGBoostJNI.XGBoosterLoadModelFromBuffer(ret.handle,os.toByteArray()));
     return ret;
   }
@@ -491,13 +524,17 @@ public class Booster implements Serializable, KryoSerializable {
   private void readObject(java.io.ObjectInputStream in)
           throws IOException, ClassNotFoundException {
     try {
-      this.init(null);
       byte[] bytes = (byte[])in.readObject();
-      XGBoostJNI.checkCall(XGBoostJNI.XGBoosterLoadModelFromBuffer(this.handle, bytes));
+      initFromBytes(bytes);
     } catch (XGBoostError ex) {
       ex.printStackTrace();
       logger.error(ex.getMessage());
     }
+  }
+
+  protected void initFromBytes(byte[] bytes) throws XGBoostError {
+    this.init(null);
+    XGBoostJNI.checkCall(XGBoostJNI.XGBoosterLoadModelFromBuffer(this.handle, bytes));
   }
 
   @Override
@@ -513,32 +550,4 @@ public class Booster implements Serializable, KryoSerializable {
     }
   }
 
-  @Override
-  public void write(Kryo kryo, Output output) {
-    try {
-      byte[] serObj = this.toByteArray();
-      int serObjSize = serObj.length;
-      System.out.println("==== serialized obj size " + serObjSize);
-      output.writeInt(serObjSize);
-      output.write(serObj);
-    } catch (XGBoostError ex) {
-      ex.printStackTrace();
-      logger.error(ex.getMessage());
-    }
-  }
-
-  @Override
-  public void read(Kryo kryo, Input input) {
-    try {
-      this.init(null);
-      int serObjSize = input.readInt();
-      System.out.println("==== the size of the object: " + serObjSize);
-      byte[] bytes = new byte[serObjSize];
-      input.readBytes(bytes);
-      XGBoostJNI.checkCall(XGBoostJNI.XGBoosterLoadModelFromBuffer(this.handle, bytes));
-    } catch (XGBoostError ex) {
-      ex.printStackTrace();
-      logger.error(ex.getMessage());
-    }
-  }
 }

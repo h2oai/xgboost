@@ -67,7 +67,7 @@ pipeline {
                                 CONTAINER_NAME
                             } bash -c 'eval \"\$(/root/.pyenv/bin/pyenv init -)\" ; /root/.pyenv/bin/pyenv global 3.6.1; make ${
                                 env.MAKE_OPTS
-                            } AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID} AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY} -f Makefile2 libxgboost2 ; rm -rf build/VERSION.txt ; make -f Makefile2 build/VERSION.txt ; mkdir -p python-package/dist2 ; mv python-package/dist/*.whl python-package/dist2/'
+                            } AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID} AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY} -f Makefile2 libxgboost2 ; rm -rf build/VERSION.txt ; make -f Makefile2 build/VERSION.txt ; mkdir -p python-package/dist2 ; rm -rf python-package/dist2/*.whl ; mv python-package/dist/*.whl python-package/dist2/'
                                 """
                             stash includes: 'python-package/dist2/*.whl', name: 'linux_whl'
                             stash includes: 'build/VERSION.txt', name: 'version_info'

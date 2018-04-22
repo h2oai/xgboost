@@ -37,7 +37,6 @@ def _train_internal(params, dtrain,
         if not isinstance(xgb_model, STRING_TYPES):
             bst = xgb_model # need to make copy in general?
         else:
-            xgb_model = xgb_model.save_raw()
             bst = Booster(params, [dtrain] + [d[0] for d in evals], model_file=xgb_model)
         nboost = len(bst.get_dump())
 

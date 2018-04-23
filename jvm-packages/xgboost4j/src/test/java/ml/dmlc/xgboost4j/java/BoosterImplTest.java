@@ -15,10 +15,7 @@
  */
 package ml.dmlc.xgboost4j.java;
 
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
-import java.io.IOException;
+import java.io.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
@@ -26,8 +23,13 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
+import com.esotericsoftware.kryo.Kryo;
+import com.esotericsoftware.kryo.KryoSerializable;
+import com.esotericsoftware.kryo.io.Input;
+import com.esotericsoftware.kryo.io.Output;
 import junit.framework.TestCase;
 import org.junit.Test;
+import static org.junit.Assert.*;
 
 /**
  * test cases for Booster
@@ -347,4 +349,42 @@ public class BoosterImplTest {
     int nfold = 5;
     String[] evalHist = XGBoost.crossValidation(trainMat, param, round, nfold, null, null, null);
   }
+
+  @Test
+  public void testSerialization() throws XGBoostError {
+    DMatrix trainMat = new DMatrix("../../demo/data/agaricus.txt.train");
+    DMatrix testMat = new DMatrix("../../demo/data/agaricus.txt.test");
+
+    Booster booster = trainBooster(trainMat, testMat);
+    assertTrue(booster instanceof KryoSerializable);
+
+    float[] testMatPredictOrig = to1DArray(booster.predict(testMat));
+
+    Kryo kryo = new Kryo();
+    ByteArrayOutputStream byteArrayOutput = new ByteArrayOutputStream();
+    try (Output output = new Output(byteArrayOutput)) {
+      kryo.writeClassAndObject(output, booster);
+    }
+    byte[] kryoBytes = byteArrayOutput.toByteArray();
+    booster.dispose();
+    booster = null;
+
+    Booster deserBooster;
+    try (Input input = new Input(kryoBytes)) {
+      deserBooster = (Booster) kryo.readClassAndObject(input);
+    }
+    assertNotNull(deserBooster);
+
+    float[] testMatPredictDeser = to1DArray(deserBooster.predict(testMat));
+
+    assertArrayEquals(testMatPredictOrig, testMatPredictDeser, 0);
+  }
+
+  private static float[] to1DArray(float[][] ary) {
+    float[] result = new float[ary.length];
+    for (int i = 0; i < ary.length; i++)
+      result[i] = ary[i][0];
+    return result;
+  }
+
 }

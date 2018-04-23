@@ -75,9 +75,14 @@ public class Booster implements Serializable {
   }
 
   protected Booster(Map<String, Object> params, DMatrix[] cacheMats, boolean isKryoBooster) throws XGBoostError {
+    this(isKryoBooster);
     init(cacheMats);
     setParam("seed", "0");
     setParams(params);
+  }
+
+  // Booster is not actually initialized in this constructor; must be initialized later - used in deserialization
+  protected Booster(boolean isKryoBooster) {
     if (USE_KRYO_BOOSTER != isKryoBooster)
       throw new IllegalStateException("Attempt to instantiate a Booster without support for Kryo in an environment that supports Kryo.");
   }

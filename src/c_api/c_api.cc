@@ -504,7 +504,7 @@ XGB_DLL int XGDMatrixCreateFromMat_omp(const bst_float* data,  // NOLINT
   // restore omp state
   omp_set_num_threads(nthread_orig);
 
-  mat.info.num_nonzero = mat.row_data_.size();
+  mat.info.num_nonzero_ = mat.row_data_.size();
   *out  = new std::shared_ptr<DMatrix>(DMatrix::Create(std::move(source)));
   API_END();
 }
@@ -535,8 +535,8 @@ XGB_DLL int XGDMatrixCreateFromdt(const void** data0,
   std::unique_ptr<data::SimpleCSRSource> source(new data::SimpleCSRSource());
   data::SimpleCSRSource& mat = *source;
   mat.row_ptr_.resize(1+nrow);
-  mat.info.num_row = nrow;
-  mat.info.num_col = ncol;
+  mat.info.num_row_ = nrow;
+  mat.info.num_col_ = ncol;
 
 #pragma omp parallel num_threads(nthread)
   {
@@ -554,7 +554,7 @@ XGB_DLL int XGDMatrixCreateFromdt(const void** data0,
     }
   }
   // do cumulative sum (to avoid otherwise need to copy)
-  prefixsum_inplace(&mat.row_ptr_[0], mat.row_ptr_.size());
+  PrefixSum(&mat.row_ptr_[0], mat.row_ptr_.size());
 
   mat.row_data_.resize(mat.row_data_.size() + mat.row_ptr_.back());
 

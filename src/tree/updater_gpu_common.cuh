@@ -66,12 +66,12 @@ __device__ __forceinline__ void AtomicAddGpair(GradientPairInteger* dest,
  */
 
 inline void CheckGradientMax(HostDeviceVector<GradientPair> *gpair_ptr) {
-  auto* ptr = reinterpret_cast<const float*>(gpair_ptr->data_h().data());
+  auto* ptr = reinterpret_cast<const float*>(gpair_ptr->HostVector().data());
   float abs_max =
-    std::accumulate(ptr, ptr + (gpair_ptr->size() * 2) , 0.f,
+    std::accumulate(ptr, ptr + (gpair_ptr->Size() * 2) , 0.f,
                       [=](float a, float b) { return max(abs(a), abs(b)); });
 
-  float max_allowed = 1E-4f*std::pow(2.0f, 63.0f)/(1+ gpair_ptr->size());
+  float max_allowed = 1E-4f*std::pow(2.0f, 63.0f)/(1+ gpair_ptr->Size());
   CHECK_LT(abs_max, max_allowed)
       << "Labels are too large for this algorithm. Rescale to much less than " << max_allowed << ".";
 

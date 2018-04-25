@@ -758,7 +758,7 @@ XGBOOST_REGISTER_TREE_UPDATER(GPUMaker, "grow_gpu")
 
 
 int gpu_double_fast_compute_capable() {
-  int n_devices = dh::n_visible_devices();
+  int n_devices = dh::NVisibleDevices();
   for (int d_idx = 0; d_idx < n_devices; ++d_idx) {
     cudaDeviceProp prop;
     dh::safe_cuda(cudaGetDeviceProperties(&prop, d_idx));

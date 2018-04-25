@@ -81,7 +81,7 @@ void DumpRegTree(std::stringstream& fo,  // NOLINT(*)
                << ", \"no\": " << tree[nid].RightChild()
                << ", \"missing\": " << tree[nid].DefaultChild();
           } else if (format == "mojo") {
-            fo << nid << ":[" << fmap.name(split_index) << "<" << cond
+            fo << nid << ":[" << fmap.Name(split_index) << "<" << cond
                << "] yes=" << tree[nid].LeftChild()
                << ",no=" << tree[nid].RightChild()
                << ",missing=" << tree[nid].DefaultChild();

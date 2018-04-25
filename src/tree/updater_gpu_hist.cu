@@ -634,7 +634,7 @@ class GPUHistMaker : public TreeUpdater {
   void InitData(HostDeviceVector<GradientPair>* gpair, DMatrix* dmat,
                 const RegTree& tree) {
     monitor_.Start("InitDataOnce", device_list_);
-    if (!initialised) {
+    if (!initialised_) {
      if(PRECISE==0){
         CheckGradientMax(gpair);
       }

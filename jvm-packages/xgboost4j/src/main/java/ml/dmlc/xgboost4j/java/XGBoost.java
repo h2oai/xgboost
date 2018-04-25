@@ -104,7 +104,7 @@ public class XGBoost {
     }
 
     //initialize booster
-    Booster booster = new Booster(params, allMats);
+    Booster booster = Booster.newBooster(params, allMats);
 
     int version = booster.loadRabitCheckpoint();
 
@@ -318,7 +318,7 @@ public class XGBoost {
     public CVPack(DMatrix dtrain, DMatrix dtest, Map<String, Object> params)
             throws XGBoostError {
       dmats = new DMatrix[]{dtrain, dtest};
-      booster = new Booster(params, dmats);
+      booster = Booster.newBooster(params, dmats);
       names = new String[]{"train", "test"};
       this.dtrain = dtrain;
       this.dtest = dtest;

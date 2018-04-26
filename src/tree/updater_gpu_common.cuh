@@ -75,8 +75,9 @@ inline void CheckGradientMax(HostDeviceVector<GradientPair> *gpair_ptr) {
   CHECK_LT(abs_max, max_allowed)
       << "Labels are too large for this algorithm. Rescale to much less than " << max_allowed << ".";
 
-  CHECK_GT(abs_max, 1e-4f)
-      << "Labels are too small for this algorithm. Rescale to much more than 1E-4.";
+// This is a weaker issue.  And (say) if have 0000011111 in labels, may not have taken gradient of that 1 case due to sampling, but that's ok.
+//  CHECK_GT(abs_max, 1e-4f)
+//      << "Labels are too small for this algorithm. Rescale to much more than 1E-4.";
 }
 
 struct GPUTrainingParam {

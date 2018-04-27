@@ -92,6 +92,25 @@ class GBLinearModel {
         }
       }
       fo << std::endl << "    ]" << std::endl << "  }";
+    }
+    if (format == "mojo") {
+      std::stringstream fo("");
+      fo.precision(20);
+      fo << "Version 0.1.0\n"
+         << "num_output_group: " << ngroup << "\n"
+         << "nfeature: " << nfeature << "\n"
+      fo << "bias: [";
+      for (int gid = 0; gid < ngroup; ++gid) {
+        fo << this->bias()[gid] << std::endl;
+      }
+      fo << "]\n";
+      fo << "weight: [ ";
+      for (unsigned i = 0; i < nfeature; ++i) {
+        for (int gid = 0; gid < ngroup; ++gid) {
+          fo << (*this)[i][gid] << std::endl;
+        }
+      }
+      fo << "]\n";
     } else {
       fo << "bias:\n";
       for (int gid = 0; gid < ngroup; ++gid) {

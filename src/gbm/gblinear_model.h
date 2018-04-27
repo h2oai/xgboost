@@ -93,8 +93,7 @@ class GBLinearModel {
       }
       fo << std::endl << "    ]" << std::endl << "  }";
     }
-    if (format == "mojo") {
-      std::stringstream fo("");
+    else if (format == "mojo") {
       fo.precision(20);
       fo << "Version 0.1.0\n"
          << "num_output_group: " << ngroup << "\n"

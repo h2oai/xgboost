@@ -14,8 +14,12 @@ fi
 OUTDIR="target/h2o"
 JAR_FILE="target/xgboost4j-${XGB_VERSION}.jar"
 JAR_FILENAME=$(basename "$JAR_FILE")
-OS=$(uname | sed -e 's/Darwin/osx/' | tr '[:upper:]' '[:lower:]')
-BITS=$(getconf LONG_BIT)
+if [ -z ${OS} ]; then
+    OS=$(uname | sed -e 's/Darwin/osx/' | tr '[:upper:]' '[:lower:]')
+fi
+if [ -z ${BITS} ]; then
+    BITS=$(getconf LONG_BIT)
+fi
 PLATFORM="${OS}_${BITS}"
 LIB_SUFFIX=
 
@@ -43,10 +47,6 @@ cat <<EOF
 ===========
 
 EOF
-
-# Build only basic package
-echo "Building package...."
-mvn -Dmaven.test.skip=true -DskipTests clean package -am > build-log-${OS}-${XGB_BACKEND}-$(date +%s).log
 
 # Create output
 rm -rf "${OUTDIR}"

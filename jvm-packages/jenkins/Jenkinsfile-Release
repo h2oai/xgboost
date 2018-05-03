@@ -13,6 +13,8 @@ NEXUS_TARGET_PUBLIC='public'
 PY_27 = '2.7'
 PY_VERSIONS = [PY_27, '3.5', '3.6']
 
+WIN_PATH = 'C:\\Program Files\\Java\\jdk1.8.0_171\\bin;%path%;C:\\Program Files\\CMake\\bin;C:\\Program Files\\Apache\\Maven\\bin;C:\\Program Files\\CMake\\bin;C:\\Program Files\\Apache\\Maven\\bin;C:\\Users\\jenkins\\AppData\\Local\\Programs\\Python\\Python36\\Scripts;C:\\Users\\jenkins\\AppData\\Local\\Programs\\Python\\Python36;'
+
 CENTOS_6 = 'centos6'
 UBUNTU_14 = 'ubuntu14'
 
@@ -34,6 +36,7 @@ if (env.BRANCH_NAME != PUBLISHABLE_BRANCH_NAME) {
 CENTOS_JAVA_HOME = '/usr/lib/jvm/java-1.8.0-openjdk-1.8.0.161-3.b14.el6_9.x86_64'
 
 CONFIGURATIONS = [
+    [stageName: 'Build MINIMAL with Win10', name: 'minimal', useCuda: false, useOmp: false, os: 'win', node: 'mr-0xw1', distribution: ''],
     [stageName: 'Build MINIMAL with OS X', name: 'minimal', useCuda: false, useOmp: false, os: 'osx', node: 'osx', distribution: ''],
     [stageName: 'Build MINIMAL with CentOS 6', name: 'minimal', useCuda: false, useOmp: false, os: 'linux', distribution: CENTOS_6, dockerImage: CENTOS_DOCKER_IMAGE],
 
@@ -134,7 +137,7 @@ try {
                         sh """
                             ${getCentOSEnvCmds()}
                             cd ${WORKSPACE}/${stageDir}/jvm-packages/xgboost4j
-                            
+
                             ${getMvnVersionChangeCmd()}
                         """
                         if (params.localRelease) {
@@ -199,7 +202,7 @@ try {
                                     }
                                 }
 
-                                stash name: "xgboost-${config.os}-${getBackendFromConfiguration(config)}-artifacts", includes: '**/ci-build/*.jar, **/ci-build/*.whl, **/lib/*.so, **/lib/*.dylib'
+                                stash name: "xgboost-${config.os}-${getBackendFromConfiguration(config)}-artifacts", includes: '**/ci-build/*.jar, **/ci-build/*.whl, **/lib/*.so, **/lib/*.dylib, **/lib/*.dll'
                             } finally {
                                 archiveArtifacts artifacts: ARCHIVED_FILES, allowEmptyArchive: true
                             }
@@ -384,7 +387,90 @@ private String getMvnVersionChangeCmd() {
  * @param config configuration used for build
  */
 private void executeBuild(final config) {
+    switch (config.os) {
+        case 'linux':
+            executeUnixBuildScript(config)
+            break
+        case 'osx':
+            executeUnixBuildScript(config)
+            break
+        case 'win':
+            executeWinBuildScript(config)
+            break
+        default:
+            error "OS ${config.os} not supported"
+    }
+}
 
+private void executeWinBuildScript(final config) {
+    config.winStageDir = config.stageDir.replaceAll("/", "\\\\")
+
+    bat """
+        set PATH=${WIN_PATH}
+        path
+
+        md ${config.winStageDir}
+        cd ${config.winStageDir}
+        
+        rd /s /q build
+        md build
+        md ci-build
+        
+        cd build
+        ${getLibBuildScript(config.os, config.distribution, config.useCuda, config.useOmp)}
+        cd ..
+        
+        cd jvm-packages\\xgboost4j
+        call ${getMvnVersionChangeCmd()}
+        cd ..\\..
+    """
+
+    bat """
+        set PATH=${WIN_PATH}
+        path
+
+        cd ${config.winStageDir}
+
+        cd jvm-packages\\xgboost4j
+        call ${getJvmPackagesBuildScript(config)}
+        move build-log-*.log ..\\ci-build\\
+        cd ..\\..
+    """
+
+    def osBits = getWinArchitecture()
+
+    stash name: 'win-intermediate', includes: "${config.stageDir}/jvm-packages/xgboost4j/target/xgboost4j-${XGB_VERSION}.jar"
+    node (DEFAULT_NODE_LABEL) {
+        dir (config.stageDir) {
+            deleteDir()
+            unstash 'xgboost-sources'
+        }
+        unstash 'win-intermediate'
+        GString destFile = getDestForNativeJar(config)
+        sh """
+            cd ${config.stageDir}/jvm-packages/xgboost4j/
+            XGB_VERSION=${XGB_VERSION} XGB_BACKEND=${getBackendFromConfiguration(config)} OS=${config.os} \
+               BITS=${osBits} ${getBuildJARsOpts(config.useCuda, config.useOmp)} ./build_jars.sh
+            mv target/h2o/xgboost4j-native-${config.os}-${XGB_VERSION}.jar ${WORKSPACE}/${destFile}
+        """
+        stash name: 'win-result', includes: destFile
+    }
+    unstash 'win-result'
+}
+
+private String getWinArchitecture() {
+    final def osArch = powershell(script: 'wmic os get osarchitecture', returnStdout: true, encoding: 'UTF-8').trim()
+    final def osArchLines = osArch.readLines()
+    final def bits = osArchLines.find { line ->
+        line.contains('-bit')
+    }
+    if (bits == null || bits == '') {
+        error "Cannot determine arch"
+    }
+    return bits.replace('-bit', '')
+}
+
+private void executeUnixBuildScript(final config) {
     sh '''
         id
         printenv
@@ -405,7 +491,7 @@ private void executeBuild(final config) {
         mkdir -p build ci-build
         cd build
 
-        ${getBuildScript(config.os, config.distribution, config.useCuda, config.useOmp)}
+        ${getLibBuildScript(config.os, config.distribution, config.useCuda, config.useOmp)}
 
         cd ${WORKSPACE}/${config.stageDir}/jvm-packages/xgboost4j
         ${getMvnVersionChangeCmd()}
@@ -415,18 +501,23 @@ private void executeBuild(final config) {
         cd ${WORKSPACE}/${config.stageDir}/python-package
         ${pythonWheelsBuildScripts.join("\n")}
     """
-    final String destDir = "${WORKSPACE}/${config.stageDir}/ci-build"
+    GString destFile = getDestForNativeJar(config)
+    sh """
+        cd ${WORKSPACE}/${config.stageDir}/jvm-packages/xgboost4j
+
+        mv build-log-* ${WORKSPACE}/${config.stageDir}/ci-build/
+        mv target/h2o/xgboost4j-native-${config.os}-${XGB_VERSION}.jar ${WORKSPACE}/${destFile}
+    """
+}
+
+final String getDestForNativeJar(final config) {
+    final String destDir = "${config.stageDir}/ci-build"
     GString destFile = "${destDir}/xgboost4j-native-${config.os}_${config.name}"
     if (config.ompVersion != null) {
         destFile += "v${config.ompVersion}"
     }
     destFile += "-${XGB_VERSION}.jar"
-    sh """
-        cd ${WORKSPACE}/${config.stageDir}/jvm-packages/xgboost4j
-
-        mv build-log-* ${WORKSPACE}/${config.stageDir}/ci-build/
-        mv target/h2o/xgboost4j-native-${config.os}-${XGB_VERSION}.jar ${destFile}
-    """
+    return destFile
 }
 
 /**
@@ -437,18 +528,20 @@ private void executeBuild(final config) {
  * @param useOmp whether OpenMP support should be enabled
  * @return Build script for given environment
  */
-private String getBuildScript(os, distribution, useCuda, useOmp) {
+private String getLibBuildScript(os, distribution, useCuda, useOmp) {
     switch (os) {
         case 'linux':
             if (distribution == CENTOS_6) {
-                return getCentOS6BuildScript(useCuda, useOmp)
+                return getCentOS6LibBuildScript(useCuda, useOmp)
             }
             if (distribution == UBUNTU_14) {
-                return getUbuntu14BuildScript(useCuda, useOmp)
+                return getUbuntu14LibBuildScript(useCuda, useOmp)
             }
             error "targetOS ${params.targetOS} not supported"
         case 'osx':
-            return getOSXBuildScript(useCuda, useOmp)
+            return getOSXLibBuildScript(useCuda, useOmp)
+        case 'win':
+            return getWinLibBuildScript(useCuda, useOmp)
         default:
             error "OS ${os} not supported"
     }
@@ -460,7 +553,7 @@ private String getBuildScript(os, distribution, useCuda, useOmp) {
  * @param useOmp whether OpenMP support should be enabled
  * @return Build script for CentOS 6
  */
-private GString getCentOS6BuildScript(final boolean useCuda, final boolean useOmp) {
+private GString getCentOS6LibBuildScript(final boolean useCuda, final boolean useOmp) {
     return """
         ${getCentOSEnvCmds()}
         
@@ -486,7 +579,7 @@ private GString getCentOS6BuildScript(final boolean useCuda, final boolean useOm
  * @param useOmp whether OpenMP support should be enabled
  * @return Build script for Ubuntu 14
  */
-private GString getUbuntu14BuildScript(final boolean useCuda, final boolean useOmp) {
+private GString getUbuntu14LibBuildScript(final boolean useCuda, final boolean useOmp) {
     return """
         export JAVA_HOME=/usr/lib/jvm/java-8-oracle
         if [ "\$(cmake --version | head -1)" != 'cmake version 3.5.2' ]; then 
@@ -506,12 +599,19 @@ private GString getUbuntu14BuildScript(final boolean useCuda, final boolean useO
  * @param useOmp whether OpenMP support should be enabled
  * @return Build script for Mac OS X
  */
-private GString getOSXBuildScript(final boolean useCuda, final boolean useOmp) {
+private GString getOSXLibBuildScript(final boolean useCuda, final boolean useOmp) {
     return """
         export JAVA_HOME=\$(/usr/libexec/java_home)
         
         cmake .. ${getCMakeOpts(useCuda, useOmp)}
         make
+    """
+}
+
+private GString getWinLibBuildScript(final boolean useCuda, final boolean useOmp) {
+    return """
+        cmake .. -G"Visual Studio 15 2017 Win64" ${getCMakeOpts(useCuda, useOmp)}
+        "C:\\Program Files (x86)\\Microsoft Visual Studio\\2017\\Community\\MSBuild\\15.0\\Bin\\MSBuild.exe" /t:Clean,Rebuild /p:Configuration=Release xgboost.sln
     """
 }
 
@@ -532,6 +632,8 @@ private String getJvmPackagesBuildScript(final config) {
             error "distribution ${config.distribution} not supported"
         case 'osx':
             return getOSXJvmPackagesBuildScript(config)
+        case 'win':
+            return getWinJvmPackagesBuildScript(config)
         default:
             error "OS ${config.os} not supported"
     }
@@ -550,6 +652,8 @@ private GString getCentOS6JvmPackagesBuildScript(final config) {
             echo "UNEXPECTED PYTHON VERSION"
             python --version
         fi
+
+        mvn -Dmaven.test.skip=true -DskipTests clean package -am > build-log-${config.os}-${getBackendFromConfiguration(config)}-\$(date +%s).log
         XGB_VERSION=${XGB_VERSION} XGB_BACKEND=${getBackendFromConfiguration(config)} \
             ${getBuildJARsOpts(config.useCuda, config.useOmp)} ./build_jars.sh
     """
@@ -564,6 +668,7 @@ private GString getUbuntu14JvmPackagesBuildScript(final config) {
     return """
         export JAVA_HOME=/usr/lib/jvm/java-8-oracle
         . /envs/xgb-env-py2.7/bin/activate
+        mvn -Dmaven.test.skip=true -DskipTests clean package -am > build-log-${config.os}-${getBackendFromConfiguration(config)}-\$(date +%s).log
         XGB_VERSION=${XGB_VERSION} XGB_BACKEND=${getBackendFromConfiguration(config)} \
             ${getBuildJARsOpts(config.useCuda, config.useOmp)} ./build_jars.sh
     """
@@ -577,9 +682,14 @@ private GString getUbuntu14JvmPackagesBuildScript(final config) {
 private GString getOSXJvmPackagesBuildScript(final config) {
     return """
         export JAVA_HOME=\$(/usr/libexec/java_home)
+        mvn -Dmaven.test.skip=true -DskipTests clean package -am > build-log-${config.os}-${getBackendFromConfiguration(config)}-\$(date +%s).log
         XGB_VERSION=${XGB_VERSION} XGB_BACKEND=${getBackendFromConfiguration(config)} \
             ${getBuildJARsOpts(config.useCuda, config.useOmp)} ./build_jars.sh
     """
+}
+
+private GString getWinJvmPackagesBuildScript(final config) {
+    return 'mvn -Dmaven.test.skip=true -DskipTests clean package -am > build-log-win-minimal.log'
 }
 
 /**
@@ -626,6 +736,7 @@ private String getBuildJARsOpts(final boolean useCuda, final boolean useOmp) {
  */
 private String getPythonWheelBuildScript(final config, final pyVersion) {
     final def whlName = "xgboost_${getBackendFromConfiguration(config)}"
+    final def noDotPyVersion = pyVersion.replaceAll('\\.', '')
     def envSourceCmd = ''
     switch (config.os) {
         case 'linux':
@@ -633,7 +744,7 @@ private String getPythonWheelBuildScript(final config, final pyVersion) {
                 if (pyVersion == PY_27) {
                     envSourceCmd = "source /opt/rh/python27/enable"
                 } else {
-                    envSourceCmd = "source /opt/rh/rh-python${pyVersion.replaceAll('\\.', '')}/enable"
+                    envSourceCmd = "source /opt/rh/rh-python${noDotPyVersion}/enable"
                 }
             } else if (config.distribution == UBUNTU_14) {
                 envSourceCmd = ". /envs/xgb-env-py${pyVersion}/bin/activate"
@@ -652,6 +763,7 @@ private String getPythonWheelBuildScript(final config, final pyVersion) {
     for (def folder in linkedFolders) {
         linkCmds += "ln -sf ../../${folder} ."
     }
+
     return """
         echo ${XGB_VERSION} > xgboost/VERSION
         echo ${whlName} > xgboost/NAME
@@ -662,6 +774,7 @@ private String getPythonWheelBuildScript(final config, final pyVersion) {
         cd ..
         
         ${envSourceCmd}
+        python --version
         python setup_pip.py bdist_wheel
         
         cp dist/${getWhlNameFromConfiguration(config, pyVersion)} ../ci-build

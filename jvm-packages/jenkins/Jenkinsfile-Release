@@ -37,14 +37,14 @@ CENTOS_JAVA_HOME = '/usr/lib/jvm/java-1.8.0-openjdk-1.8.0.161-3.b14.el6_9.x86_64
 
 CONFIGURATIONS = [
     [stageName: 'Build MINIMAL with Win10', name: 'minimal', useCuda: false, useOmp: false, os: 'windows', node: 'mr-0xw1', distribution: ''],
-    [stageName: 'Build MINIMAL with OS X', name: 'minimal', useCuda: false, useOmp: false, os: 'osx', node: 'osx', distribution: ''],
-    [stageName: 'Build MINIMAL with CentOS 6', name: 'minimal', useCuda: false, useOmp: false, os: 'linux', distribution: CENTOS_6, dockerImage: CENTOS_DOCKER_IMAGE],
-
-    [stageName: 'Build OMP with CentOS 6', name: 'omp', useCuda: false, useOmp: true, os: 'linux', distribution: CENTOS_6, dockerImage: CENTOS_DOCKER_IMAGE, ompVersion: 4],
-    [stageName: 'Build GPU with CentOS 6', name: 'gpu', useCuda: true, useOmp: true, os: 'linux', distribution: CENTOS_6, dockerImage: CENTOS_DOCKER_IMAGE, ompVersion: 4],
-
-    [stageName: 'Build OMP with Ubuntu 14', name: 'omp', useCuda: false, useOmp: true, os: 'linux', distribution: UBUNTU_14, dockerImage: UBUNTU_DOCKER_IMAGE, ompVersion: 3],
-    [stageName: 'Build GPU with Ubuntu 14', name: 'gpu', useCuda: true, useOmp: true, os: 'linux', distribution: UBUNTU_14, dockerImage: UBUNTU_DOCKER_IMAGE, ompVersion: 3],
+//    [stageName: 'Build MINIMAL with OS X', name: 'minimal', useCuda: false, useOmp: false, os: 'osx', node: 'osx', distribution: ''],
+//    [stageName: 'Build MINIMAL with CentOS 6', name: 'minimal', useCuda: false, useOmp: false, os: 'linux', distribution: CENTOS_6, dockerImage: CENTOS_DOCKER_IMAGE],
+//
+//    [stageName: 'Build OMP with CentOS 6', name: 'omp', useCuda: false, useOmp: true, os: 'linux', distribution: CENTOS_6, dockerImage: CENTOS_DOCKER_IMAGE, ompVersion: 4],
+//    [stageName: 'Build GPU with CentOS 6', name: 'gpu', useCuda: true, useOmp: true, os: 'linux', distribution: CENTOS_6, dockerImage: CENTOS_DOCKER_IMAGE, ompVersion: 4],
+//
+//    [stageName: 'Build OMP with Ubuntu 14', name: 'omp', useCuda: false, useOmp: true, os: 'linux', distribution: UBUNTU_14, dockerImage: UBUNTU_DOCKER_IMAGE, ompVersion: 3],
+//    [stageName: 'Build GPU with Ubuntu 14', name: 'gpu', useCuda: true, useOmp: true, os: 'linux', distribution: UBUNTU_14, dockerImage: UBUNTU_DOCKER_IMAGE, ompVersion: 3],
 ]
 
 Map CHECK_IMAGES = [
@@ -447,12 +447,17 @@ private void executeWinBuildScript(final config) {
         }
         unstash 'win-intermediate'
         GString destFile = getDestForNativeJar(config)
-        sh """
-            cd ${config.stageDir}/jvm-packages/xgboost4j/
-            XGB_VERSION=${XGB_VERSION} XGB_BACKEND=${getBackendFromConfiguration(config)} OS=${config.os} \
-               BITS=${osBits} ${getBuildJARsOpts(config.useCuda, config.useOmp)} ./create_h2o_jars.sh
-            mv target/h2o/xgboost4j-native-${config.os}-${XGB_VERSION}.jar ${WORKSPACE}/${destFile}
-        """
+        pullDockerImage(UBUNTU_DOCKER_IMAGE)
+        docker.withRegistry("https://${REGISTRY}") {
+            docker.image(UBUNTU_DOCKER_IMAGE).inside("--init") {
+                sh """
+                    cd ${config.stageDir}/jvm-packages/xgboost4j/
+                    XGB_VERSION=${XGB_VERSION} XGB_BACKEND=${getBackendFromConfiguration(config)} OS=${config.os} \
+                       BITS=${osBits} ${getBuildJARsOpts(config.useCuda, config.useOmp)} ./to-h2o-jars.sh
+                    mv target/h2o/xgboost4j-native-${config.os}-${XGB_VERSION}.jar ${WORKSPACE}/${destFile}
+                """
+            }
+        }
         stash name: 'win-result', includes: destFile
     }
     unstash 'win-result'
@@ -655,7 +660,7 @@ private GString getCentOS6JvmPackagesBuildScript(final config) {
 
         mvn -Dmaven.test.skip=true -DskipTests clean package -am > build-log-${config.os}-${getBackendFromConfiguration(config)}-\$(date +%s).log
         XGB_VERSION=${XGB_VERSION} XGB_BACKEND=${getBackendFromConfiguration(config)} \
-            ${getBuildJARsOpts(config.useCuda, config.useOmp)} ./create_h2o_jars.sh
+            ${getBuildJARsOpts(config.useCuda, config.useOmp)} ./to-h2o-jars.sh
     """
 }
 
@@ -670,7 +675,7 @@ private GString getUbuntu14JvmPackagesBuildScript(final config) {
         . /envs/xgb-env-py2.7/bin/activate
         mvn -Dmaven.test.skip=true -DskipTests clean package -am > build-log-${config.os}-${getBackendFromConfiguration(config)}-\$(date +%s).log
         XGB_VERSION=${XGB_VERSION} XGB_BACKEND=${getBackendFromConfiguration(config)} \
-            ${getBuildJARsOpts(config.useCuda, config.useOmp)} ./create_h2o_jars.sh
+            ${getBuildJARsOpts(config.useCuda, config.useOmp)} ./to-h2o-jars.sh
     """
 }
 
@@ -684,7 +689,7 @@ private GString getOSXJvmPackagesBuildScript(final config) {
         export JAVA_HOME=\$(/usr/libexec/java_home)
         mvn -Dmaven.test.skip=true -DskipTests clean package -am > build-log-${config.os}-${getBackendFromConfiguration(config)}-\$(date +%s).log
         XGB_VERSION=${XGB_VERSION} XGB_BACKEND=${getBackendFromConfiguration(config)} \
-            ${getBuildJARsOpts(config.useCuda, config.useOmp)} ./create_h2o_jars.sh
+            ${getBuildJARsOpts(config.useCuda, config.useOmp)} ./to-h2o-jars.sh
     """
 }
 
@@ -712,10 +717,10 @@ private String getCMakeOpts(final boolean useCuda, final boolean useOmp) {
 }
 
 /**
- * Returns String with options for create_h2o_jars.sh script
+ * Returns String with options for to-h2o-jars.sh script
  * @param useCuda whether GPU support should be enabled
  * @param useOmp whether OpenMP support should be enabled
- * @return String with options for create_h2o_jars.sh script
+ * @return String with options for to-h2o-jars.sh script
  */
 private String getBuildJARsOpts(final boolean useCuda, final boolean useOmp) {
     List<String> opts = []

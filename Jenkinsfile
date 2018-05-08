@@ -1,462 +1,149 @@
 #!/usr/bin/groovy
-// TOOD: rename to @Library('h2o-jenkins-pipeline-lib') _
-@Library('test-shared-library') _
+// -*- mode: groovy -*-
+// Jenkins pipeline
+// See documents at https://jenkins.io/doc/book/pipeline/jenkinsfile/
 
-import ai.h2o.ci.Utils
+// Command to run command inside a docker container
+dockerRun = 'tests/ci_build/ci_build.sh'
 
-def utilsLib = new Utils()
-
-def SAFE_CHANGE_ID = changeId()
-def CONTAINER_NAME
-
-String changeId() {
-    if (env.CHANGE_ID) {
-        return "-${env.CHANGE_ID}".toString()
-    }
-    return "-master"
-}
+def buildMatrix = [
+    [ "enabled": true,  "os" : "linux", "withGpu": true,  "withOmp": true, "pythonVersion": "2.7" ],
+    [ "enabled": false,  "os" : "linux", "withGpu": false, "withOmp": true, "pythonVersion": "2.7" ],
+    [ "enabled": false, "os" : "osx",   "withGpu": false, "withOmp": false, "pythonVersion": "2.7" ],
+]
 
 pipeline {
+    // Each stage specify its own agent
     agent none
 
-    // Setup job options
+    // Setup common job properties
     options {
         ansiColor('xterm')
         timestamps()
         timeout(time: 120, unit: 'MINUTES')
         buildDiscarder(logRotator(numToKeepStr: '10'))
-        disableConcurrentBuilds()
-        skipDefaultCheckout()
     }
 
-    environment {
-        MAKE_OPTS = "-s CI=1" // -s: silent mode
-    }
-
+    // Build stages
     stages {
-
-        stage('Build on Linux CUDA8 NCCL') {
-            agent {
-                label "nvidia-docker"
-            }
-
+        stage('Get sources') {
+            agent any
             steps {
-                dumpInfo 'Linux Build Info'
-                // Do checkout
-                retryWithTimeout(100 /* seconds */, 3 /* retries */) {
-                    deleteDir()
-                    checkout([
-                            $class                           : 'GitSCM',
-                            branches                         : scm.branches,
-                            doGenerateSubmoduleConfigurations: false,
-                            extensions                       : scm.extensions + [[$class: 'SubmoduleOption', disableSubmodules: true, recursiveSubmodules: false, reference: '', trackingSubmodules: false, shallow: true]],
-                            submoduleCfg                     : [],
-                            userRemoteConfigs                : scm.userRemoteConfigs])
-                }
-
+                checkoutSrcs()
+                stash name: 'srcs', excludes: '.git/'
+                milestone label: 'Sources ready', ordinal: 1
+            }
+        }
+        stage('Build & Test') {
+            steps {
                 script {
-                    CONTAINER_NAME = "xgboost${SAFE_CHANGE_ID}-${env.BUILD_ID}"
-                    // Get source code
-                    withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: "awsArtifactsUploader"]]) {
-                        try {
-                            sh """
-                                    nvidia-docker build  -t opsh2oai/xgboost-build -f Dockerfile-build --build-arg cuda=nvidia/cuda:8.0-cudnn5-devel-ubuntu16.04 .
-                                    nvidia-docker stop ${CONTAINER_NAME} || true
-                                    nvidia-docker run --init --rm --name ${CONTAINER_NAME} -d -t -u `id -u`:`id -g` -w `pwd` -v `pwd`:`pwd`:rw --entrypoint=bash opsh2oai/xgboost-build
-                                    nvidia-docker exec ${
-                                CONTAINER_NAME
-                            } bash -c 'eval \"\$(/root/.pyenv/bin/pyenv init -)\" ; /root/.pyenv/bin/pyenv global 3.6.1; make ${
-                                env.MAKE_OPTS
-                            } AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID} AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY} -f Makefile2 libxgboost ; rm -rf build/VERSION.txt ; make -f Makefile2 build/VERSION.txt'
-                                """
-                            stash includes: 'python-package/dist/*.whl', name: 'linux_whl'
-                            stash includes: 'build/VERSION.txt', name: 'version_info'
-                            // Archive artifacts
-                            arch 'python-package/dist/*.whl'
-                        } finally {
-                            sh "nvidia-docker stop ${CONTAINER_NAME} || true"
-                        }
-                    }
-                }
-            }
-        }
-        stage('Test on Linux CUDA8 NCCL') {
-            agent {
-                label "gpu && nvidia-docker"
-            }
-            steps {
-                dumpInfo 'Linux Test Info'
-                // Get source code (should put tests into wheel, then wouldn't have to checkout)
-                retryWithTimeout(100 /* seconds */, 3 /* retries */) {
-                    checkout scm
-                }
-                unstash 'linux_whl'
-                script {
-                    try {
-                        sh """
-                            nvidia-docker stop ${CONTAINER_NAME} || true
-                            nvidia-docker run  --init --rm --name ${CONTAINER_NAME} -d -t -u `id -u`:`id -g` -w `pwd` -v `pwd`:`pwd`:rw --entrypoint=bash opsh2oai/xgboost-build
-                            nvidia-docker exec ${CONTAINER_NAME} bash -c 'export HOME=`pwd`; eval \"\$(/root/.pyenv/bin/pyenv init -)\"  ; /root/.pyenv/bin/pyenv global 3.6.1; pip install `find python-package/dist -name "*xgboost*.whl"`; mkdir -p build/test-reports/ ; python -m nose --with-xunit --xunit-file=build/test-reports/xgboost.xml tests/python-gpu tests/python'
-                        """
-                    } finally {
-                        sh """
-                            nvidia-docker stop ${CONTAINER_NAME} || true
-                        """
-                        junit testResults: 'build/test-reports/*.xml', keepLongStdio: true, allowEmptyResults: false
-                        deleteDir()
-                    }
-                }
-            }
-        }
-
-        stage('Publish to S3 CUDA8 NCCL') {
-            agent {
-                label "linux"
-            }
-
-            steps {
-                unstash 'linux_whl'
-                unstash 'version_info'
-                retryWithTimeout(200 /* seconds */, 5 /* retries */) {
-                withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: "awsArtifactsUploader"]]) {
-                    sh 'echo "Stashed files:" && ls -l python-package/dist/'
-               script {
-                    // Load the version file content
-                    def versionTag = utilsLib.getCommandOutput("cat build/VERSION.txt | tr '+' '-'")
-                    version = null // This is necessary, else version:Tuple will be serialized
-
-                    if (isRelease()) {
-                        def artifact = "xgboost-${versionTag}-py3-none-any.whl"
-                        def localArtifact = "python-package/dist/${artifact}"
-                        def extratag = "-nccl-cuda8"
-                        def bucket = "s3://artifacts.h2o.ai/releases/stable/ai/h2o/xgboost/${versionTag}${extratag}/"
-                        sh "s3cmd put ${localArtifact} ${bucket}"
-                        sh "s3cmd setacl --acl-public  ${bucket}${artifact}"
-                    }
-
-                    if (isBleedingEdge()) {
-                        def artifact = "xgboost-${versionTag}-py3-none-any.whl"
-                        def localArtifact = "python-package/dist/${artifact}"
-                        def extratag = "-nccl-cuda8"
-                        def bucket = "s3://artifacts.h2o.ai/releases/bleeding-edge/ai/h2o/xgboost/${versionTag}${extratag}/"
-                        sh "s3cmd put ${localArtifact} ${bucket}"
-                        sh "s3cmd setacl --acl-public  ${bucket}${artifact}"
-                    }
-                }
- 
-                    }
-                }
-            }
-        }
-
-
-
-
-
-
-
-
-        stage('Build on Linux CUDA8 noNCCL') {
-            agent {
-                label "nvidia-docker"
-            }
-
-            steps {
-                dumpInfo 'Linux Build Info'
-                // Do checkout
-                retryWithTimeout(100 /* seconds */, 3 /* retries */) {
-                    deleteDir()
-                    checkout([
-                            $class                           : 'GitSCM',
-                            branches                         : scm.branches,
-                            doGenerateSubmoduleConfigurations: false,
-                            extensions                       : scm.extensions + [[$class: 'SubmoduleOption', disableSubmodules: true, recursiveSubmodules: false, reference: '', trackingSubmodules: false, shallow: true]],
-                            submoduleCfg                     : [],
-                            userRemoteConfigs                : scm.userRemoteConfigs])
-                }
-
-                script {
-                    CONTAINER_NAME = "xgboost${SAFE_CHANGE_ID}-${env.BUILD_ID}"
-                    // Get source code
-                    withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: "awsArtifactsUploader"]]) {
-                        try {
-                            sh """
-                                    nvidia-docker stop ${CONTAINER_NAME} || true
-                                    nvidia-docker build  -t opsh2oai/xgboost-build -f Dockerfile-build --build-arg cuda=nvidia/cuda:8.0-cudnn5-devel-ubuntu16.04 .
-                                    nvidia-docker run --init --rm --name ${CONTAINER_NAME} -d -t -u `id -u`:`id -g` -w `pwd` -v `pwd`:`pwd`:rw --entrypoint=bash opsh2oai/xgboost-build
-                                    nvidia-docker exec ${
-                                CONTAINER_NAME
-                            } bash -c 'eval \"\$(/root/.pyenv/bin/pyenv init -)\" ; /root/.pyenv/bin/pyenv global 3.6.1; make ${
-                                env.MAKE_OPTS
-                            } AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID} AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY} -f Makefile2 libxgboost2 ; rm -rf build/VERSION.txt ; make -f Makefile2 build/VERSION.txt ; mkdir -p python-package/dist2 ; mv python-package/dist/*.whl python-package/dist2/'
-                                """
-                            stash includes: 'python-package/dist2/*.whl', name: 'linux_whl'
-                            stash includes: 'build/VERSION.txt', name: 'version_info'
-                            // Archive artifacts
-                            arch 'python-package/dist2/*.whl'
-                        } finally {
-                            sh "nvidia-docker stop ${CONTAINER_NAME} || true"
-                        }
-                    }
-                }
-            }
-        }
-
-        stage('Publish to S3 CUDA8 noNCCL') {
-            agent {
-                label "linux"
-            }
-
-            steps {
-                unstash 'linux_whl'
-                unstash 'version_info'
-                retryWithTimeout(200 /* seconds */, 5 /* retries */) {
-                withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: "awsArtifactsUploader"]]) {
-                    sh 'echo "Stashed files:" && ls -l python-package/dist2/'
-               script {
-                    // Load the version file content
-                    def versionTag = utilsLib.getCommandOutput("cat build/VERSION.txt | tr '+' '-'")
-                    version = null // This is necessary, else version:Tuple will be serialized
-
-                    if (isRelease()) {
-                        def artifact = "xgboost-${versionTag}-py3-none-any.whl"
-                        def localArtifact = "python-package/dist2/${artifact}"
-                        def extratag = "-nonccl-cuda8"
-                        def bucket = "s3://artifacts.h2o.ai/releases/stable/ai/h2o/xgboost/${versionTag}${extratag}/"
-                        sh "s3cmd put ${localArtifact} ${bucket}"
-                        sh "s3cmd setacl --acl-public  ${bucket}${artifact}"
-                    }
-
-                    if (isBleedingEdge()) {
-                        def artifact = "xgboost-${versionTag}-py3-none-any.whl"
-                        def localArtifact = "python-package/dist2/${artifact}"
-                        def extratag = "-nonccl-cuda8"
-                        def bucket = "s3://artifacts.h2o.ai/releases/bleeding-edge/ai/h2o/xgboost/${versionTag}${extratag}/"
-                        sh "s3cmd put ${localArtifact} ${bucket}"
-                        sh "s3cmd setacl --acl-public  ${bucket}${artifact}"
-                    }
-                }
-                    }
-                }
-            }
-        }
-
-
-
-
-
-
-
-
-
-        stage('Build on Linux CUDA9 NCCL') {
-            agent {
-                label "nvidia-docker"
-            }
-
-            steps {
-                dumpInfo 'Linux Build Info'
-                // Do checkout
-                retryWithTimeout(100 /* seconds */, 3 /* retries */) {
-                    deleteDir()
-                    checkout([
-                            $class                           : 'GitSCM',
-                            branches                         : scm.branches,
-                            doGenerateSubmoduleConfigurations: false,
-                            extensions                       : scm.extensions + [[$class: 'SubmoduleOption', disableSubmodules: true, recursiveSubmodules: false, reference: '', trackingSubmodules: false, shallow: true]],
-                            submoduleCfg                     : [],
-                            userRemoteConfigs                : scm.userRemoteConfigs])
-                }
-
-                script {
-                    CONTAINER_NAME = "xgboost${SAFE_CHANGE_ID}-${env.BUILD_ID}"
-                    // Get source code
-                    withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: "awsArtifactsUploader"]]) {
-                        try {
-                            sh """
-                                    nvidia-docker build  -t opsh2oai/xgboost-build -f Dockerfile-build --build-arg cuda=nvidia/cuda:9.0-cudnn7-devel-ubuntu16.04 .
-                                    nvidia-docker run --init --rm --name ${CONTAINER_NAME} -d -t -u `id -u`:`id -g` -w `pwd` -v `pwd`:`pwd`:rw --entrypoint=bash opsh2oai/xgboost-build
-                                    nvidia-docker exec ${
-                                CONTAINER_NAME
-                            } bash -c 'eval \"\$(/root/.pyenv/bin/pyenv init -)\" ; /root/.pyenv/bin/pyenv global 3.6.1; make ${
-                                env.MAKE_OPTS
-                            } AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID} AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY} -f Makefile2 libxgboost ; rm -rf build/VERSION.txt ; make -f Makefile2 build/VERSION.txt ; mkdir -p python-package/dist4 ; mv python-package/dist/*.whl python-package/dist4/'
-                                """
-                            stash includes: 'python-package/dist4/*.whl', name: 'linux_whl'
-                            stash includes: 'build/VERSION.txt', name: 'version_info'
-                            // Archive artifacts
-                            arch 'python-package/dist4/*.whl'
-                        } finally {
-                            sh "nvidia-docker stop ${CONTAINER_NAME}"
-                        }
-                    }
-                }
-            }
-        }
-
-        stage('Publish to S3 CUDA9 NCCL') {
-            agent {
-                label "linux"
-            }
-
-            steps {
-                unstash 'linux_whl'
-                unstash 'version_info'
-                retryWithTimeout(200 /* seconds */, 5 /* retries */) {
-                withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: "awsArtifactsUploader"]]) {
-                    sh 'echo "Stashed files:" && ls -l python-package/dist4/'
-               script {
-                    // Load the version file content
-                    def versionTag = utilsLib.getCommandOutput("cat build/VERSION.txt | tr '+' '-'")
-                    version = null // This is necessary, else version:Tuple will be serialized
-
-                    if (isRelease()) {
-                        def artifact = "xgboost-${versionTag}-py3-none-any.whl"
-                        def localArtifact = "python-package/dist4/${artifact}"
-                        def extratag = "-nccl-cuda9"
-                        def bucket = "s3://artifacts.h2o.ai/releases/stable/ai/h2o/xgboost/${versionTag}${extratag}/"
-                        sh "s3cmd put ${localArtifact} ${bucket}"
-                        sh "s3cmd setacl --acl-public  ${bucket}${artifact}"
-                    }
-
-                    if (isBleedingEdge()) {
-                        def artifact = "xgboost-${versionTag}-py3-none-any.whl"
-                        def localArtifact = "python-package/dist4/${artifact}"
-                        def extratag = "-nccl-cuda9"
-                        def bucket = "s3://artifacts.h2o.ai/releases/bleeding-edge/ai/h2o/xgboost/${versionTag}${extratag}/"
-                        sh "s3cmd put ${localArtifact} ${bucket}"
-                        sh "s3cmd setacl --acl-public  ${bucket}${artifact}"
-                    }
-                }
-                    }
-                }
-            }
-        }
-
-
-
-
-
-
-
-
-
-
-        stage('Build on Linux CUDA9 noNCCL') {
-            agent {
-                label "nvidia-docker"
-            }
-
-            steps {
-                dumpInfo 'Linux Build Info'
-                // Do checkout
-                retryWithTimeout(100 /* seconds */, 3 /* retries */) {
-                    deleteDir()
-                    checkout([
-                            $class                           : 'GitSCM',
-                            branches                         : scm.branches,
-                            doGenerateSubmoduleConfigurations: false,
-                            extensions                       : scm.extensions + [[$class: 'SubmoduleOption', disableSubmodules: true, recursiveSubmodules: false, reference: '', trackingSubmodules: false, shallow: true]],
-                            submoduleCfg                     : [],
-                            userRemoteConfigs                : scm.userRemoteConfigs])
-                }
-
-                script {
-                    CONTAINER_NAME = "xgboost${SAFE_CHANGE_ID}-${env.BUILD_ID}"
-                    // Get source code
-                    withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: "awsArtifactsUploader"]]) {
-                        try {
-                            sh """
-                                    nvidia-docker stop ${CONTAINER_NAME} || true
-                                    nvidia-docker build  -t opsh2oai/xgboost-build -f Dockerfile-build --build-arg cuda=nvidia/cuda:9.0-cudnn7-devel-ubuntu16.04 .
-                                    nvidia-docker run --init --rm --name ${CONTAINER_NAME} -d -t -u `id -u`:`id -g` -w `pwd` -v `pwd`:`pwd`:rw --entrypoint=bash opsh2oai/xgboost-build
-                                    nvidia-docker exec ${
-                                CONTAINER_NAME
-                            } bash -c 'eval \"\$(/root/.pyenv/bin/pyenv init -)\" ; /root/.pyenv/bin/pyenv global 3.6.1; make ${
-                                env.MAKE_OPTS
-                            } AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID} AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY} -f Makefile2 libxgboost2 ; rm -rf build/VERSION.txt ; make -f Makefile2 build/VERSION.txt ; mkdir -p python-package/dist3 ; mv python-package/dist/*.whl python-package/dist3/'
-                                """
-                            stash includes: 'python-package/dist3/*.whl', name: 'linux_whl'
-                            stash includes: 'build/VERSION.txt', name: 'version_info'
-                            // Archive artifacts
-                            arch 'python-package/dist3/*.whl'
-                        } finally {
-                            sh "nvidia-docker stop ${CONTAINER_NAME} || true"
-                        }
-                    }
-                }
-            }
-        }
-
-        stage('Publish to S3 CUDA9 noNCCL') {
-            agent {
-                label "linux"
-            }
-
-            steps {
-                unstash 'linux_whl'
-                unstash 'version_info'
-                retryWithTimeout(200 /* seconds */, 5 /* retries */) {
-                withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: "awsArtifactsUploader"]]) {
-                    sh 'echo "Stashed files:" && ls -l python-package/dist3/'
-               script {
-                    // Load the version file content
-                    def versionTag = utilsLib.getCommandOutput("cat build/VERSION.txt | tr '+' '-'")
-                    version = null // This is necessary, else version:Tuple will be serialized
-
-                    if (isRelease()) {
-                        def artifact = "xgboost-${versionTag}-py3-none-any.whl"
-                        def localArtifact = "python-package/dist3/${artifact}"
-                        def extratag = "-nonccl-cuda9"
-                        def bucket = "s3://artifacts.h2o.ai/releases/stable/ai/h2o/xgboost/${versionTag}${extratag}/"
-                        sh "s3cmd put ${localArtifact} ${bucket}"
-                        sh "s3cmd setacl --acl-public  ${bucket}${artifact}"
-                    }
-
-                    if (isBleedingEdge()) {
-                        def artifact = "xgboost-${versionTag}-py3-none-any.whl"
-                        def localArtifact = "python-package/dist3/${artifact}"
-                        def extratag = "-nonccl-cuda9"
-                        def bucket = "s3://artifacts.h2o.ai/releases/bleeding-edge/ai/h2o/xgboost/${versionTag}${extratag}/"
-                        sh "s3cmd put ${localArtifact} ${bucket}"
-                        sh "s3cmd setacl --acl-public  ${bucket}${artifact}"
-                    }
-                }
-                    }
-                }
-            }
-        }
-
-
-
-
-
-
-
-    }
-    post {
-        failure {
-            node('mr-dl11') {
-                script {
-                    // Hack - the email plugin finds 0 recipients for the first commit of each new PR build...
-                    def email = utilsLib.getCommandOutput("git --no-pager show -s --format='%ae'")
-                    emailext(
-                            to: "jmckinney@h2o.ai",
-                            subject: "BUILD FAILED: Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]'",
-                            body: '''${JELLY_SCRIPT, template="html_gmail"}''',
-                            attachLog: true,
-                            compressLog: true,
-                    )
+                    parallel (buildMatrix.findAll{it['enabled']}.collectEntries{ c ->
+                        def buildName = getBuildName(c)
+                        buildFactory(buildName, c)
+                    })
                 }
             }
         }
     }
 }
 
-def isRelease() {
-    return env.BRANCH_NAME.startsWith("rel")
+// initialize source codes
+def checkoutSrcs() {
+  retry(5) {
+    try {
+      timeout(time: 2, unit: 'MINUTES') {
+        checkout scm
+        sh 'git submodule update --init'
+      }
+    } catch (exc) {
+      deleteDir()
+      error "Failed to fetch source codes"
+    }
+  }
 }
 
-def isBleedingEdge() {
-    return env.BRANCH_NAME.startsWith("h2oai")
+/**
+ * Creates cmake and make builds
+ */
+def buildFactory(buildName, conf) {
+    def os = conf["os"]
+    def nodeReq = conf["withGpu"] ? "${os} && gpu" : "${os}"
+    def dockerTarget = conf["withGpu"] ? "gpu" : "cpu"
+    [ ("cmake_${buildName}") : { buildPlatformCmake("cmake_${buildName}", conf, nodeReq, dockerTarget) }
+    ]
 }
+
+/**
+ * Build platform and test it via cmake.
+ */
+def buildPlatformCmake(buildName, conf, nodeReq, dockerTarget) {
+    def opts = cmakeOptions(conf)
+    // Destination dir for artifacts
+    def distDir = "dist/${buildName}"
+    // Build node - this is returned result
+    node(nodeReq) {
+        unstash name: 'srcs'
+        echo """
+        |===== XGBoost CMake build =====
+        |  dockerTarget: ${dockerTarget}
+        |  cmakeOpts   : ${opts}
+        |=========================
+        """.stripMargin('|')
+        // Invoke command inside docker
+        sh """
+        ${dockerRun} ${dockerTarget} tests/ci_build/build_via_cmake.sh ${opts}
+        ${dockerRun} ${dockerTarget} tests/ci_build/test_${dockerTarget}.sh
+        ${dockerRun} ${dockerTarget} bash -c "cd python-package; python setup.py bdist_wheel"
+        rm -rf "${distDir}"; mkdir -p "${distDir}/py"
+        cp xgboost "${distDir}"
+        cp -r lib "${distDir}"
+        cp -r python-package/dist "${distDir}/py"
+        """
+        archiveArtifacts artifacts: "${distDir}/**/*.*", allowEmptyArchive: true
+    }
+}
+
+/**
+ * Build platform via make
+ */
+def buildPlatformMake(buildName, conf, nodeReq, dockerTarget) {
+    def opts = makeOptions(conf)
+    // Destination dir for artifacts
+    def distDir = "dist/${buildName}"
+    // Build node
+    node(nodeReq) {
+        unstash name: 'srcs'
+        echo """
+        |===== XGBoost Make build =====
+        |  dockerTarget: ${dockerTarget}
+        |  makeOpts    : ${opts}
+        |=========================
+        """.stripMargin('|')
+        // Invoke command inside docker
+        sh """
+        ${dockerRun} ${dockerTarget} tests/ci_build/build_via_make.sh ${opts}
+        """
+    }
+}
+
+def makeOptions(conf) {
+    return ([
+        conf["withOmp"] ? 'USE_OPENMP=1' : 'USE_OPENMP=0']
+        ).join(" ")
+}
+
+
+def cmakeOptions(conf) {
+    return ([
+        conf["withGpu"] ? '-DUSE_CUDA=ON' : '-DUSE_CUDA=OFF',
+        conf["withOmp"] ? '-DOPEN_MP:BOOL=ON' : '']
+        ).join(" ")
+}
+
+def getBuildName(conf) {
+    def gpuLabel = conf['withGpu'] ? "_gpu" : "_cpu"
+    def ompLabel = conf['withOmp'] ? "_omp" : ""
+    def pyLabel = "_py${conf['pythonVersion']}"
+    return "${conf['os']}${gpuLabel}${ompLabel}${pyLabel}"
+}
+

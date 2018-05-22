@@ -1007,7 +1007,7 @@ class AllReducer {
 
 template <typename T, typename FunctionT>
 void ExecuteShards(std::vector<T> *shards, FunctionT f) {
-#pragma omp parallel for schedule(static, 1)
+#pragma omp parallel for schedule(static, 1) if (shards->size() > 1)
   for (int shard = 0; shard < shards->size(); ++shard) {
     f(shards->at(shard));
   }
@@ -1026,7 +1026,7 @@ void ExecuteShards(std::vector<T> *shards, FunctionT f) {
 
 template <typename T, typename FunctionT>
 void ExecuteIndexShards(std::vector<T> *shards, FunctionT f) {
-#pragma omp parallel for schedule(static, 1)
+#pragma omp parallel for schedule(static, 1) if (shards->size() > 1)
   for (int shard = 0; shard < shards->size(); ++shard) {
     f(shard, shards->at(shard));
   }
@@ -1048,7 +1048,7 @@ void ExecuteIndexShards(std::vector<T> *shards, FunctionT f) {
 template <typename ReduceT,typename T, typename FunctionT>
 ReduceT ReduceShards(std::vector<T> *shards, FunctionT f) {
   std::vector<ReduceT> sums(shards->size());
-#pragma omp parallel for schedule(static, 1)
+#pragma omp parallel for schedule(static, 1) if (shards->size() > 1)
   for (int shard = 0; shard < shards->size(); ++shard) {
     sums[shard] = f(shards->at(shard));
   }

@@ -34,14 +34,26 @@ public class Booster implements Serializable {
   private static final boolean USE_KRYO_BOOSTER;
   private static final Class<?> KRYO_BOOSTER_CLASS;
   static {
-    Class<?> kryoBoosterClass;
+    boolean useKryo;
     try {
-      String kryoBoosterClassName = Booster.class.getPackage().getName() + ".KryoBooster";
-      kryoBoosterClass = Class.forName(kryoBoosterClassName);
+      Class.forName("com.esotericsoftware.kryo.KryoSerializable");
+      useKryo = true;
     } catch (ClassNotFoundException e) {
-      logger.debug("KryoBooster is not available", e);
-      kryoBoosterClass = null;
+      useKryo = false;
+      logger.debug("Kryo is not available", e);
     }
+    Class<?> kryoBoosterClass;
+    if (useKryo) {
+      try {
+        String kryoBoosterClassName = Booster.class.getPackage().getName() + ".KryoBooster";
+        kryoBoosterClass = Class.forName(kryoBoosterClassName);
+      } catch (ClassNotFoundException e) {
+        logger.error("KryoBooster is not available", e);
+        kryoBoosterClass = null;
+      }
+    } else
+      kryoBoosterClass = null;
+
     USE_KRYO_BOOSTER = kryoBoosterClass != null;
     KRYO_BOOSTER_CLASS = kryoBoosterClass;
   }

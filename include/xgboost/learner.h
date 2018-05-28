@@ -16,8 +16,10 @@
 #include "./gbm.h"
 #include "./metric.h"
 #include "./objective.h"
+#include "./model_visitor.h"
 
 namespace xgboost {
+
 /*!
  * \brief Learner class that does training and prediction.
  *  This is the user facing module of xgboost training.
@@ -177,6 +179,12 @@ class Learner : public rabit::Serializable {
    * \return Created learner.
    */
   static Learner* Create(const std::vector<std::shared_ptr<DMatrix> >& cache_data);
+
+  /*!
+   * \brief Allow model access via visitor interface.
+   * \param v  visitor for this class
+   */
+  void Accept(ModelVisitor& v);
 
  protected:
   /*! \brief internal base score of the model */

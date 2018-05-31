@@ -34,6 +34,12 @@ std::vector<std::string> Learner::DumpModel(const FeatureMap& fmap,
   return gbm_->DumpModel(fmap, with_stats, format);
 }
 
+void Learner::Accept(ModelVisitor& v) {
+  v.Visit(*this);
+  // Also visit the booster
+  gbm_->Accept(v);
+}
+
 /*! \brief training parameter for regression */
 struct LearnerModelParam : public dmlc::Parameter<LearnerModelParam> {
   /* \brief global bias */

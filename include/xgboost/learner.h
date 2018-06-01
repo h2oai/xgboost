@@ -184,7 +184,11 @@ class Learner : public rabit::Serializable {
    * \brief Allow model access via visitor interface.
    * \param v  visitor for this class
    */
-  void Accept(ModelVisitor& v);
+  void Accept(ModelVisitor& v) {
+       v.Visit(*this);
+       // Also visit the booster
+      gbm_->Accept(v);
+  }
 
  protected:
   /*! \brief internal base score of the model */

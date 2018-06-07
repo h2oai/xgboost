@@ -161,9 +161,11 @@ class LearnerImpl : public Learner {
       }
     } else if (tparam_.tree_method == 3) {
       /* histogram-based algorithm */
-      LOG(CONSOLE) << "Tree method is selected to be \'hist\', which uses a "
-                      "single updater "
-                   << "grow_fast_histmaker.";
+      if(tparam_.debug_verbose > 0) {
+          LOG(CONSOLE) << "Tree method is selected to be \'hist\', which uses a "
+                          "single updater "
+                       << "grow_fast_histmaker.";
+      }
       cfg_["updater"] = "grow_fast_histmaker";
     } else if (tparam_.tree_method == 4) {
       this->AssertGPUSupport();
@@ -488,16 +490,20 @@ class LearnerImpl : public Learner {
       const auto safe_max_row = static_cast<size_t>(32ul << 10ul);
 
       if (tparam_.tree_method == 0 && p_train->Info().num_row_ >= (4UL << 20UL)) {
+      if(tparam_.debug_verbose > 0) {
         LOG(CONSOLE)
             << "Tree method is automatically selected to be \'approx\'"
             << " for faster speed."
             << " to use old behavior(exact greedy algorithm on single machine),"
             << " set tree_method to \'exact\'";
         max_row_perbatch = std::min(max_row_perbatch, safe_max_row);
+        }
       }
 
       if (tparam_.tree_method == 1) {
+      if(tparam_.debug_verbose > 0) {
         LOG(CONSOLE) << "Tree method is selected to be \'approx\'";
+        }
         max_row_perbatch = std::min(max_row_perbatch, safe_max_row);
       }
 
@@ -510,9 +516,11 @@ class LearnerImpl : public Learner {
 
     if (!p_train->SingleColBlock() && cfg_.count("updater") == 0) {
       if (tparam_.tree_method == 2) {
+      if(tparam_.debug_verbose > 0) {
         LOG(CONSOLE) << "tree method is set to be 'exact',"
                      << " but currently we are only able to proceed with "
                         "approximate algorithm";
+                        }
       }
       cfg_["updater"] = "grow_histmaker,prune";
       if (gbm_ != nullptr) {

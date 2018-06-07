@@ -5,6 +5,7 @@
 #include <dmlc/parameter.h>
 #include <dmlc/io.h>
 #include <xgboost/tree_model.h>
+#include <xgboost/model_visitor.h>
 #include <utility>
 #include <string>
 #include <vector>
@@ -140,6 +141,10 @@ struct GBTreeModel {
       tree_info.push_back(bst_group);
     }
     param.num_trees += static_cast<int>(new_trees.size());
+  }
+
+  void Accept(ModelVisitor &v) {
+      v.Visit(*this);
   }
 
   // base margin

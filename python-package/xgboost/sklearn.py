@@ -277,11 +277,14 @@ class XGBModel(XGBModelBase):
             trainDmatrix = DMatrix(X, label=y, missing=self.missing, nthread=self.n_jobs)
 
         evals_result = {}
+
         if eval_set is not None:
             if sample_weight_eval_set is None:
                 sample_weight_eval_set = [None] * len(eval_set)
-            evals = list(DMatrix(x[0], label=x[1], missing=self.missing,
-                                 nthread=self.n_jobs, weight=sample_weight_eval_set[i]) for i, x in enumerate(eval_set))
+            evals = list(
+                DMatrix(eval_set[i][0], label=eval_set[i][1], missing=self.missing,
+                        weight=sample_weight_eval_set[i], nthread=self.n_jobs)
+                for i in range(len(eval_set)))
             evals = list(zip(evals, ["validation_{}".format(i) for i in
                                      range(len(evals))]))
         else:
@@ -522,9 +525,10 @@ class XGBClassifier(XGBModel, XGBClassifierBase):
             if sample_weight_eval_set is None:
                 sample_weight_eval_set = [None] * len(eval_set)
             evals = list(
-                DMatrix(x[0], label=self._le.transform(x[1]),
-                        missing=self.missing, nthread=self.n_jobs,
-                        weight=sample_weight_eval_set[i]) for i, x in enumerate(eval_set)
+                DMatrix(eval_set[i][0], label=self._le.transform(eval_set[i][1]),
+                        missing=self.missing, weight=sample_weight_eval_set[i],
+                        nthread=self.n_jobs)
+                for i in range(len(eval_set))
             )
             nevals = len(evals)
             eval_names = ["validation_{}".format(i) for i in range(nevals)]
@@ -614,8 +618,6 @@ class XGBClassifier(XGBModel, XGBClassifierBase):
         ----------
         data : DMatrix
             The dmatrix storing the input.
-        output_margin : bool
-            Whether to output the raw untransformed margin value.
         ntree_limit : int
             Limit number of trees in the prediction; defaults to 0 (use all trees).
         Returns

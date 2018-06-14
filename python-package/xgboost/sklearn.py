@@ -602,10 +602,6 @@ class XGBClassifier(XGBModel, XGBClassifierBase):
                 column_indexes = np.repeat(0, preds.shape[0])
                 column_indexes[preds > 0.5] = 1
             preds = self._le.inverse_transform(column_indexes)
-        if pred_contribs and self.objective == "binary:logistic":
-            preds = np.hstack((-preds, preds))
-        if output_margin and self.objective == "binary:logistic":
-            preds = np.vstack((-preds, preds)).T
 
         test_dmatrix.__del__()
         return preds
@@ -638,11 +634,9 @@ class XGBClassifier(XGBModel, XGBClassifierBase):
                                            approx_contribs=approx_contribs)
         if not output_margin and not pred_leaf and not pred_contribs and not approx_contribs:
             if self.objective == "binary:logistic":
-                preds = np.vstack((1-preds, preds)).T
-        if pred_contribs and self.objective == "binary:logistic":
-            preds = np.hstack((-preds, preds))
-        if output_margin and self.objective == "binary:logistic":
-            preds = np.vstack((-preds, preds)).T
+                classone_probs = preds
+                classzero_probs = 1.0 - classone_probs
+                preds = np.vstack((classzero_probs, classone_probs)).transpose()
 
         test_dmatrix.__del__()
         return preds

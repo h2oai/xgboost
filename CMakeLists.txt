@@ -7,13 +7,13 @@ set_default_configuration_release()
 msvc_use_static_runtime()
 
 # Options
-option(USE_CUDA  "Build with GPU acceleration") 
+option(USE_CUDA  "Build with GPU acceleration")
 option(JVM_BINDINGS "Build JVM bindings" OFF)
 option(GOOGLE_TEST "Build google tests" OFF)
 option(R_LIB "Build shared library for R package" OFF)
 option(USE_OPENMP "Build with OMP support" ON)
-set(GPU_COMPUTE_VER 35;50;52;60;61 CACHE STRING
-  "Space separated list of compute versions to be built against")
+set(GPU_COMPUTE_VER "" CACHE STRING
+"Space separated list of compute versions to be built against, e.g. '35 61'")
 
 # Use OpenMP
 if(USE_OPENMP)
@@ -60,7 +60,7 @@ include_directories (
     ${PROJECT_SOURCE_DIR}/rabit/include
 )
 
-file(GLOB_RECURSE SOURCES 
+file(GLOB_RECURSE SOURCES
     src/*.cc
     src/*.h
     include/*.h
@@ -104,7 +104,7 @@ if(USE_CUDA)
   cmake_minimum_required(VERSION 3.5)
 
   add_definitions(-DXGBOOST_USE_CUDA)
-  
+
   include_directories(
     nccl/src
     cub
@@ -112,15 +112,16 @@ if(USE_CUDA)
 
   set(GENCODE_FLAGS "")
   format_gencode_flags("${GPU_COMPUTE_VER}" GENCODE_FLAGS)
+  message("cuda architecture flags: ${GENCODE_FLAGS}")
   set(CUDA_NVCC_FLAGS "${CUDA_NVCC_FLAGS};--expt-extended-lambda;${GENCODE_FLAGS};-lineinfo;")
   if(NOT MSVC)
-    set(CUDA_NVCC_FLAGS "${CUDA_NVCC_FLAGS};-Xcompiler -fPIC; -std=c++11")
+    set(CUDA_NVCC_FLAGS "${CUDA_NVCC_FLAGS};-Xcompiler -fPIC; -Xcompiler -Werror; -std=c++11")
   endif()
 
   add_subdirectory(nccl)
   cuda_add_library(gpuxgboost ${CUDA_SOURCES} STATIC)
   target_link_libraries(gpuxgboost nccl)
-  list(APPEND LINK_LIBRARIES gpuxgboost) 
+  list(APPEND LINK_LIBRARIES gpuxgboost)
 endif()
 
 

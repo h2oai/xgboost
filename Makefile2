@@ -5,7 +5,7 @@ libxgboost2: libxgboostgpu libxgboostp2nonccl libxgboostp3
 libxgboost-cpu: libxgboostcpu libxgboostp2cpu-only libxgboostp3
 
 libxgboostgpu:
-	git submodule init && git submodule update dmlc-core && git submodule update nccl && git submodule update cub && git submodule update rabit
+	git submodule init && git submodule update dmlc-core && git submodule update && git submodule update cub && git submodule update rabit
 	rm -rf src/tree/updater_gpu_hist2.cu ;\
 	cp -a src/tree/updater_gpu_hist.cu src/tree/updater_gpu_hist2.cu ;\
 	sed -i 's/updater_gpu_hist/updater_gpu_hist2/g' src/tree/updater_gpu_hist2.cu ;\

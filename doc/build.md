@@ -1,6 +1,15 @@
 Installation Guide
 ==================
 
+**NOTE**. If you are planning to use Python on a Linux system, consider installing XGBoost from a pre-built binary wheel. The wheel is available from Python Package Index (PyPI). You may download and install it by running
+```bash
+# Ensure that you are downloading xgboost-{version}-py2.py3-none-manylinux1_x86_64.whl
+pip3 install xgboost
+```
+* This package will support GPU algorithms (`gpu_exact`, `gpu_hist`) on machines with NVIDIA GPUs.
+* Currently, PyPI has a binary wheel only for 64-bit Linux.
+
+# Building XGBoost from source
 This page gives instructions on how to build and install the xgboost package from
 scratch on various systems. It consists of two steps:
 
@@ -158,7 +167,12 @@ Other versions of Visual Studio may work but are untested.
 
 ### Building with GPU support
 
-XGBoost can be built with GPU support for both Linux and Windows using cmake. GPU support works with the Python package as well as the CLI version. See [Installing R package with GPU support](#installing-r-package-with-gpu-support) for special instructions for R.
+Linux users may simply install prebuilt python binaries:
+```bash
+pip install xgboost
+```
+
+XGBoost can be built from source with GPU support for both Linux and Windows using cmake. GPU support works with the Python package as well as the CLI version. See [Installing R package with GPU support](#installing-r-package-with-gpu-support) for special instructions for R.
 
 An up-to-date version of the CUDA toolkit is required.
 
@@ -194,6 +208,14 @@ If build seems to use only a single process, you might try to append an option l
 After the build process successfully ends, you will find a `xgboost.dll` library file inside `./lib/` folder, copy this file to the the API package folder like `python-package/xgboost` if you are using *python* API. And you are good to follow the below instructions.
 
 Unofficial windows binaries and instructions on how to use them are hosted on [Guido Tapia's blog](http://www.picnet.com.au/blogs/guido/post/2016/09/22/xgboost-windows-x64-binaries-for-download/)
+
+### Building with Multi-GPU support
+Multi-GPU support requires the [NCCL](https://developer.nvidia.com/nccl) library. With NCCL installed, run cmake as:
+```bash
+cmake .. -DUSE_CUDA=ON -DUSE_NCCL=ON -DNCCL_ROOT="<NCCL_DIRECTORY>"
+export LD_LIBRARY_PATH=<NCCL_DIRECTORY>/lib:$LD_LIBRARY_PATH
+```
+One can also pass NCCL_ROOT as an environment variable, in which case, this takes precedence over the cmake variable NCCL_ROOT.
 
 ### Customized Building
 

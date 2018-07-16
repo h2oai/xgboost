@@ -7,7 +7,7 @@
 dockerRun = 'tests/ci_build/ci_build.sh'
 
 def buildMatrix = [
-    [ "enabled": true,  "os" : "linux", "withGpu": true, "withNccl": true,  "withOmp": true, "pythonVersion": "2.7", "cudaVersion": "9.1" ],
+    [ "enabled": true,  "os" : "linux", "withGpu": true, "withNccl": true,  "withOmp": true, "pythonVersion": "2.7", "cudaVersion": "9.2" ],
     [ "enabled": true,  "os" : "linux", "withGpu": true, "withNccl": true,  "withOmp": true, "pythonVersion": "2.7", "cudaVersion": "8.0" ],
     [ "enabled": false,  "os" : "linux", "withGpu": false, "withNccl": false, "withOmp": true, "pythonVersion": "2.7", "cudaVersion": ""  ],
 ]
@@ -97,7 +97,7 @@ def buildPlatformCmake(buildName, conf, nodeReq, dockerTarget) {
         sh """
         ${dockerRun} ${dockerTarget} ${dockerArgs} tests/ci_build/build_via_cmake.sh ${opts}
         ${dockerRun} ${dockerTarget} ${dockerArgs} tests/ci_build/test_${dockerTarget}.sh
-        ${dockerRun} ${dockerTarget} ${dockerArgs} bash -c "cd python-package; rm -f dist/*; python setup.py bdist_wheel"
+        ${dockerRun} ${dockerTarget} ${dockerArgs} bash -c "cd python-package; rm -f dist/*; python setup.py bdist_wheel --universal"
         rm -rf "${distDir}"; mkdir -p "${distDir}/py"
         cp xgboost "${distDir}"
         cp -r lib "${distDir}"
@@ -105,7 +105,7 @@ def buildPlatformCmake(buildName, conf, nodeReq, dockerTarget) {
         # Test the wheel for compatibility on a barebones CPU container
         ${dockerRun} release ${dockerArgs} bash -c " \
             auditwheel show xgboost-*-py2-none-any.whl
-            pip install --user python-package/dist/xgboost-*-py2-none-any.whl && \
+            pip install --user python-package/dist/xgboost-*-none-any.whl && \
             python -m nose tests/python"
         """
         archiveArtifacts artifacts: "${distDir}/**/*.*", allowEmptyArchive: true

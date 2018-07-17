@@ -45,7 +45,7 @@ RUN \
 
 # NCCL2 (License: https://docs.nvidia.com/deeplearning/sdk/nccl-sla/index.html)
 RUN \
-    export CUDA_HOME=/usr/local/cuda && \
+    export CUDA_HOME=/usr/local/cuda ; if [ -d "$CUDA_HOME" ]; then \
     export CUDA_LIB=$CUDA_HOME/lib64 && \
     export CUDA_VERSION=`ls $CUDA_LIB/libcudart.so.* | head -1 | rev | cut -d "." -f -2 | rev` && \
     export CUDA_MAJOR=`echo $CUDA_VERSION | cut -d "." -f 1` && \
@@ -56,7 +56,8 @@ RUN \
     cp nccl_2.2.13-1+cuda${CUDA_SHORT}_x86_64/include/nccl.h /usr/include && \
     cp nccl_2.2.13-1+cuda${CUDA_SHORT}_x86_64/lib/* /usr/lib && \
     rm -f nccl_2.2.13-1+cuda${CUDA_SHORT}_x86_64.txz && \
-    rm -r nccl_2.2.13-1+cuda${CUDA_SHORT}_x86_64
+    rm -r nccl_2.2.13-1+cuda${CUDA_SHORT}_x86_64 \
+    fi
 
 RUN \
   mkdir h2o4gpu_env && \

@@ -65,7 +65,7 @@ pipeline {
                                     nvidia-docker run --init --rm --name ${CONTAINER_NAME} -d -t -u `id -u`:`id -g` -w `pwd` -v `pwd`:`pwd`:rw --entrypoint=bash opsh2oai/xgboost-build
                                     nvidia-docker exec ${
                                 CONTAINER_NAME
-                            } bash -c 'eval \"\$(/root/.pyenv/bin/pyenv init -)\" ; /root/.pyenv/bin/pyenv global 3.6.1; make ${
+                            } bash -c 'eval \"\$(/root/.pyenv/bin/pyenv init -)\" ; /root/.pyenv/bin/pyenv global 3.6.4; make ${
                                 env.MAKE_OPTS
                             } AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID} AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY} -f Makefile2 libxgboost ; rm -rf build/VERSION.txt ; make -f Makefile2 build/VERSION.txt ; mkdir -p python-package/dist4 ; rm -rf python-package/dist4/*.whl ; mv python-package/dist/*.whl python-package/dist4/'
                                 """
@@ -97,7 +97,7 @@ pipeline {
                         sh """
                             nvidia-docker stop ${CONTAINER_NAME} ||  true
                             nvidia-docker run  --init --rm --name ${CONTAINER_NAME} -d -t -u `id -u`:`id -g` -w `pwd` -v `pwd`:`pwd`:rw --entrypoint=bash opsh2oai/xgboost-build
-                            nvidia-docker exec ${CONTAINER_NAME} bash -c 'export HOME=`pwd`; eval \"\$(/root/.pyenv/bin/pyenv init -)\"  ; /root/.pyenv/bin/pyenv global 3.6.1; pip install `find python-package/dist4 -name "*xgboost*.whl"`; mkdir -p build/test-reports/ ; python -m nose --with-xunit --xunit-file=build/test-reports/xgboost.xml tests/python-gpu tests/python'
+                            nvidia-docker exec ${CONTAINER_NAME} bash -c 'export HOME=`pwd`; eval \"\$(/root/.pyenv/bin/pyenv init -)\"  ; /root/.pyenv/bin/pyenv global 3.6.4; pip install `find python-package/dist4 -name "*xgboost*.whl"`; mkdir -p build/test-reports/ ; python -m nose --with-xunit --xunit-file=build/test-reports/xgboost.xml tests/python-gpu tests/python'
                         """
                     } finally {
                         sh """

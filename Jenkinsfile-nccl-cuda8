@@ -65,7 +65,7 @@ pipeline {
                                     nvidia-docker run --init --rm --name ${CONTAINER_NAME} -d -t -u `id -u`:`id -g` -w `pwd` -v `pwd`:`pwd`:rw --entrypoint=bash opsh2oai/xgboost-build
                                     nvidia-docker exec ${
                                 CONTAINER_NAME
-                            } bash -c 'eval \"\$(/root/.pyenv/bin/pyenv init -)\" ; /root/.pyenv/bin/pyenv global 3.6.1; make ${
+                            } bash -c 'eval \"\$(/root/.pyenv/bin/pyenv init -)\" ; /root/.pyenv/bin/pyenv global 3.6.4; make ${
                                 env.MAKE_OPTS
                             } AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID} AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY} -f Makefile2 libxgboost ; rm -rf build/VERSION.txt ; make -f Makefile2 build/VERSION.txt ; mkdir -p python-package/dist1 ; rm -rf python-package/dist1/*.whl ; mv python-package/dist/*.whl python-package/dist1/'
                                 """

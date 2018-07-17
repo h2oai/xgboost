@@ -377,6 +377,7 @@ class DMatrix(object):
 
         self.feature_names = feature_names
         self.feature_types = feature_types
+        self.handle = None
 
     def _init_from_csr(self, csr):
         """
@@ -1188,7 +1189,8 @@ class Booster(object):
                 if ngroup == 1:
                     preds = preds.reshape(nrow, data.num_col() + 1)
                 else:
-                    preds = preds.reshape(nrow, ngroup, data.num_col() + 1)
+                    # preds = preds.reshape(nrow, ngroup, data.num_col() + 1)
+                    preds = preds.reshape(nrow, ngroup * (data.num_col() + 1))  # HACK, FIX SOON
             else:
                 preds = preds.reshape(nrow, chunk_size)
         return preds

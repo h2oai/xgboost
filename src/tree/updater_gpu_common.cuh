@@ -53,6 +53,15 @@ __device__ __forceinline__ void AtomicAddGpair(GradientPairPrecise* dest,
   atomicAdd(dst_ptr + 1, gpair.GetHess());
 }
 
+// used by shared-memory atomics code
+__device__ __forceinline__ void AtomicAddGpair(GradientPairInteger* dest,
+                                               const GradientPairInteger& gpair) {
+  auto dst_ptr = reinterpret_cast<unsigned long long int*>(dest);
+
+  atomicAdd(dst_ptr, gpair.GetGrad());
+  atomicAdd(dst_ptr + 1, gpair.GetHess());
+}
+
 // For integer gradients
 __device__ __forceinline__ void AtomicAddGpair(GradientPairInteger* dest,
                                                const GradientPair& gpair) {

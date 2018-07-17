@@ -28,7 +28,7 @@ RUN if $layer -ne "ubuntu"; then export CUDA_HOME=/usr/local/cuda && \
 # Setup Repos
 RUN \
   apt-get update -y && \
-  apt-get -y install curl apt-utils python-software-properties \
+  apt-get -y install curl apt-utils \
   software-properties-common iputils-ping wget cpio net-tools build-essential \
   git zip dirmngr && \
   apt-get -y --no-install-recommends  install \

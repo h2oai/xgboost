@@ -20,7 +20,7 @@ ENV VECLIB_MAXIMUM_THREADS=32
 RUN \
   # Setup Repos
   apt-get update -y && \
-  apt-get -y install curl apt-utils python-software-properties \
+  apt-get -y install curl apt-utils \
   software-properties-common iputils-ping wget cpio net-tools build-essential \
   git zip dirmngr && \
   apt-get -y --no-install-recommends  install \

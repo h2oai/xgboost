@@ -28,20 +28,35 @@ RUN \
       python3-magic && \
   wget http://launchpadlibrarian.net/326935544/s3cmd_2.0.0-1_all.deb && \
   dpkg -i s3cmd_2.0.0-1_all.deb && \
-  add-apt-repository ppa:jonathonf/python-3.6 && \
   apt-get update -yqq && \
   curl -sL https://deb.nodesource.com/setup_7.x | bash - && \
   # Install H2o dependencies
   apt-get -y --no-install-recommends  install \
-    python3.6 \
-    python3.6-dev \
-    virtualenv \
-    python3-pip && \
-  update-alternatives --install /usr/bin/python python /usr/bin/python3.6 100 && \
-  python -m pip install --upgrade pip && \
+    virtualenv && \
   apt-get clean && \
   rm -rf /var/cache/apt/* && \
   apt-get install -y libopenblas-dev
+
+RUN \
+  apt-get update && \
+  apt-get install -y libpng-dev zlib1g-dev libreadline-gplv2-dev libncursesw5-dev libssl-dev libsqlite3-dev tk-dev libgdbm-dev libc6-dev libbz2-dev\
+    && mkdir -p /usr/src/python \
+    && cd /usr/src/python \
+    && wget https://www.python.org/ftp/python/3.6.4/Python-3.6.4.tgz \
+    && tar xvzf Python-3.6.4.tgz \
+    && cd Python-3.6.4/ \
+    && ./configure --enable-shared --enable-ipv6 --with-assertions --enable-loadable-sqlite-extensions --with-fpectl  \
+    && make -j \
+    && make install \
+    && cd / \
+    && rm -rf /usr/src/python \
+    && ldconfig -v \
+    && export PATH=/usr/local/bin:$PATH \
+    && chmod -R a+rx /usr/local/bin/ \
+    && chmod -R a+rx /usr/local/lib/ \
+    && export LD_LIBRARY_PATH=/usr/local/lib/:$LD_LIBRARY_PATH \
+    && rm -rf /var/lib/apt/lists/* \
+    && update-alternatives --install /usr/bin/python python /usr/local/bin/python3.6 100
 
 # NCCL2 (License: https://docs.nvidia.com/deeplearning/sdk/nccl-sla/index.html)
 RUN \
@@ -61,7 +76,7 @@ RUN \
 
 RUN \
   mkdir h2o4gpu_env && \
-  virtualenv --python=/usr/bin/python3.6 h2o4gpu_env && \
+  virtualenv --python=/usr/local/bin/python3.6 h2o4gpu_env && \
   chmod -R o+w h2o4gpu_env && \
   . h2o4gpu_env/bin/activate && \
   pip install --no-cache-dir --upgrade pip && \

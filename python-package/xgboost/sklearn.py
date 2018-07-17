@@ -624,7 +624,7 @@ class XGBClassifier(XGBModel, XGBClassifierBase):
                                            pred_leaf=pred_leaf,
                                            pred_contribs=pred_contribs,
                                            approx_contribs=approx_contribs)
-        if not output_margin and not pred_leaf and not pred_contribs and not approx_contribs:
+        if not pred_leaf and not pred_contribs and not approx_contribs:
             if len(preds.shape) > 1:
                 column_indexes = np.argmax(preds, axis=1)
             else:
@@ -664,7 +664,7 @@ class XGBClassifier(XGBModel, XGBClassifierBase):
                                            pred_leaf=pred_leaf,
                                            pred_contribs=pred_contribs,
                                            approx_contribs=approx_contribs)
-        if not output_margin and not pred_leaf and not pred_contribs and not approx_contribs:
+        if not pred_leaf and not pred_contribs and not approx_contribs:
             if self.objective == "binary:logistic":
                 classone_probs = preds
                 classzero_probs = 1.0 - classone_probs

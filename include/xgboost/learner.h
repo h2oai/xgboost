@@ -189,6 +189,12 @@ class Learner : public rabit::Serializable {
       gbm_->Accept(v);
   }
 
+  /*!
+   * \brief Exposes the internal base score of the model.
+   * \return The model's internal base score
+   */
+  inline bst_float GetBaseScore() { return base_score_; } 
+
  protected:
   /*! \brief internal base score of the model */
   bst_float base_score_;

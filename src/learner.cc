@@ -315,6 +315,7 @@ class LearnerImpl : public Learner {
     }
     CHECK(fi->Read(&name_gbm_)) << "BoostLearner: wrong model format";
     // duplicated code with LazyInitModel
+    base_score_ = mparam_.base_score;
     obj_.reset(ObjFunction::Create(name_obj_));
     gbm_.reset(GradientBooster::Create(name_gbm_, cache_, mparam_.base_score));
     gbm_->Load(fi);
@@ -576,6 +577,7 @@ class LearnerImpl : public Learner {
     obj_->Configure(cfg_.begin(), cfg_.end());
     // reset the base score
     mparam_.base_score = obj_->ProbToMargin(mparam_.base_score);
+    base_score_ = mparam_.base_score;
     gbm_.reset(GradientBooster::Create(name_gbm_, cache_, mparam_.base_score));
     gbm_->Configure(cfg_.begin(), cfg_.end());
   }

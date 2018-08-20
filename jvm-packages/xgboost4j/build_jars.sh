@@ -31,9 +31,6 @@ cat <<EOF
 ===========
   This script builds libraries for H2O integration
 
-  DO NOT FORGET TO SETUP CXX and CC ENV VARS!
-      CXX=${CXX}
-      CC=${CC}
       PLATFORM=${PLATFORM}
       USE_GPU=${USE_GPU}
       USE_OMP=${USE_OMP}

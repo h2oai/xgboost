@@ -1,0 +1,392 @@
+#################################################################################################################
+# README                                                                                                        #
+#                                                                                                               #
+# This Makefile serves for building H2O-3 required artifacts: jar files, whls etc.                              #
+# Usually the following workflow is used:                                                                       #
+#    - make -f ci/Makefile.jenkins mrproper                    - cleans everything                              #
+#    - make -f ci/Makefile.jenkins build_minimal_in_docker     - builds the .so                                 #
+#    - make -f ci/Makefile.jenkins jar_minimal_in_docker       - builds the .jar, present under ci-build folder #
+#    - make -f ci/Makefile.jenkins whl_minimal_in_docker       - builds the .whl, present under ci-build folder #
+#                                                                                                               #
+# It is possible to call each target without the '_in_docker' suffix. In that case, the recipie won't be        #
+# executed inside a docker container. It is also possible to specify the backend "flavor", these are the        #
+# accepted values:                                                                                              #
+#    - minimal - no GPU and no OMP support used in the example above                                            #
+#    - ompv3   - no GPU, with OMP support (uses libgomp v3), for Ubuntu 14                                      #
+#    - gpuv3   - with GPU and with OMP support (uses libgomp v3), for Ubuntu 14                                 #
+#    - ompv4   - no GPU, with OMP support (uses libgomp v4), for Ubuntu 16 and CentOS                           #
+#    - gpuv4   - with GPU and with OMP support (uses libgomp v4), for Ubuntu 14 and CentOS                      #
+#                                                                                                               #
+# Apart from these steps, Jenkins does also the following:                                                      #
+#    - checks if the built .so have all dependencies satisfied in diferent envs                                 #
+#        - using for example the centos6.5_check_deps_in_docker target                                          #
+#    - publishes the built .jar files to Nexus                                                                  #
+#		 - using for example the deploy_jar_minimal_in_docker target                                            #
+#################################################################################################################
+
+# Constants and variables
+$(THIS_FILE)
+CI ?= 0
+ifeq ($(CI),0)
+	INTERACTIVE_FLAG = -it
+endif
+TIMESTAMP := $(shell date +%s)
+SHELL:=/bin/bash
+THIS_FILE := $(lastword $(MAKEFILE_LIST))
+
+XGB_VERSION ?= 0.8-SNAPSHOT
+
+TARGET_NEXUS ?= snapshot
+NEXUS_IP ?= 172.17.0.53
+
+PY_VERSION ?= $(shell python --version 2>&1 | egrep -o '[0-9]\.[0-9]' | tr -d '.')
+
+CENTOS_DOCKER_IMAGE := docker.h2o.ai/opsh2oai/h2o-3-xgboost-build-centos6
+CENTOS_JAVA_HOME := /usr/lib/jvm/java-1.8.0-openjdk-1.8.0.161-3.b14.el6_9.x86_64
+CENTOS_CHECK_LD_LIB_PATH := /usr/java/jdk1.8.0_161/jre/lib/amd64/server
+CENTOS_PY_27_ENV_PATH := /opt/rh/python27/enable
+CENTOS_PY_35_ENV_PATH := /opt/rh/rh-python35/enable
+CENTOS_PY_36_ENV_PATH := /opt/rh/rh-python36/enable
+CENTOS_PY_ENV_PATH := $(CENTOS_PY_$(PY_VERSION)_ENV_PATH)
+
+UBUNTU_DOCKER_IMAGE ?= docker.h2o.ai/opsh2oai/h2o-3-xgboost-build-ubuntu14
+UBUNTU_JAVA_HOME ?= /usr/lib/jvm/java-8-oracle
+UBUNTU_CHECK_LD_LIB_PATH := /jdk1.8.0_172/jre/lib/amd64/server
+UBUNTU_PY_27_ENV_PATH := /envs/xgb-env-py2.7/bin/activate
+UBUNTU_PY_35_ENV_PATH := /envs/xgb-env-py3.5/bin/activate
+UBUNTU_PY_36_ENV_PATH := /envs/xgb-env-py3.6/bin/activate
+UBUNTU_PY_ENV_PATH := $(UBUNTU_PY_$(PY_VERSION)_ENV_PATH)
+
+OSX_PY_27_ENV_NAME := xgb-build-py2.7
+OSX_PY_35_ENV_NAME := xgb-build-py3.5
+OSX_PY_36_ENV_NAME := xgb-build-py3.6
+OSX_PY_ENV_NAME := $(OSX_PY_$(PY_VERSION)_ENV_NAME)
+
+# Initial checks
+OS ?= $(shell uname | tr '[:upper:]' '[:lower:]')
+WHL_OS_NAME := $(OS)
+ifeq ($(OS),darwin)
+	OS := osx
+	DISTRO := osx
+	WHL_OS_NAME := macosx_*
+ifeq ($(CI),1)
+export JAVA_HOME := $(shell /usr/libexec/java_home)
+$(info JAVA_HOME=$(JAVA_HOME))
+export PATH := $(PATH):/Users/jenkins/anaconda/bin
+$(info PATH=$(PATH))
+endif
+endif
+
+ifneq (,$(findstring CentOS,$(shell cat /etc/issue 2> /dev/null)))
+    DISTRO := centos
+endif
+ifneq (,$(findstring Ubuntu,$(shell cat /etc/issue 2> /dev/null)))
+	DISTRO := ubuntu
+endif
+
+ifeq ($(EXEC_PRECHECKS),1)
+# Check if gcc is of expected version
+ifneq (,$(findstring CentOS,$(shell cat /etc/issue 2> /dev/null)))
+    ifneq ($(shell gcc --version | head -1), gcc (GCC) 4.9.2 20150212 (Red Hat 4.9.2-6))
+        $(error Unexpected gcc version.)
+    endif
+endif
+# Check if cmake is of expected version
+ifneq ($(shell cmake --version | head -1), cmake version 3.5.2)
+    $(error Unexpected cmake version.)
+endif
+endif
+
+# Set flags whether to use CUDA and OMP
+ifeq ($(BACKEND),minimal)
+$(info Using configuration MINIMAL)
+	USE_CUDA := 0
+	USE_OMP := 0
+endif
+
+ifneq (,$(findstring omp,$(BACKEND)))
+$(info Using configuration OMP)
+	USE_CUDA := 0
+	USE_OMP := 1
+endif
+
+ifneq (,$(findstring gpu,$(BACKEND)))
+$(info Using configuration GPU)
+	USE_CUDA := 1
+	USE_OMP := 1
+endif
+
+# Initialize CMake and JAR options
+CMAKE_OPTS := -DJVM_BINDINGS:BOOL=ON
+ifeq ($(USE_CUDA),1)
+	CMAKE_OPTS += -DUSE_CUDA:BOOL=ON
+	JAR_OPTS += USE_GPU=TRUE
+endif
+ifeq ($(USE_OMP),1)
+	CMAKE_OPTS += -DUSE_OPENMP:BOOL=ON
+	JAR_OPTS += USE_OMP=TRUE
+else
+	CMAKE_OPTS += -DUSE_OPENMP:BOOL=OFF
+endif
+
+mrproper:
+	make clean_all
+	git clean -f -d -x
+
+bash:
+	@bash
+
+write_version:
+	cd jvm-packages/xgboost4j && mvn -q -DnewVersion=$(XGB_VERSION) versions:set
+
+build_impl:
+	mkdir -p build ci-build
+	cd build && cmake .. $(CMAKE_OPTS)
+	cd build && make
+build_minimal:
+	$(MAKE) -f $(THIS_FILE) BACKEND=minimal build_impl
+build_ompv3:
+	$(MAKE) -f $(THIS_FILE) BACKEND=ompv3 build_impl
+build_ompv4:
+	$(MAKE) -f $(THIS_FILE) BACKEND=ompv4 build_impl
+build_gpuv3:
+	$(MAKE) -f $(THIS_FILE) BACKEND=gpuv3 build_impl
+build_gpuv4:
+	$(MAKE) -f $(THIS_FILE) BACKEND=gpuv4 build_impl
+
+jar_impl:
+ifeq ($(BACKEND),)
+	$(error BACKEND must be set)
+endif
+	cd jvm-packages/xgboost4j && XGB_VERSION=$(XGB_VERSION) XGB_BACKEND=$(BACKEND) $(JAR_OPTS) ./build_jars.sh
+	mv jvm-packages/xgboost4j/target/h2o/xgboost4j-native-$(OS)-$(XGB_VERSION).jar ci-build/xgboost4j-native-$(OS)_$(BACKEND).jar
+
+whl_impl:
+ifeq ($(BACKEND),)
+	$(error BACKEND must be set)
+endif
+	python --version
+	cd python-package && echo $(XGB_VERSION) > xgboost/VERSION
+	cd python-package && echo xgboost_$(BACKEND) > xgboost/NAME
+
+	cd python-package/xgboost && ln -sf ../../include .
+	cd python-package/xgboost && ln -sf ../../src .
+	cd python-package/xgboost && ln -sf ../../make .
+	cd python-package/xgboost && ln -sf ../../rabit .
+	cd python-package/xgboost && ln -sf ../../lib .
+	cd python-package/xgboost && ln -sf ../../dmlc-core .
+
+	cd python-package && python setup_pip.py bdist_wheel
+
+	cp python-package/dist/xgboost_$(BACKEND)-$(shell echo $(XGB_VERSION) | tr '-' '_')-cp$(PY_VERSION)*-$(WHL_OS_NAME)_x86_64.whl ci-build
+
+whl_%:
+	$(MAKE) -f $(THIS_FILE) BACKEND=$* whl_impl
+
+check_deps_prepare:
+	rm -rf ci-build/check
+	mkdir ci-build/check
+	cp ci-build/xgboost4j-native-$(OS)_$(BACKEND)$(OMP_VERSION).jar ci-build/check/
+	cd ci-build/check && unzip xgboost4j-native-$(OS)_$(BACKEND)$(OMP_VERSION).jar
+	cd ci-build/check && chmod +x lib/$(OS)_64/libxgboost4j*
+check_deps_linux: check_deps_prepare
+	ldd ci-build/check/lib/$(OS)_64/libxgboost4j_$(BACKEND).so > ci-build/check/ldd-check-$(OS)-$(DISTRO)-$(BACKEND)$(OMP_VERSION).log 2>&1
+ifneq (,$(findstring not found,$(shell cat ci-build/check/ldd-check-$(OS)-$(DISTRO)-$(BACKEND)$(OMP_VERSION).log 2> /dev/null)))
+	echo "ldd check failed! Please check the following output:" && \
+	ldd ci-build/check/lib/$(OS)_64/libxgboost4j_$(BACKEND).so && \
+	exit 1
+endif
+check_deps_osx: check_deps_prepare
+	otool -L ci-build/check/lib/$(OS)_64/libxgboost4j_$(BACKEND).dylib > ci-build/check/otool-check-$(OS)-$(DISTRO)-$(BACKEND)$(OMP_VERSION).log 2>&1
+ifneq (,$(findstring not found,$(shell cat ci-build/check/otool-check-$(OS)-$(DISTRO)-$(BACKEND)$(OMP_VERSION).log 2> /dev/null)))
+	echo "otool check failed! Please check the following output:" && \
+	otool -L ci-build/check/lib/$(OS)_64/libxgboost4j_$(BACKEND).dylib && \
+	exit 1
+endif
+
+deploy_prepare:
+	mkdir -p ~/.m2
+	cp $(MAVEN_SETTINGS_PATH) ~/.m2/settings.xml
+	gpg --import $(SECRING_PATH)
+
+deploy_jar_impl: deploy_prepare
+ifeq ($(BACKEND),)
+	$(error BACKEND must be set)
+endif
+	mkdir -p ci-build/xgboost4j-$(TARGET_OS)-$(BACKEND)/src/main/resources
+	unzip ci-build/xgboost4j-native-$(TARGET_OS)_$(BACKEND).jar -d ci-build/xgboost4j-$(TARGET_OS)-$(BACKEND)/src/main/resources
+	find ci-build/xgboost4j-$(TARGET_OS)-$(BACKEND)/src/main/resources -maxdepth 1 -not -name 'resources' -and -not -name 'lib' -exec rm -rf '{}' \;
+	sed -i 's/!SUBST_VERSION/$(XGB_VERSION)/' ci-build/xgboost4j-$(TARGET_OS)-$(BACKEND)/src/main/java/ai/h2o/*.java
+	sed -i 's/!SUBST_BACKEND/$(BACKEND)/' ci-build/xgboost4j-$(TARGET_OS)-$(BACKEND)/src/main/java/ai/h2o/*.java
+	sed -i 's/!SUBST_OS/$(TARGET_OS)/' ci-build/xgboost4j-$(TARGET_OS)-$(BACKEND)/src/main/java/ai/h2o/*.java
+	cd ci-build/xgboost4j-$(TARGET_OS)-$(BACKEND) && \
+		mvn -q -DnewVersion=$(XGB_VERSION) versions:set && \
+		mvn -q -Dtarget.nexus=$(TARGET_NEXUS) clean deploy
+deploy_lib_jar_impl: deploy_prepare
+	cd jvm-packages/xgboost4j && \
+		mvn \
+			-q \
+			-Dmaven.test.skip=true \
+			-DskipTests \
+			-Dtarget.nexus=$(TARGET_NEXUS) \
+			-Dexclude.xgboost.lib=true \
+			clean deploy
+
+centos6_docker_image_name minimal_docker_image_name ompv4_docker_image_name gpuv4_docker_image_name:
+	@echo $(CENTOS_DOCKER_IMAGE)
+ompv3_docker_image_name gpuv3_docker_image_name:
+	@echo $(UBUNTU_DOCKER_IMAGE)
+
+centos6_write_version_in_docker: centos6_write_version_in_docker_impl
+
+centos%_check_minimal_in_docker:
+	$(MAKE) -f $(THIS_FILE) BACKEND=minimal centos$*_check_deps_in_docker_impl
+centos%_check_ompv4_in_docker:
+	$(MAKE) -f $(THIS_FILE) BACKEND=omp OMP_VERSION=v4 centos$*_check_deps_in_docker_impl
+centos%_check_gpuv4_in_docker:
+	$(MAKE) -f $(THIS_FILE) BACKEND=gpu OMP_VERSION=v4 centos$*_check_deps_in_docker_impl
+ubuntu%_check_minimal_in_docker:
+	$(MAKE) -f $(THIS_FILE) BACKEND=minimal ubuntu$*_check_deps_in_docker_impl
+ubuntu14_check_%v3_in_docker:
+	$(MAKE) -f $(THIS_FILE) BACKEND=$* OMP_VERSION=v3 ubuntu14_check_deps_in_docker_impl
+ubuntu16_check_%v4_in_docker:
+	$(MAKE) -f $(THIS_FILE) BACKEND=$* OMP_VERSION=v4 ubuntu16_check_deps_in_docker_impl
+centos%_check_deps_in_docker_impl:
+ifeq ($(CI),1)
+	docker pull $(CENTOS_DOCKER_IMAGE)
+endif
+	docker run \
+	$(INTERACTIVE_FLAG) \
+	--init \
+	--rm \
+	--entrypoint /bin/bash \
+	-e BACKEND=$(BACKEND) \
+	-e OMP_VERSION=$(OMP_VERSION) \
+	-v `pwd`:/dot \
+	-u 2117:2117 \
+	-w /dot \
+	$(ADDITIONAL_DOCKER_ARGS) \
+	docker.h2o.ai/opsh2oai/h2o-3-xgb-runtime-$(BACKEND):centos$* \
+	-c "export JAVA_HOME=$(CENTOS_JAVA_HOME) && \
+		export LD_LIBRARY_PATH=$(CENTOS_CHECK_LD_LIB_PATH) && \
+		make -f $(THIS_FILE) check_deps_linux"
+ubuntu%_check_deps_in_docker_impl:
+ifeq ($(CI),1)
+	docker pull $(UBUNTU_DOCKER_IMAGE)
+endif
+	docker run \
+		$(INTERACTIVE_FLAG) \
+		--init \
+		--rm \
+		--entrypoint /bin/bash \
+		-e BACKEND=$(BACKEND) \
+		-e OMP_VERSION=$(OMP_VERSION) \
+		-v `pwd`:/dot \
+		-u 2117:2117 \
+		-w /dot \
+		$(ADDITIONAL_DOCKER_ARGS) \
+		docker.h2o.ai/opsh2oai/h2o-3-xgb-runtime-$(BACKEND):ubuntu$* \
+		-c "export JAVA_HOME=$(UBUNTU_JAVA_HOME) && \
+			export LD_LIBRARY_PATH=$(UBUNTU_CHECK_LD_LIB_PATH) && \
+			make -f $(THIS_FILE) check_deps_linux"
+
+deploy_lib_jar_in_docker:
+ifeq ($(MAVEN_SETTINGS_PATH),)
+	$(error MAVEN_SETTINGS_PATH must be set)
+endif
+ifeq ($(SECRING_PATH),)
+	$(error SECRING_PATH must be set)
+endif
+	$(MAKE) -f $(THIS_FILE) BACKEND=$* ADDITIONAL_DOCKER_ARGS="$(ADDITIONAL_DOCKER_ARGS) \
+		-v $(MAVEN_SETTINGS_PATH):$(MAVEN_SETTINGS_PATH):ro \
+		-v $(SECRING_PATH):$(SECRING_PATH):ro \
+		-e MAVEN_SETTINGS_PATH=$(MAVEN_SETTINGS_PATH) \
+		-e SECRING_PATH=$(SECRING_PATH)" centos6_deploy_lib_jar_impl_in_docker_impl
+
+deploy_jar_%_in_docker:
+ifeq ($(MAVEN_SETTINGS_PATH),)
+	$(error MAVEN_SETTINGS_PATH must be set)
+endif
+ifeq ($(SECRING_PATH),)
+	$(error SECRING_PATH must be set)
+endif
+ifeq ($(TARGET_OS),)
+	$(error TARGET_OS must be set)
+endif
+	$(MAKE) -f $(THIS_FILE) BACKEND=$* ADDITIONAL_DOCKER_ARGS="$(ADDITIONAL_DOCKER_ARGS) \
+		-v $(MAVEN_SETTINGS_PATH):$(MAVEN_SETTINGS_PATH):ro \
+		-v $(SECRING_PATH):$(SECRING_PATH):ro \
+		-e MAVEN_SETTINGS_PATH=$(MAVEN_SETTINGS_PATH) \
+		-e SECRING_PATH=$(SECRING_PATH) \
+		-e BACKEND=$* \
+		-e TARGET_OS=$(TARGET_OS)" centos6_deploy_jar_impl_in_docker_impl
+
+%_minimal_in_docker %v4_in_docker:
+	$(MAKE) -f $(THIS_FILE) centos6_$@_impl
+%v3_in_docker:
+	$(MAKE) -f $(THIS_FILE) ubuntu14_$@_impl
+
+jar_%:
+	$(MAKE) -f $(THIS_FILE) BACKEND=$* jar_impl
+
+whls_%:
+	$(MAKE) -f $(THIS_FILE) BACKEND=$* $(DISTRO)_whl27
+	$(MAKE) -f $(THIS_FILE) BACKEND=$* $(DISTRO)_whl35
+	$(MAKE) -f $(THIS_FILE) BACKEND=$* $(DISTRO)_whl36
+
+centos6_%_in_docker_impl:
+ifeq ($(CI),1)
+	docker pull $(CENTOS_DOCKER_IMAGE)
+endif
+	docker run \
+		$(INTERACTIVE_FLAG) \
+		--init \
+		--rm \
+		--add-host=nexus:$(NEXUS_IP) \
+		--entrypoint /bin/bash \
+		-e TARGET_NEXUS=$(TARGET_NEXUS) \
+		-e XGB_VERSION=$(XGB_VERSION) \
+		-e EXEC_PRECHECKS=1 \
+		-v `pwd`:/dot \
+		-u 2117:2117 \
+		-w /dot \
+		$(ADDITIONAL_DOCKER_ARGS) \
+		$(CENTOS_DOCKER_IMAGE) \
+		-c "export JAVA_HOME=$(CENTOS_JAVA_HOME) && \
+			source $(CENTOS_PY_ENV_PATH) && \
+			source /opt/rh/devtoolset-3/enable && \
+			make -f $(THIS_FILE) $*"
+
+centos_whl%:
+	source $(CENTOS_PY_$*_ENV_PATH) && $(MAKE) -f $(THIS_FILE) PY_VERSION=$* whl_impl
+
+ubuntu14_%_in_docker_impl:
+ifeq ($(CI),1)
+	docker pull $(UBUNTU_DOCKER_IMAGE)
+endif
+	docker run \
+		$(INTERACTIVE_FLAG) \
+		--init \
+		--rm \
+		--add-host=nexus:$(NEXUS_IP) \
+		--entrypoint /bin/bash \
+		-e TARGET_NEXUS=$(TARGET_NEXUS) \
+		-e XGB_VERSION=$(XGB_VERSION) \
+		-e EXEC_PRECHECKS=1 \
+		-v `pwd`:/dot \
+		-u 2117:2117 \
+		-w /dot \
+		$(ADDITIONAL_DOCKER_ARGS) \
+		$(UBUNTU_DOCKER_IMAGE) \
+		-c "export JAVA_HOME=$(UBUNTU_JAVA_HOME) && \
+			source $(UBUNTU_PY_ENV_PATH) && \
+			make -f $(THIS_FILE) $*"
+
+ubuntu_whl%:
+	source $(UBUNTU_PY_$*_ENV_PATH) && $(MAKE) -f $(THIS_FILE) PY_VERSION=$* whl_impl
+
+osx_whl%:
+	source activate $(OSX_PY_$*_ENV_NAME) && $(MAKE) -f $(THIS_FILE) PY_VERSION=$* whl_impl
+
+osx_check_minimal:
+	$(MAKE) -f $(THIS_FILE) BACKEND=minimal check_deps_osx

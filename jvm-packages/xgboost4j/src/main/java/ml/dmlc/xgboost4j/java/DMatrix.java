@@ -214,7 +214,7 @@ public class DMatrix {
    */
   public DMatrix(BigDenseMatrix matrix, float missing) throws XGBoostError {
     long[] out = new long[1];
-    XGBoostJNI.checkCall(XGBoostJNI.XGDMatrixCreateFromMatRef(matrix.address, (int) matrix.nrow, (int) matrix.ncol, missing, out));
+    XGBoostJNI.checkCall(XGBoostJNI.XGDMatrixCreateFromMatRef(matrix.address, matrix.nrow, matrix.ncol, missing, out));
     handle = out[0];
   }
 

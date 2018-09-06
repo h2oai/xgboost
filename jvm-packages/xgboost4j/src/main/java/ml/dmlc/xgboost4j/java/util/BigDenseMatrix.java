@@ -22,29 +22,29 @@ public final class BigDenseMatrix {
 
   private final static int FLOAT_BYTE_SIZE = 4;
 
-  public final long nrow;
-  public final long ncol;
+  public final int nrow;
+  public final int ncol;
   public final long address;
 
-  public BigDenseMatrix(long nrow, long ncol) {
+  public BigDenseMatrix(int nrow, int ncol) {
     this.nrow = nrow;
     this.ncol = ncol;
     this.address = UtilUnsafe.UNSAFE.allocateMemory(ncol * nrow * FLOAT_BYTE_SIZE);
   }
 
-  public final void set(long idx, float val) {
+  public final void set(int idx, float val) {
     UtilUnsafe.UNSAFE.putFloat(address + idx * FLOAT_BYTE_SIZE, val);
   }
 
-  public final void set(long i, long j, float val) {
+  public final void set(int i, int j, float val) {
     set(i * ncol + j, val);
   }
 
-  public final float get(long idx) {
+  public final float get(int idx) {
     return UtilUnsafe.UNSAFE.getFloat(address + idx * FLOAT_BYTE_SIZE);
   }
 
-  public final float get(long i, long j) {
+  public final float get(int i, int j) {
     return get(i * ncol + j);
   }
 

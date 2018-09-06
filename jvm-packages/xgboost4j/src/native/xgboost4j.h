@@ -74,10 +74,10 @@ JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGDMatrixCreateFro
 /*
  * Class:     ml_dmlc_xgboost4j_java_XGBoostJNI
  * Method:    XGDMatrixCreateFromMatRef
- * Signature: (JJJF[J)I
+ * Signature: (JIIF[J)I
  */
 JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGDMatrixCreateFromMatRef
-  (JNIEnv *jenv, jclass jcls, jlong jdataRef, jlong jnrow, jlong jncol, jfloat jmiss, jlongArray jout);
+  (JNIEnv *jenv, jclass jcls, jlong jdataRef, jint jnrow, jint jncol, jfloat jmiss, jlongArray jout);
 
 /*
  * Class:     ml_dmlc_xgboost4j_java_XGBoostJNI

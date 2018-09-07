@@ -16,20 +16,26 @@
 package ml.dmlc.xgboost4j.java.util;
 
 /**
- * Off-heap implementation of a Dense Matrix, matrix size is only limited by the amount of the available memory
+ * Off-heap implementation of a Dense Matrix, matrix size is only limited by the amount of the available memory and
+ * the matrix dimension cannot exceed Integer.MAX_VALUE (this is consistent with XGBoost API restrictions on maximum
+ * length of a response).
  */
 public final class BigDenseMatrix {
 
   private final static int FLOAT_BYTE_SIZE = 4;
+  public static final long MAX_MATRIX_SIZE = Long.MAX_VALUE / FLOAT_BYTE_SIZE;
 
   public final int nrow;
   public final int ncol;
   public final long address;
 
   public BigDenseMatrix(int nrow, int ncol) {
+    final long size = (long) nrow * ncol;
+    if (size > MAX_MATRIX_SIZE)
+      throw new IllegalArgumentException("Matrix too large; matrix size cannot exceed " + MAX_MATRIX_SIZE);
     this.nrow = nrow;
     this.ncol = ncol;
-    this.address = UtilUnsafe.UNSAFE.allocateMemory(ncol * nrow * FLOAT_BYTE_SIZE);
+    this.address = UtilUnsafe.UNSAFE.allocateMemory(size * FLOAT_BYTE_SIZE);
   }
 
   public final void set(int idx, float val) {

@@ -1,9 +1,14 @@
 package ml.dmlc.xgboost4j.java.util;
 
 import org.junit.Assert;
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.ExpectedException;
 
 public class BigDenseMatrixTest {
+
+  @Rule
+  public ExpectedException thrown = ExpectedException.none();
 
   @Test
   public void testMatrix() {
@@ -24,6 +29,12 @@ public class BigDenseMatrixTest {
       if (matrix != null)
         matrix.dispose();;
     }
+  }
+
+  @Test
+  public void testMaxSize() {
+    thrown.expectMessage("Matrix too large; matrix size cannot exceed 2305843009213693951");
+    new BigDenseMatrix(Integer.MAX_VALUE, Integer.MAX_VALUE);
   }
 
 }

@@ -16,7 +16,7 @@
 package ml.dmlc.xgboost4j.java;
 
 import java.util.Iterator;
-
+import ml.dmlc.xgboost4j.java.util.BigDenseMatrix;
 import ml.dmlc.xgboost4j.LabeledPoint;
 
 /**
@@ -185,6 +185,16 @@ public class DMatrix {
   }
 
   /**
+   * create DMatrix from a BigDenseMatrix
+   *
+   * @param matrix instance of BigDenseMatrix
+   * @throws XGBoostError native error
+   */
+  public DMatrix(BigDenseMatrix matrix) throws XGBoostError {
+    this(matrix, 0.0f);
+  }
+
+  /**
    * create DMatrix from dense matrix
    * @param data data values
    * @param nrow number of rows
@@ -194,6 +204,17 @@ public class DMatrix {
   public DMatrix(float[] data, int nrow, int ncol, float missing) throws XGBoostError {
     long[] out = new long[1];
     XGBoostJNI.checkCall(XGBoostJNI.XGDMatrixCreateFromMat(data, nrow, ncol, missing, out));
+    handle = out[0];
+  }
+
+  /**
+   * create DMatrix from dense matrix
+   * @param matrix instance of BigDenseMatrix
+   * @param missing the specified value to represent the missing value
+   */
+  public DMatrix(BigDenseMatrix matrix, float missing) throws XGBoostError {
+    long[] out = new long[1];
+    XGBoostJNI.checkCall(XGBoostJNI.XGDMatrixCreateFromMatRef(matrix.address, matrix.nrow, matrix.ncol, missing, out));
     handle = out[0];
   }
 

@@ -18,7 +18,7 @@ properties([
 BuildResult result = BuildResult.FAILURE
 
 // define list of OSs for which to build the docker image,
-// for each OS there must by a jvm-packages/docker/Dockerfile-gpu-<OS>
+// for each OS there must by a ci/docker/Dockerfile-gpu-<OS>
 final List<String> IMAGES_MAP = ['centos6', 'ubuntu14']
 // base of the image name
 final String IMAGE_NAME = "${params.registry}/opsh2oai/h2o-3-xgboost-build"
@@ -42,7 +42,7 @@ try {
 
         for (String image : IMAGES_MAP) {
             buildSummary.stageWithSummary("Build ${image.capitalize()} Image") {
-                dir('jvm-packages/docker') {
+                dir('ci/docker') {
                     sh "docker build -t ${IMAGE_NAME}-${image} --build-arg H2O_BRANCH=${env.BRANCH_NAME} -f Dockerfile-gpu-${image} ."
                 }
             }

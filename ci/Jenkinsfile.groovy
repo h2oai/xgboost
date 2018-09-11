@@ -24,9 +24,8 @@ XGB_VERSION = "${XGB_MAJOR_VERSION}.${currentBuild.number}"
 
 def targetNexus = params.targetNexus ?: ''
 if (env.BRANCH_NAME != PUBLISHABLE_BRANCH_NAME) {
-    // FIXME
-    XGB_VERSION = "0.8.${currentBuild.number}-${env.BRANCH_NAME.replaceAll('/|\\ ', '-')}" // -SNAPSHOT"
-    // targetNexus = 'snapshot'
+    XGB_VERSION = "0.8.${currentBuild.number}-${env.BRANCH_NAME.replaceAll('/|\\ ', '-').toLowerCase()}-SNAPSHOT"
+    targetNexus = 'snapshot'
 }
 targetNexus = targetNexus.toLowerCase()
 
@@ -225,7 +224,7 @@ private void s3Upload(final String folder, final String file) {
     docker.withRegistry("https://docker.h2o.ai") {
         withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', accessKeyVariable: 'AWS_ACCESS_KEY_ID', credentialsId: 'AWS S3 Credentials', secretKeyVariable: 'AWS_SECRET_ACCESS_KEY']]) {
             docker.image('docker.h2o.ai/awscli').inside("--init -e AWS_ACCESS_KEY_ID=\${AWS_ACCESS_KEY_ID} -e AWS_SECRET_ACCESS_KEY=\${AWS_SECRET_ACCESS_KEY}") {
-                sh "aws s3 sync ${folder} s3://h2o-release/xgboost/mr-build-refactor/${XGB_VERSION} --exclude '*' --include '${file}'"
+                sh "aws s3 sync ${folder} s3://h2o-release/xgboost/${env.BRANCH_NAME}/${XGB_VERSION} --exclude '*' --include '${file}'"
             }
         }
     }

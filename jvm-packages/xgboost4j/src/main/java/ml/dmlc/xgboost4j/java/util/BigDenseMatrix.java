@@ -38,16 +38,24 @@ public final class BigDenseMatrix {
     this.address = UtilUnsafe.UNSAFE.allocateMemory(size * FLOAT_BYTE_SIZE);
   }
 
+  public static void setDirect(long valAddress, float val) {
+    UtilUnsafe.UNSAFE.putFloat(valAddress, val);
+  }
+
   public final void set(long idx, float val) {
-    UtilUnsafe.UNSAFE.putFloat(address + idx * FLOAT_BYTE_SIZE, val);
+    setDirect(address + idx * FLOAT_BYTE_SIZE, val);
   }
 
   public final void set(int i, int j, float val) {
     set(index(i, j), val);
   }
 
+  public static float getDirect(long valAddress) {
+    return UtilUnsafe.UNSAFE.getFloat(valAddress);
+  }
+
   public final float get(long idx) {
-    return UtilUnsafe.UNSAFE.getFloat(address + idx * FLOAT_BYTE_SIZE);
+    return getDirect(address + idx * FLOAT_BYTE_SIZE);
   }
 
   public final float get(int i, int j) {

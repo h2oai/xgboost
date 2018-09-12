@@ -1,4 +1,4 @@
-@Library('test-shared-library@1.8') _
+@Library('test-shared-library@1.9') _
 
 import ai.h2o.ci.BuildResult
 import ai.h2o.ci.buildsummary.DetailsSummary

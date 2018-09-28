@@ -4,7 +4,7 @@ MAINTAINER h2oai "h2o.ai"
 ARG JENKINS_UID='2117'
 ARG JENKINS_GID='2117'
 ARG H2O_BRANCH='h2o3'
-ARG PYTHON_VERSIONS='2.7,3.5,3.6'
+ARG PYTHON_VERSIONS='2.7,3.5,3.6,3.7'
 
 # Install required packages
 RUN \
@@ -28,10 +28,10 @@ RUN \
 # Install Apache Maven
 RUN \
     cd opt && \
-    wget http://www-us.apache.org/dist/maven/maven-3/3.5.2/binaries/apache-maven-3.5.2-bin.zip && \
-    unzip apache-maven-3.5.2-bin.zip && \
-    rm apache-maven-3.5.2-bin.zip
-ENV PATH /opt/apache-maven-3.5.2/bin:${PATH}
+    wget http://www-us.apache.org/dist/maven/maven-3/3.5.4/binaries/apache-maven-3.5.4-bin.zip && \
+    unzip apache-maven-3.5.4-bin.zip && \
+    rm apache-maven-3.5.4-bin.zip
+ENV PATH /opt/apache-maven-3.5.4/bin:${PATH}
 
 # Install CMake
 RUN \

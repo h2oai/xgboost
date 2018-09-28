@@ -8,10 +8,13 @@ buildSummary('https://github.com/h2oai/xgboost', true)
 buildSummary.get().addStagesSummary(this, new StagesSummary())
 BuildResult result = BuildResult.FAILURE
 
+TARGET_NEXUS_NONE = 'none'
+TARGET_NEXUS_LOCAL = 'local'
+TARGET_NEXUS_SNAPSHOT = 'snapshot'
 TARGET_NEXUS_PUBLIC = 'public'
 properties([
     parameters([
-        choice(name: 'targetNexus', choices: ['none', 'local', TARGET_NEXUS_PUBLIC], description: 'Nexus to upload artifacts to.')
+        choice(name: 'targetNexus', choices: [TARGET_NEXUS_NONE, TARGET_NEXUS_LOCAL, TARGET_NEXUS_PUBLIC], description: 'Nexus to upload artifacts to.')
     ])
 ])
 
@@ -22,12 +25,14 @@ ARCHIVED_FILES = '**/ci-build/*.jar, **/ci-build/*.whl, **/ci-build/*.log, **/jv
 XGB_MAJOR_VERSION = '0.7'
 XGB_VERSION = "${XGB_MAJOR_VERSION}.${currentBuild.number}"
 
-def targetNexus = params.targetNexus ?: ''
+def targetNexus = params.targetNexus ?: TARGET_NEXUS_NONE
+targetNexus = targetNexus.toLowerCase()
 if (env.BRANCH_NAME != PUBLISHABLE_BRANCH_NAME) {
     XGB_VERSION = "0.8.${currentBuild.number}-${env.BRANCH_NAME.replaceAll('/|\\ ', '-').toLowerCase()}-SNAPSHOT"
-    targetNexus = 'snapshot'
+    if (targetNexus != TARGET_NEXUS_NONE) {
+        targetNexus = TARGET_NEXUS_SNAPSHOT
+    }
 }
-targetNexus = targetNexus.toLowerCase()
 
 MAKE_OPTS = "CI=1 XGB_VERSION=${XGB_VERSION} TARGET_NEXUS=${targetNexus} PY_VERSION=27"
 

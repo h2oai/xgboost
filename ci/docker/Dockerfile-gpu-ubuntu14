@@ -57,13 +57,3 @@ RUN \
 RUN \
     groupadd -g ${JENKINS_GID} jenkins && \
     useradd jenkins -m -u ${JENKINS_UID} -g jenkins
-
-COPY scripts/warmup-caches /usr/bin/
-RUN \
-    chmod a+x /usr/bin/warmup-caches
-
-USER jenkins
-RUN \
-    /usr/bin/warmup-caches
-
-USER root

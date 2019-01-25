@@ -41,8 +41,8 @@ NEXUS_IP ?= 172.17.0.53
 
 PY_VERSION ?= $(shell python --version 2>&1 | egrep -o '[0-9]\.[0-9]' | tr -d '.')
 
-CENTOS_DOCKER_IMAGE := docker.h2o.ai/opsh2oai/h2o-3-xgboost-build-centos6
-CENTOS_JAVA_HOME := /usr/lib/jvm/java-1.8.0-openjdk-1.8.0.161-3.b14.el6_9.x86_64
+CENTOS_DOCKER_IMAGE := docker.h2o.ai/opsh2oai/h2o-3-xgboost-build-centos
+CENTOS_JAVA_HOME := /usr/lib/jvm/java-1.8.0
 CENTOS_CHECK_LD_LIB_PATH := /usr/java/jdk1.8.0_161/jre/lib/amd64/server
 CENTOS_PY_27_ENV_PATH := /opt/rh/python27/enable
 CENTOS_PY_35_ENV_PATH := /opt/rh/rh-python35/enable
@@ -68,10 +68,12 @@ OSX_PY_ENV_NAME := $(OSX_PY_$(PY_VERSION)_ENV_NAME)
 # Initial checks
 OS ?= $(shell uname | tr '[:upper:]' '[:lower:]')
 WHL_OS_NAME := $(OS)
+SED_CMD := sed -i
 ifeq ($(OS),darwin)
 	OS := osx
 	DISTRO := osx
 	WHL_OS_NAME := macosx_*
+	SED_CMD := sed -i ''
 ifeq ($(CI),1)
 export JAVA_HOME := $(shell /usr/libexec/java_home)
 $(info JAVA_HOME=$(JAVA_HOME))
@@ -80,16 +82,16 @@ $(info PATH=$(PATH))
 endif
 endif
 
-ifneq (,$(findstring CentOS,$(shell cat /etc/issue 2> /dev/null)))
+ifneq (,$(findstring CentOS,$(shell cat /etc/os-release 2> /dev/null)))
     DISTRO := centos
 endif
-ifneq (,$(findstring Ubuntu,$(shell cat /etc/issue 2> /dev/null)))
+ifneq (,$(findstring Ubuntu,$(shell cat /etc/os-release 2> /dev/null)))
 	DISTRO := ubuntu
 endif
 
 ifeq ($(EXEC_PRECHECKS),1)
 # Check if gcc is of expected version
-ifneq (,$(findstring CentOS,$(shell cat /etc/issue 2> /dev/null)))
+ifneq (,$(findstring CentOS,$(shell cat /etc/os-release 2> /dev/null)))
     ifneq ($(shell gcc --version | head -1), gcc (GCC) 4.9.2 20150212 (Red Hat 4.9.2-6))
         $(error Unexpected gcc version.)
     endif
@@ -181,7 +183,7 @@ endif
 
 	cd python-package && python setup_pip.py bdist_wheel
 
-	cp python-package/dist/xgboost_$(BACKEND)-$(shell echo $(XGB_VERSION) | tr '-' '_')-cp$(PY_VERSION)*-$(WHL_OS_NAME)_x86_64.whl ci-build
+	cp python-package/dist/xgboost_$(BACKEND)-$(shell echo $(XGB_VERSION) | tr '-' '_')-cp$(PY_VERSION)*-$(WHL_OS_NAME)_*.whl ci-build
 
 whl_%:
 	$(MAKE) -f $(THIS_FILE) BACKEND=$* whl_impl
@@ -207,24 +209,55 @@ ifneq (,$(findstring not found,$(shell cat ci-build/check/otool-check-$(OS)-$(DI
 	exit 1
 endif
 
-deploy_prepare:
-	mkdir -p ~/.m2
-	cp $(MAVEN_SETTINGS_PATH) ~/.m2/settings.xml
-	gpg --import $(SECRING_PATH)
+jar_package_%_in_docker:
+	docker run \
+		$(INTERACTIVE_FLAG) \
+		--init \
+		--rm \
+		--entrypoint /bin/bash \
+		-e TARGET_OS=$(TARGET_OS) \
+		-e XGB_VERSION=$(XGB_VERSION) \
+		-e EXEC_PRECHECKS=1 \
+		-v `pwd`:/dot \
+		-u `id -u`:`id -g` \
+		-w /dot \
+		$(ADDITIONAL_DOCKER_ARGS) \
+		$(CENTOS_DOCKER_IMAGE) \
+		-c "export JAVA_HOME=$(CENTOS_JAVA_HOME) && \
+			source $(CENTOS_PY_ENV_PATH) && \
+			source /opt/rh/devtoolset-3/enable && \
+			make -f $(THIS_FILE) jar_package_$*"
 
-deploy_jar_impl: deploy_prepare
+jar_package_%:
+	$(MAKE) -f $(THIS_FILE) BACKEND=$* jar_package_impl
+
+jar_package_impl:
 ifeq ($(BACKEND),)
 	$(error BACKEND must be set)
 endif
 	mkdir -p ci-build/xgboost4j-$(TARGET_OS)-$(BACKEND)/src/main/resources
 	unzip ci-build/xgboost4j-native-$(TARGET_OS)_$(BACKEND).jar -d ci-build/xgboost4j-$(TARGET_OS)-$(BACKEND)/src/main/resources
 	find ci-build/xgboost4j-$(TARGET_OS)-$(BACKEND)/src/main/resources -maxdepth 1 -not -name 'resources' -and -not -name 'lib' -exec rm -rf '{}' \;
-	sed -i 's/!SUBST_VERSION/$(XGB_VERSION)/' ci-build/xgboost4j-$(TARGET_OS)-$(BACKEND)/src/main/java/ai/h2o/*.java
-	sed -i 's/!SUBST_BACKEND/$(BACKEND)/' ci-build/xgboost4j-$(TARGET_OS)-$(BACKEND)/src/main/java/ai/h2o/*.java
-	sed -i 's/!SUBST_OS/$(TARGET_OS)/' ci-build/xgboost4j-$(TARGET_OS)-$(BACKEND)/src/main/java/ai/h2o/*.java
+	$(SED_CMD) 's/!SUBST_VERSION/$(XGB_VERSION)/' ci-build/xgboost4j-$(TARGET_OS)-$(BACKEND)/src/main/java/ai/h2o/*.java
+	$(SED_CMD) 's/!SUBST_BACKEND/$(BACKEND)/' ci-build/xgboost4j-$(TARGET_OS)-$(BACKEND)/src/main/java/ai/h2o/*.java
+	$(SED_CMD) 's/!SUBST_OS/$(TARGET_OS)/' ci-build/xgboost4j-$(TARGET_OS)-$(BACKEND)/src/main/java/ai/h2o/*.java
 	cd ci-build/xgboost4j-$(TARGET_OS)-$(BACKEND) && \
 		mvn -q -DnewVersion=$(XGB_VERSION) versions:set && \
-		mvn -q -Dtarget.nexus=$(TARGET_NEXUS) clean deploy
+		mvn -q -Dtarget.nexus=$(TARGET_NEXUS) clean package
+
+deploy_prepare:
+	mkdir -p ~/.m2
+	cp $(MAVEN_SETTINGS_PATH) ~/.m2/settings.xml
+	gpg --import $(SECRING_PATH)
+
+deploy_jar_impl: deploy_prepare jar_package_impl
+ifeq ($(BACKEND),)
+	$(error BACKEND must be set)
+endif
+	cd ci-build/xgboost4j-$(TARGET_OS)-$(BACKEND) && \
+		mvn -q -DnewVersion=$(XGB_VERSION) versions:set && \
+		mvn -q -Dtarget.nexus=$(TARGET_NEXUS) deploy
+
 deploy_lib_jar_impl: deploy_prepare
 	cd jvm-packages/xgboost4j && \
 		mvn \
@@ -235,12 +268,12 @@ deploy_lib_jar_impl: deploy_prepare
 			-Dexclude.xgboost.lib=true \
 			clean deploy
 
-centos6_docker_image_name minimal_docker_image_name ompv4_docker_image_name gpuv4_docker_image_name:
+centos_docker_image_name minimal_docker_image_name ompv4_docker_image_name gpuv4_docker_image_name:
 	@echo $(CENTOS_DOCKER_IMAGE)
 ompv3_docker_image_name gpuv3_docker_image_name:
 	@echo $(UBUNTU_DOCKER_IMAGE)
 
-centos6_write_version_in_docker: centos6_write_version_in_docker_impl
+centos_write_version_in_docker: centos_write_version_in_docker_impl
 
 centos%_check_minimal_in_docker:
 	$(MAKE) -f $(THIS_FILE) BACKEND=minimal centos$*_check_deps_in_docker_impl
@@ -266,7 +299,7 @@ endif
 	-e BACKEND=$(BACKEND) \
 	-e OMP_VERSION=$(OMP_VERSION) \
 	-v `pwd`:/dot \
-	-u 2117:2117 \
+	-u `id -u`:`id -g` \
 	-w /dot \
 	$(ADDITIONAL_DOCKER_ARGS) \
 	docker.h2o.ai/opsh2oai/h2o-3-xgb-runtime-$(BACKEND):centos$* \
@@ -285,7 +318,7 @@ endif
 		-e BACKEND=$(BACKEND) \
 		-e OMP_VERSION=$(OMP_VERSION) \
 		-v `pwd`:/dot \
-		-u 2117:2117 \
+		-u `id -u`:`id -g` \
 		-w /dot \
 		$(ADDITIONAL_DOCKER_ARGS) \
 		docker.h2o.ai/opsh2oai/h2o-3-xgb-runtime-$(BACKEND):ubuntu$* \
@@ -304,7 +337,7 @@ endif
 		-v $(MAVEN_SETTINGS_PATH):$(MAVEN_SETTINGS_PATH):ro \
 		-v $(SECRING_PATH):$(SECRING_PATH):ro \
 		-e MAVEN_SETTINGS_PATH=$(MAVEN_SETTINGS_PATH) \
-		-e SECRING_PATH=$(SECRING_PATH)" centos6_deploy_lib_jar_impl_in_docker_impl
+		-e SECRING_PATH=$(SECRING_PATH)" centos_deploy_lib_jar_impl_in_docker_impl
 
 deploy_jar_%_in_docker:
 ifeq ($(MAVEN_SETTINGS_PATH),)
@@ -322,10 +355,10 @@ endif
 		-e MAVEN_SETTINGS_PATH=$(MAVEN_SETTINGS_PATH) \
 		-e SECRING_PATH=$(SECRING_PATH) \
 		-e BACKEND=$* \
-		-e TARGET_OS=$(TARGET_OS)" centos6_deploy_jar_impl_in_docker_impl
+		-e TARGET_OS=$(TARGET_OS)" centos_deploy_jar_impl_in_docker_impl
 
 %_minimal_in_docker %v4_in_docker:
-	$(MAKE) -f $(THIS_FILE) centos6_$@_impl
+	$(MAKE) -f $(THIS_FILE) centos_$@_impl
 %v3_in_docker:
 	$(MAKE) -f $(THIS_FILE) ubuntu14_$@_impl
 
@@ -338,7 +371,7 @@ whls_%:
 	$(MAKE) -f $(THIS_FILE) BACKEND=$* $(DISTRO)_whl36
 	$(MAKE) -f $(THIS_FILE) BACKEND=$* $(DISTRO)_whl37
 
-centos6_%_in_docker_impl:
+centos_%_in_docker_impl:
 ifeq ($(CI),1)
 	docker pull $(CENTOS_DOCKER_IMAGE)
 endif
@@ -352,7 +385,7 @@ endif
 		-e XGB_VERSION=$(XGB_VERSION) \
 		-e EXEC_PRECHECKS=1 \
 		-v `pwd`:/dot \
-		-u 2117:2117 \
+		-u `id -u`:`id -g` \
 		-w /dot \
 		$(ADDITIONAL_DOCKER_ARGS) \
 		$(CENTOS_DOCKER_IMAGE) \
@@ -378,7 +411,7 @@ endif
 		-e XGB_VERSION=$(XGB_VERSION) \
 		-e EXEC_PRECHECKS=1 \
 		-v `pwd`:/dot \
-		-u 2117:2117 \
+		-u `id -u`:`id -g` \
 		-w /dot \
 		$(ADDITIONAL_DOCKER_ARGS) \
 		$(UBUNTU_DOCKER_IMAGE) \

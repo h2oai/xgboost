@@ -142,7 +142,7 @@ bash:
 	@bash
 
 write_version:
-	cd jvm-packages/xgboost4j && mvn -q -DnewVersion=$(XGB_VERSION) versions:set
+	cd jvm-packages/xgboost4j && mvn -q $(MVN_OPTS) -DnewVersion=$(XGB_VERSION) versions:set
 
 build_impl:
 	mkdir -p build ci-build
@@ -218,6 +218,7 @@ jar_package_%_in_docker:
 		-e TARGET_OS=$(TARGET_OS) \
 		-e XGB_VERSION=$(XGB_VERSION) \
 		-e EXEC_PRECHECKS=1 \
+		-e MVN_OPTS="$(MVN_OPTS)" \
 		-v `pwd`:/dot \
 		-u `id -u`:`id -g` \
 		-w /dot \
@@ -242,8 +243,8 @@ endif
 	$(SED_CMD) 's/!SUBST_BACKEND/$(BACKEND)/' ci-build/xgboost4j-$(TARGET_OS)-$(BACKEND)/src/main/java/ai/h2o/*.java
 	$(SED_CMD) 's/!SUBST_OS/$(TARGET_OS)/' ci-build/xgboost4j-$(TARGET_OS)-$(BACKEND)/src/main/java/ai/h2o/*.java
 	cd ci-build/xgboost4j-$(TARGET_OS)-$(BACKEND) && \
-		mvn -q -DnewVersion=$(XGB_VERSION) versions:set && \
-		mvn -q -Dtarget.nexus=$(TARGET_NEXUS) clean package
+		mvn -q $(MVN_OPTS) -DnewVersion=$(XGB_VERSION) versions:set && \
+		mvn -q $(MVN_OPTS) -Dtarget.nexus=$(TARGET_NEXUS) clean package
 
 deploy_prepare:
 	mkdir -p ~/.m2
@@ -255,13 +256,14 @@ ifeq ($(BACKEND),)
 	$(error BACKEND must be set)
 endif
 	cd ci-build/xgboost4j-$(TARGET_OS)-$(BACKEND) && \
-		mvn -q -DnewVersion=$(XGB_VERSION) versions:set && \
-		mvn -q -Dtarget.nexus=$(TARGET_NEXUS) deploy
+		mvn -q $(MVN_OPTS)-DnewVersion=$(XGB_VERSION) versions:set && \
+		mvn -q $(MVN_OPTS)-Dtarget.nexus=$(TARGET_NEXUS) deploy
 
 deploy_lib_jar_impl: deploy_prepare
 	cd jvm-packages/xgboost4j && \
 		mvn \
 			-q \
+			$(MVN_OPTS) \
 			-Dmaven.test.skip=true \
 			-DskipTests \
 			-Dtarget.nexus=$(TARGET_NEXUS) \
@@ -381,6 +383,7 @@ endif
 		--rm \
 		--add-host=nexus:$(NEXUS_IP) \
 		--entrypoint /bin/bash \
+		-e MVN_OPTS="$(MVN_OPTS)" \
 		-e TARGET_NEXUS=$(TARGET_NEXUS) \
 		-e XGB_VERSION=$(XGB_VERSION) \
 		-e EXEC_PRECHECKS=1 \
@@ -407,6 +410,7 @@ endif
 		--rm \
 		--add-host=nexus:$(NEXUS_IP) \
 		--entrypoint /bin/bash \
+		-e MVN_OPTS="$(MVN_OPTS)" \
 		-e TARGET_NEXUS=$(TARGET_NEXUS) \
 		-e XGB_VERSION=$(XGB_VERSION) \
 		-e EXEC_PRECHECKS=1 \

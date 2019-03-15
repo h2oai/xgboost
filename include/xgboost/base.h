@@ -9,7 +9,7 @@
 #include <dmlc/base.h>
 #include <dmlc/omp.h>
 #include <cmath>
-
+#include <iostream>
 /*!
  * \brief string flag for R library, to leave hooks when needed.
  */
@@ -218,4 +218,8 @@ typedef dmlc::omp_uint bst_omp_uint;
 #endif
 #endif
 }  // namespace xgboost
+
+/* Always keep this #include at the bottom of xgboost/base.h */
+#include <xgboost/build_config.h>
+
 #endif  // XGBOOST_BASE_H_

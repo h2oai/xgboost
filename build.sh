@@ -7,7 +7,7 @@
 # See additional instruction in doc/build.md
 set -e
 
-if make; then
+if make -j $(nproc); then
     echo "Successfully build multi-thread xgboost"
 else
     echo "-----------------------------"

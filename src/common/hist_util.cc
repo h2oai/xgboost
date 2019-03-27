@@ -411,7 +411,6 @@ void GHistBuilder::BuildHist(const std::vector<bst_gpair>& gpair,
                              const GHistIndexMatrix& gmat,
                              const std::vector<bst_uint>& feat_set,
                              GHistRow hist) {
-  std::cout<<"Using GHistBuilder";
   const size_t nthread = static_cast<size_t>(this->nthread_); 
   data_.resize(nbins_ * nthread_);
   const size_t* rid =  row_indices.begin;

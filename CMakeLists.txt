@@ -40,6 +40,39 @@ else()
   # Performance
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -funroll-loops")
 endif()
+if(WIN32 AND MINGW)
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -static-libstdc++")
+endif()
+
+# Check existence of software pre-fetching
+include(CheckCXXSourceCompiles)
+check_cxx_source_compiles("
+#include <xmmintrin.h>
+int main() {
+  char data = 0;
+  const char* address = &data;
+  _mm_prefetch(address, _MM_HINT_NTA);
+  return 0;
+}
+" XGBOOST_MM_PREFETCH_PRESENT)
+check_cxx_source_compiles("
+int main() {
+  char data = 0;
+  const char* address = &data;
+  __builtin_prefetch(address, 0, 0);
+  return 0;
+}
+" XGBOOST_BUILTIN_PREFETCH_PRESENT)
+
+# Sanitizer
+if(USE_SANITIZER)
+  include(cmake/Sanitizer.cmake)
+  enable_sanitizers("${ENABLED_SANITIZERS}")
+endif(USE_SANITIZER)
+
+
+# enable custom logging
+add_definitions(-DDMLC_LOG_CUSTOMIZE=1)
 
 # compiled code customizations for R package
 if(R_LIB)
@@ -59,6 +92,12 @@ include_directories (
     ${PROJECT_SOURCE_DIR}/dmlc-core/include
     ${PROJECT_SOURCE_DIR}/rabit/include
 )
+
+# Generate configurable header
+set(CMAKE_LOCAL "${PROJECT_SOURCE_DIR}/cmake")
+set(INCLUDE_ROOT "${PROJECT_SOURCE_DIR}/include")
+message(STATUS "${CMAKE_LOCAL}/build_config.h.in -> ${INCLUDE_ROOT}/xgboost/build_config.h")
+configure_file("${CMAKE_LOCAL}/build_config.h.in" "${INCLUDE_ROOT}/xgboost/build_config.h")
 
 file(GLOB_RECURSE SOURCES
     src/*.cc
@@ -93,11 +132,9 @@ else()
   add_library(rabit STATIC ${RABIT_SOURCES})
 endif()
 
-
 # dmlc-core
 add_subdirectory(dmlc-core)
 set(LINK_LIBRARIES dmlccore rabit)
-
 
 if(USE_CUDA)
   find_package(CUDA 7.5 REQUIRED)

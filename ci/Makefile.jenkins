@@ -82,11 +82,15 @@ $(info PATH=$(PATH))
 endif
 endif
 
-ifneq (,$(findstring CentOS,$(shell cat /etc/os-release 2> /dev/null)))
+ifneq (,$(findstring CentOS,$(shell cat /etc/system-release 2> /dev/null)))
     DISTRO := centos
 endif
 ifneq (,$(findstring Ubuntu,$(shell cat /etc/os-release 2> /dev/null)))
-	DISTRO := ubuntu
+    DISTRO := ubuntu
+endif
+
+ifeq ($(DISTRO),)
+    $(error Unable to identify OS/Distro.)
 endif
 
 ifeq ($(EXEC_PRECHECKS),1)

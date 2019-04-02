@@ -156,7 +156,7 @@ if(USE_CUDA)
   endif()
 
   add_subdirectory(nccl)
-  cuda_add_library(gpuxgboost ${CUDA_SOURCES} STATIC)
+  cuda_add_library(gpuxgboost ${CUDA_SOURCES} SHARED)
   target_link_libraries(gpuxgboost nccl)
   list(APPEND LINK_LIBRARIES gpuxgboost)
 endif()

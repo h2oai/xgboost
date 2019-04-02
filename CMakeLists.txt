@@ -70,10 +70,6 @@ if(USE_SANITIZER)
   enable_sanitizers("${ENABLED_SANITIZERS}")
 endif(USE_SANITIZER)
 
-
-# enable custom logging
-add_definitions(-DDMLC_LOG_CUSTOMIZE=1)
-
 # compiled code customizations for R package
 if(R_LIB)
   add_definitions(

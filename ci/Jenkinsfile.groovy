@@ -136,7 +136,7 @@ ansiColor('xterm') {
                                             sh "make ${MAKE_OPTS} -f ci/Makefile.jenkins whls_${config.backend}${inDockerSuffix}"
                                         }
 
-                                        CHECK_IMAGES["${config.os}_${config.backend}"].each {checkConfig ->
+                                        CHECK_IMAGES["${config.os}_${config.backend}"].each { checkConfig ->
                                             buildSummary.stageWithSummary(checkConfig.name, config.stageDir) {
                                                 dir (config.stageDir) {
                                                     def inDockerSuffix = ''

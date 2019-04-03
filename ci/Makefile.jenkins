@@ -41,7 +41,7 @@ NEXUS_IP ?= 172.17.0.53
 
 PY_VERSION ?= $(shell python --version 2>&1 | egrep -o '[0-9]\.[0-9]' | tr -d '.')
 
-CENTOS_DOCKER_IMAGE := docker.h2o.ai/opsh2oai/h2o-3-xgboost-build-centos
+CENTOS_DOCKER_IMAGE := harbor.h2o.ai/opsh2oai/h2o-3-xgboost-build-centos
 CENTOS_JAVA_HOME := /usr/lib/jvm/java-1.8.0
 CENTOS_CHECK_LD_LIB_PATH := /usr/java/jdk1.8.0_161/jre/lib/amd64/server
 CENTOS_PY_27_ENV_PATH := /opt/rh/python27/enable
@@ -50,7 +50,7 @@ CENTOS_PY_36_ENV_PATH := /opt/rh/rh-python36/enable
 CENTOS_PY_37_ENV_PATH := /envs/xgb-env-py3.7/bin/activate
 CENTOS_PY_ENV_PATH := $(CENTOS_PY_$(PY_VERSION)_ENV_PATH)
 
-UBUNTU_DOCKER_IMAGE ?= docker.h2o.ai/opsh2oai/h2o-3-xgboost-build-ubuntu14
+UBUNTU_DOCKER_IMAGE ?= harbor.h2o.ai/opsh2oai/h2o-3-xgboost-build-ubuntu14
 UBUNTU_JAVA_HOME ?= /usr/lib/jvm/java-8-oracle
 UBUNTU_CHECK_LD_LIB_PATH := /jdk1.8.0_172/jre/lib/amd64/server
 UBUNTU_PY_27_ENV_PATH := /envs/xgb-env-py2.7/bin/activate
@@ -308,7 +308,7 @@ endif
 	-u `id -u`:`id -g` \
 	-w /dot \
 	$(ADDITIONAL_DOCKER_ARGS) \
-	docker.h2o.ai/opsh2oai/h2o-3-xgb-runtime-$(BACKEND):centos$* \
+	harbor.h2o.ai/opsh2oai/h2o-3-xgb-runtime-$(BACKEND):centos$* \
 	-c "export JAVA_HOME=$(CENTOS_JAVA_HOME) && \
 		export LD_LIBRARY_PATH=$(CENTOS_CHECK_LD_LIB_PATH) && \
 		make -f $(THIS_FILE) check_deps_linux"
@@ -327,7 +327,7 @@ endif
 		-u `id -u`:`id -g` \
 		-w /dot \
 		$(ADDITIONAL_DOCKER_ARGS) \
-		docker.h2o.ai/opsh2oai/h2o-3-xgb-runtime-$(BACKEND):ubuntu$* \
+		harbor.h2o.ai/opsh2oai/h2o-3-xgb-runtime-$(BACKEND):ubuntu$* \
 		-c "export JAVA_HOME=$(UBUNTU_JAVA_HOME) && \
 			export LD_LIBRARY_PATH=$(UBUNTU_CHECK_LD_LIB_PATH) && \
 			make -f $(THIS_FILE) check_deps_linux"

@@ -3,11 +3,12 @@
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
-    <parent>
-        <groupId>ml.dmlc</groupId>
+    <!--parent>
+        <groupId>ai.h2o</groupId>
         <artifactId>xgboost-jvm</artifactId>
         <version>0.83-SNAPSHOT</version>
-    </parent>
+    </parent-->
+    <groupId>ai.h2o</groupId>
     <artifactId>xgboost4j</artifactId>
     <version>0.83-SNAPSHOT</version>
     <packaging>jar</packaging>

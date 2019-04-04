@@ -174,7 +174,7 @@ public class XGBoost {
     //initialize booster
     if (booster == null) {
       // Start training on a new booster
-      booster = new Booster(params, allMats);
+      booster = Booster.newBooster(params, allMats);
       booster.loadRabitCheckpoint();
     } else {
       // Start training on an existing booster

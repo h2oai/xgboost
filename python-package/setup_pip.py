@@ -41,7 +41,11 @@ if len(sys.argv) < 2 or sys.argv[1] != 'sdist':
 
     LIB_PATH = libpath['find_lib_path']()
 
-setup(name='xgboost',
+# to deploy to pip, please use
+# make pythonpack
+# python setup.py register sdist upload
+# and be sure to test it firstly using "python setup.py register sdist upload -r pypitest"
+setup(name=open(os.path.join(CURRENT_DIR, 'xgboost/NAME')).read().strip(),
       version=open(os.path.join(CURRENT_DIR, 'xgboost/VERSION')).read().strip(),
       description='XGBoost Python Package',
       install_requires=[

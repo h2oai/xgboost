@@ -167,31 +167,16 @@ else()
   add_library(rabit STATIC ${RABIT_SOURCES})
 endif()
 
-<<<<<<< HEAD
-# dmlc-core
-add_subdirectory(dmlc-core)
-set(LINK_LIBRARIES dmlccore rabit)
-
-if(USE_CUDA)
-  find_package(CUDA 7.5 REQUIRED)
-=======
 if (GENERATE_COMPILATION_DATABASE)
   set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 endif (GENERATE_COMPILATION_DATABASE)
 
 if(USE_CUDA AND (NOT GENERATE_COMPILATION_DATABASE))
   find_package(CUDA 8.0 REQUIRED)
->>>>>>> upstream/master
   cmake_minimum_required(VERSION 3.5)
 
   add_definitions(-DXGBOOST_USE_CUDA)
 
-<<<<<<< HEAD
-  include_directories(
-    nccl/src
-    cub
-  )
-=======
   include_directories(cub)
 
   if(USE_NCCL)
@@ -204,26 +189,17 @@ if(USE_CUDA AND (NOT GENERATE_COMPILATION_DATABASE))
     cuda_include_directories("${NVTX_HEADER_DIR}")
     add_definitions(-DXGBOOST_USE_NVTX)
   endif()
->>>>>>> upstream/master
 
   set(GENCODE_FLAGS "")
   format_gencode_flags("${GPU_COMPUTE_VER}" GENCODE_FLAGS)
   message("cuda architecture flags: ${GENCODE_FLAGS}")
-<<<<<<< HEAD
-  set(CUDA_NVCC_FLAGS "${CUDA_NVCC_FLAGS};--expt-extended-lambda;${GENCODE_FLAGS};-lineinfo;")
-=======
 
   set(CUDA_NVCC_FLAGS "${CUDA_NVCC_FLAGS};--expt-extended-lambda;--expt-relaxed-constexpr;${GENCODE_FLAGS};-lineinfo;")
->>>>>>> upstream/master
   if(NOT MSVC)
     set(CUDA_NVCC_FLAGS "${CUDA_NVCC_FLAGS};-Xcompiler -fPIC; -Xcompiler -Werror; -std=c++11")
   endif()
 
   cuda_add_library(gpuxgboost ${CUDA_SOURCES} STATIC)
-<<<<<<< HEAD
-  target_link_libraries(gpuxgboost nccl)
-  list(APPEND LINK_LIBRARIES gpuxgboost)
-=======
 
   if(USE_NCCL)
     link_directories(${NCCL_LIBRARY})
@@ -264,7 +240,6 @@ elseif (USE_CUDA AND GENERATE_COMPILATION_DATABASE)
   string(REPLACE "-x cu" "-x cuda" CMAKE_CUDA_COMPILE_SEPARABLE_COMPILATION
     ${CMAKE_CUDA_COMPILE_SEPARABLE_COMPILATION})
   target_include_directories(gpuxgboost PUBLIC cub)
->>>>>>> upstream/master
 endif()
 
 

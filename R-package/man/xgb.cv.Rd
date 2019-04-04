@@ -4,18 +4,19 @@
 \alias{xgb.cv}
 \title{Cross Validation}
 \usage{
-xgb.cv(params = list(), data, nrounds, nfold, label = NULL, missing = NA,
-  prediction = FALSE, showsd = TRUE, metrics = list(), obj = NULL,
-  feval = NULL, stratified = TRUE, folds = NULL, verbose = TRUE,
-  print_every_n = 1L, early_stopping_rounds = NULL, maximize = NULL,
-  callbacks = list(), ...)
+xgb.cv(params = list(), data, nrounds, nfold, label = NULL,
+  missing = NA, prediction = FALSE, showsd = TRUE,
+  metrics = list(), obj = NULL, feval = NULL, stratified = TRUE,
+  folds = NULL, verbose = TRUE, print_every_n = 1L,
+  early_stopping_rounds = NULL, maximize = NULL, callbacks = list(),
+  ...)
 }
 \arguments{
 \item{params}{the list of parameters. Commonly used ones are:
 \itemize{
   \item \code{objective} objective function, common ones are
   \itemize{
-    \item \code{reg:linear} linear regression
+    \item \code{reg:squarederror} Regression with squared loss.
     \item \code{binary:logistic} logistic regression for classification
   }
   \item \code{eta} step size of each boosting step
@@ -51,6 +52,7 @@ from each CV model. This parameter engages the \code{\link{cb.cv.predict}} callb
   \item \code{rmse} Rooted mean square error
   \item \code{logloss} negative log-likelihood function
   \item \code{auc} Area under curve
+  \item \code{aucpr} Area under PR curve
   \item \code{merror} Exact matching error, used to evaluate multi-class classification
 }}
 
@@ -98,12 +100,13 @@ An object of class \code{xgb.cv.synchronous} with the following elements:
   \item \code{params} parameters that were passed to the xgboost library. Note that it does not 
         capture parameters changed by the \code{\link{cb.reset.parameters}} callback.
   \item \code{callbacks} callback functions that were either automatically assigned or 
-        explicitely passed.
+        explicitly passed.
   \item \code{evaluation_log} evaluation history storead as a \code{data.table} with the
         first column corresponding to iteration number and the rest corresponding to the 
         CV-based evaluation means and standard deviations for the training and test CV-sets.
         It is created by the \code{\link{cb.evaluation.log}} callback.
   \item \code{niter} number of boosting iterations.
+  \item \code{nfeatures} number of features in training data.
   \item \code{folds} the list of CV folds' indices - either those passed through the \code{folds} 
         parameter or randomly generated.
   \item \code{best_iteration} iteration number with the best evaluation metric value

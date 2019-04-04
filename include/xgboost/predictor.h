@@ -7,12 +7,16 @@
 #pragma once
 #include <xgboost/base.h>
 #include <xgboost/data.h>
+
 #include <functional>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
+
 #include "../../src/gbm/gbtree_model.h"
+#include "../../src/common/host_device_vector.h"
 
 // Forward declarations
 namespace xgboost {
@@ -35,7 +39,7 @@ namespace xgboost {
 
 class Predictor {
  public:
-  virtual ~Predictor() {}
+  virtual ~Predictor() = default;
 
   /**
    * \fn  virtual void Predictor::Init(const std::vector<std::pair<std::string,
@@ -51,10 +55,6 @@ class Predictor {
                     const std::vector<std::shared_ptr<DMatrix>>& cache);
 
   /**
-   * \fn  virtual void Predictor::PredictBatch( DMatrix* dmat,
-   * std::vector<bst_float>* out_preds, const gbm::GBTreeModel &model, int
-   * tree_begin, unsigned ntree_limit = 0) = 0;
-   *
    * \brief Generate batch predictions for a given feature matrix. May use
    * cached predictions if available instead of calculating from scratch.
    *
@@ -66,7 +66,7 @@ class Predictor {
    * limit trees.
    */
 
-  virtual void PredictBatch(DMatrix* dmat, std::vector<bst_float>* out_preds,
+  virtual void PredictBatch(DMatrix* dmat, HostDeviceVector<bst_float>* out_preds,
                             const gbm::GBTreeModel& model, int tree_begin,
                             unsigned ntree_limit = 0) = 0;
 
@@ -91,7 +91,7 @@ class Predictor {
       int num_new_trees) = 0;
 
   /**
-   * \fn  virtual void Predictor::PredictInstance( const SparseBatch::Inst&
+   * \fn  virtual void Predictor::PredictInstance( const SparsePage::Inst&
    * inst, std::vector<bst_float>* out_preds, const gbm::GBTreeModel& model,
    * unsigned ntree_limit = 0, unsigned root_index = 0) = 0;
    *
@@ -107,7 +107,7 @@ class Predictor {
    * \param           root_index  (Optional) Zero-based index of the root.
    */
 
-  virtual void PredictInstance(const SparseBatch::Inst& inst,
+  virtual void PredictInstance(const SparsePage::Inst& inst,
                                std::vector<bst_float>* out_preds,
                                const gbm::GBTreeModel& model,
                                unsigned ntree_limit = 0,
@@ -140,16 +140,28 @@ class Predictor {
    * a vector of length (nfeats + 1) * num_output_group * nsample, arranged in
    * that order.
    *
-   * \param [in,out]  dmat          The input feature matrix.
-   * \param [in,out]  out_contribs  The output feature contribs.
-   * \param           model         Model to make predictions from.
-   * \param           ntree_limit   (Optional) The ntree limit.
+   * \param [in,out]  dmat               The input feature matrix.
+   * \param [in,out]  out_contribs       The output feature contribs.
+   * \param           model              Model to make predictions from.
+   * \param           ntree_limit        (Optional) The ntree limit.
+   * \param           approximate        Use fast approximate algorithm.
+   * \param           condition          Condition on the condition_feature (0=no, -1=cond off, 1=cond on).
+   * \param           condition_feature  Feature to condition on (i.e. fix) during calculations.
    */
 
   virtual void PredictContribution(DMatrix* dmat,
                                    std::vector<bst_float>* out_contribs,
                                    const gbm::GBTreeModel& model,
-                                   unsigned ntree_limit = 0) = 0;
+                                   unsigned ntree_limit = 0,
+                                   bool approximate = false,
+                                   int condition = 0,
+                                   unsigned condition_feature = 0) = 0;
+
+  virtual void PredictInteractionContributions(DMatrix* dmat,
+                                   std::vector<bst_float>* out_contribs,
+                                   const gbm::GBTreeModel& model,
+                                   unsigned ntree_limit = 0,
+                                   bool approximate = false) = 0;
 
   /**
    * \fn  static Predictor* Predictor::Create(std::string name);
@@ -162,40 +174,13 @@ class Predictor {
 
  protected:
   /**
-   * \fn  bool PredictFromCache(DMatrix* dmat, std::vector<bst_float>*
-   * out_preds, const gbm::GBTreeModel& model, unsigned ntree_limit = 0)
-   *
-   * \brief Attempt to predict from cache.
-   *
-   * \return  True if it succeeds, false if it fails.
-   */
-  bool PredictFromCache(DMatrix* dmat, std::vector<bst_float>* out_preds,
-                        const gbm::GBTreeModel& model,
-                        unsigned ntree_limit = 0);
-
-  /**
-   * \fn void Predictor::InitOutPredictions(const MetaInfo& info,
-   * std::vector<bst_float>* out_preds, const gbm::GBTreeModel& model) const;
-   *
-   * \brief  Init out predictions according to base margin.
-   *
-   * \param          info      Dmatrix info possibly containing base margin.
-   * \param [in,out] out_preds The out preds.
-   * \param          model     The model.
-   */
-  void InitOutPredictions(const MetaInfo& info,
-                          std::vector<bst_float>* out_preds,
-                          const gbm::GBTreeModel& model) const;
-
-  /**
    * \struct  PredictionCacheEntry
    *
    * \brief Contains pointer to input matrix and associated cached predictions.
    */
-
   struct PredictionCacheEntry {
     std::shared_ptr<DMatrix> data;
-    std::vector<bst_float> predictions;
+    HostDeviceVector<bst_float> predictions;
   };
 
   /**

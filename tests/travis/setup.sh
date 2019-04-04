@@ -1,17 +1,11 @@
 #!/bin/bash
 
-if [ ${TRAVIS_OS_NAME} == "osx" ]; then
-    brew update
-    brew install graphviz
-fi
-
 if [ ${TASK} == "lint" ]; then
     pip install --user  cpplint 'pylint==1.4.4' 'astroid==1.3.6' 
 fi
 
 
-if [ ${TASK} == "python_test" ] || [ ${TASK} == "python_lightweight_test" ]; then
-    # python2
+if [ ${TASK} == "python_test" ] || [ ${TASK} == "python_lightweight_test" ] || [ ${TASK} ==  "distributed_test" ]; then
     if [ ${TRAVIS_OS_NAME} == "osx" ]; then
         wget -O conda.sh https://repo.continuum.io/miniconda/Miniconda3-latest-MacOSX-x86_64.sh
     else

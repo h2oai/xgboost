@@ -11,6 +11,7 @@ set.seed(1994)
 # disable some tests for Win32
 windows_flag = .Platform$OS.type == "windows" &&
                .Machine$sizeof.pointer != 8
+solaris_flag = (Sys.info()['sysname'] == "SunOS")
 
 test_that("train and predict binary classification", {
   nrounds = 2
@@ -152,20 +153,20 @@ test_that("training continuation works", {
   bst1 <- xgb.train(param, dtrain, nrounds = 2, watchlist, verbose = 0)
   # continue for two more:
   bst2 <- xgb.train(param, dtrain, nrounds = 2, watchlist, verbose = 0, xgb_model = bst1)
-  if (!windows_flag)
+  if (!windows_flag && !solaris_flag)
     expect_equal(bst$raw, bst2$raw)
   expect_false(is.null(bst2$evaluation_log))
   expect_equal(dim(bst2$evaluation_log), c(4, 2))
   expect_equal(bst2$evaluation_log, bst$evaluation_log)
   # test continuing from raw model data
   bst2 <- xgb.train(param, dtrain, nrounds = 2, watchlist, verbose = 0, xgb_model = bst1$raw)
-  if (!windows_flag)
+  if (!windows_flag && !solaris_flag)
     expect_equal(bst$raw, bst2$raw)
   expect_equal(dim(bst2$evaluation_log), c(2, 2))
   # test continuing from a model in file
   xgb.save(bst1, "xgboost.model")
   bst2 <- xgb.train(param, dtrain, nrounds = 2, watchlist, verbose = 0, xgb_model = "xgboost.model")
-  if (!windows_flag)
+  if (!windows_flag && !solaris_flag)
     expect_equal(bst$raw, bst2$raw)
   expect_equal(dim(bst2$evaluation_log), c(2, 2))
 })
@@ -181,7 +182,7 @@ test_that("xgb.cv works", {
   expect_is(cv, 'xgb.cv.synchronous')
   expect_false(is.null(cv$evaluation_log))
   expect_lt(cv$evaluation_log[, min(test_error_mean)], 0.03)
-  expect_lt(cv$evaluation_log[, min(test_error_std)], 0.004)
+  expect_lt(cv$evaluation_log[, min(test_error_std)], 0.008)
   expect_equal(cv$niter, 2)
   expect_false(is.null(cv$folds) && is.list(cv$folds))
   expect_length(cv$folds, 5)
@@ -221,4 +222,43 @@ test_that("train and predict with non-strict classes", {
   class(bst) <- c('super.Booster', 'xgb.Booster')
   expect_error(pr <- predict(bst, train_dense), regexp = NA)
   expect_equal(pr0, pr)
+})
+
+test_that("max_delta_step works", {
+  dtrain <- xgb.DMatrix(agaricus.train$data, label = agaricus.train$label)
+  watchlist <- list(train = dtrain)
+  param <- list(objective = "binary:logistic", eval_metric="logloss", max_depth = 2, nthread = 2, eta = 0.5)
+  nrounds = 5
+  # model with no restriction on max_delta_step
+  bst1 <- xgb.train(param, dtrain, nrounds, watchlist, verbose = 1)
+  # model with restricted max_delta_step
+  bst2 <- xgb.train(param, dtrain, nrounds, watchlist, verbose = 1, max_delta_step = 1)
+  # the no-restriction model is expected to have consistently lower loss during the initial interations
+  expect_true(all(bst1$evaluation_log$train_logloss < bst2$evaluation_log$train_logloss))
+  expect_lt(mean(bst1$evaluation_log$train_logloss)/mean(bst2$evaluation_log$train_logloss), 0.8)
+})
+
+test_that("colsample_bytree works", {
+  # Randomly generate data matrix by sampling from uniform distribution [-1, 1]
+  set.seed(1)
+  train_x <- matrix(runif(1000, min = -1, max = 1), ncol = 100)
+  train_y <- as.numeric(rowSums(train_x) > 0)
+  test_x <- matrix(runif(1000, min = -1, max = 1), ncol = 100)
+  test_y <- as.numeric(rowSums(test_x) > 0)
+  colnames(train_x) <- paste0("Feature_", sprintf("%03d", 1:100))
+  colnames(test_x) <- paste0("Feature_", sprintf("%03d", 1:100))
+   dtrain <- xgb.DMatrix(train_x, label = train_y)
+  dtest <- xgb.DMatrix(test_x, label = test_y)
+  watchlist <- list(train = dtrain, eval = dtest)
+   # Use colsample_bytree = 0.01, so that roughly one out of 100 features is
+  # chosen for each tree
+  param <- list(max_depth = 2, eta = 0, silent = 1, nthread = 2,
+                colsample_bytree = 0.01, objective = "binary:logistic",
+                eval_metric = "auc")
+   set.seed(2)
+  bst <- xgb.train(param, dtrain, nrounds = 100, watchlist, verbose = 0)
+  xgb.importance(model = bst)
+  # If colsample_bytree works properly, a variety of features should be used
+  # in the 100 trees
+  expect_gte(nrow(xgb.importance(model = bst)), 30)
 })

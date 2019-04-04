@@ -5,15 +5,17 @@
 \alias{xgboost}
 \title{eXtreme Gradient Boosting Training}
 \usage{
-xgb.train(params = list(), data, nrounds, watchlist = list(), obj = NULL,
-  feval = NULL, verbose = 1, print_every_n = 1L,
+xgb.train(params = list(), data, nrounds, watchlist = list(),
+  obj = NULL, feval = NULL, verbose = 1, print_every_n = 1L,
   early_stopping_rounds = NULL, maximize = NULL, save_period = NULL,
-  save_name = "xgboost.model", xgb_model = NULL, callbacks = list(), ...)
+  save_name = "xgboost.model", xgb_model = NULL, callbacks = list(),
+  ...)
 
 xgboost(data = NULL, label = NULL, missing = NA, weight = NULL,
   params = list(), nrounds, verbose = 1, print_every_n = 1L,
   early_stopping_rounds = NULL, maximize = NULL, save_period = NULL,
-  save_name = "xgboost.model", xgb_model = NULL, callbacks = list(), ...)
+  save_name = "xgboost.model", xgb_model = NULL, callbacks = list(),
+  ...)
 }
 \arguments{
 \item{params}{the list of parameters. 
@@ -35,7 +37,7 @@ xgboost(data = NULL, label = NULL, missing = NA, weight = NULL,
   \item \code{gamma} minimum loss reduction required to make a further partition on a leaf node of the tree. the larger, the more conservative the algorithm will be. 
   \item \code{max_depth} maximum depth of a tree. Default: 6
   \item \code{min_child_weight} minimum sum of instance weight (hessian) needed in a child. If the tree partition step results in a leaf node with the sum of instance weight less than min_child_weight, then the building process will give up further partitioning. In linear regression mode, this simply corresponds to minimum number of instances needed to be in each node. The larger, the more conservative the algorithm will be. Default: 1
-  \item \code{subsample} subsample ratio of the training instance. Setting it to 0.5 means that xgboost randomly collected half of the data instances to grow trees and this will prevent overfitting. It makes computation shorter (because less data to analyse). It is advised to use this parameter with \code{eta} and increase \code{nround}. Default: 1 
+  \item \code{subsample} subsample ratio of the training instance. Setting it to 0.5 means that xgboost randomly collected half of the data instances to grow trees and this will prevent overfitting. It makes computation shorter (because less data to analyse). It is advised to use this parameter with \code{eta} and increase \code{nrounds}. Default: 1 
   \item \code{colsample_bytree} subsample ratio of columns when constructing each tree. Default: 1
   \item \code{num_parallel_tree} Experimental parameter. number of trees to grow per round. Useful to test Random Forest through Xgboost (set \code{colsample_bytree < 1}, \code{subsample  < 1}  and \code{round = 1}) accordingly. Default: 1
   \item \code{monotone_constraints} A numerical vector consists of \code{1}, \code{0} and \code{-1} with its length equals to the number of features in the training data. \code{1} is increasing, \code{-1} is decreasing and \code{0} is no constraint.
@@ -54,7 +56,7 @@ xgboost(data = NULL, label = NULL, missing = NA, weight = NULL,
 \itemize{
 \item \code{objective} specify the learning task and the corresponding learning objective, users can pass a self-defined function to it. The default objective options are below:
   \itemize{
-    \item \code{reg:linear} linear regression (Default).
+    \item \code{reg:squarederror} Regression with squared loss (Default).
     \item \code{reg:logistic} logistic regression.
     \item \code{binary:logistic} logistic regression for binary classification. Output probability.
     \item \code{binary:logitraw} logistic regression for binary classification, output score before logistic transformation.
@@ -155,6 +157,7 @@ An object of class \code{xgb.Booster} with the following elements:
         (only available with early stopping).
   \item \code{feature_names} names of the training dataset features
         (only when comun names were defined in training data).
+  \item \code{nfeatures} number of features in training data.
 }
 }
 \description{
@@ -179,12 +182,13 @@ The folloiwing is the list of built-in metrics for which Xgboost provides optimi
   \itemize{
      \item \code{rmse} root mean square error. \url{http://en.wikipedia.org/wiki/Root_mean_square_error}
      \item \code{logloss} negative log-likelihood. \url{http://en.wikipedia.org/wiki/Log-likelihood}
-     \item \code{mlogloss} multiclass logloss. \url{https://www.kaggle.com/wiki/MultiClassLogLoss/}
+     \item \code{mlogloss} multiclass logloss. \url{http://wiki.fast.ai/index.php/Log_Loss}
      \item \code{error} Binary classification error rate. It is calculated as \code{(# wrong cases) / (# all cases)}.
            By default, it uses the 0.5 threshold for predicted values to define negative and positive instances.
            Different threshold (e.g., 0.) could be specified as "error@0."
      \item \code{merror} Multiclass classification error rate. It is calculated as \code{(# wrong cases) / (# all cases)}.
      \item \code{auc} Area under the curve. \url{http://en.wikipedia.org/wiki/Receiver_operating_characteristic#'Area_under_curve} for ranking evaluation.
+     \item \code{aucpr} Area under the PR curve. \url{https://en.wikipedia.org/wiki/Precision_and_recall} for ranking evaluation.
      \item \code{ndcg} Normalized Discounted Cumulative Gain (for ranking task). \url{http://en.wikipedia.org/wiki/NDCG}
   }
 
@@ -206,7 +210,7 @@ dtest <- xgb.DMatrix(agaricus.test$data, label = agaricus.test$label)
 watchlist <- list(train = dtrain, eval = dtest)
 
 ## A simple xgb.train example:
-param <- list(max_depth = 2, eta = 1, silent = 1, nthread = 2, 
+param <- list(max_depth = 2, eta = 1, verbosity = 0, nthread = 2, 
               objective = "binary:logistic", eval_metric = "auc")
 bst <- xgb.train(param, dtrain, nrounds = 2, watchlist)
 
@@ -227,12 +231,12 @@ evalerror <- function(preds, dtrain) {
 
 # These functions could be used by passing them either:
 #  as 'objective' and 'eval_metric' parameters in the params list:
-param <- list(max_depth = 2, eta = 1, silent = 1, nthread = 2, 
+param <- list(max_depth = 2, eta = 1, verbosity = 0, nthread = 2, 
               objective = logregobj, eval_metric = evalerror)
 bst <- xgb.train(param, dtrain, nrounds = 2, watchlist)
 
 #  or through the ... arguments:
-param <- list(max_depth = 2, eta = 1, silent = 1, nthread = 2)
+param <- list(max_depth = 2, eta = 1, verbosity = 0, nthread = 2)
 bst <- xgb.train(param, dtrain, nrounds = 2, watchlist,
                  objective = logregobj, eval_metric = evalerror)
 
@@ -242,7 +246,7 @@ bst <- xgb.train(param, dtrain, nrounds = 2, watchlist,
 
 
 ## An xgb.train example of using variable learning rates at each iteration:
-param <- list(max_depth = 2, eta = 1, silent = 1, nthread = 2,
+param <- list(max_depth = 2, eta = 1, verbosity = 0, nthread = 2,
               objective = "binary:logistic", eval_metric = "auc")
 my_etas <- list(eta = c(0.5, 0.1))
 bst <- xgb.train(param, dtrain, nrounds = 2, watchlist,
@@ -258,6 +262,10 @@ bst <- xgboost(data = agaricus.train$data, label = agaricus.train$label,
                objective = "binary:logistic")
 pred <- predict(bst, agaricus.test$data)
 
+}
+\references{
+Tianqi Chen and Carlos Guestrin, "XGBoost: A Scalable Tree Boosting System",
+22nd SIGKDD Conference on Knowledge Discovery and Data Mining, 2016, \url{https://arxiv.org/abs/1603.02754}
 }
 \seealso{
 \code{\link{callbacks}},

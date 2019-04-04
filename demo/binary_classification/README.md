@@ -1,8 +1,8 @@
 Binary Classification
 =====================
 This is the quick start tutorial for xgboost CLI version.
-Here we demonstrate how to use XGBoost for a binary classification task. Before getting started, make sure you compile xgboost in the root directory of the project by typing ```make```
-The script runexp.sh can be used to run the demo. Here we use [mushroom dataset](https://archive.ics.uci.edu/ml/datasets/Mushroom) from UCI machine learning repository.
+Here we demonstrate how to use XGBoost for a binary classification task. Before getting started, make sure you compile xgboost in the root directory of the project by typing ```make```.
+The script 'runexp.sh' can be used to run the demo. Here we use [mushroom dataset](https://archive.ics.uci.edu/ml/datasets/Mushroom) from UCI machine learning repository.
 
 ### Tutorial
 #### Generate Input Data
@@ -62,7 +62,7 @@ test:data = "agaricus.txt.test"
 We use the tree booster and logistic regression objective in our setting. This indicates that we accomplish our task using classic gradient boosting regression tree(GBRT), which is a promising method for binary classification.
 
 The parameters shown in the example gives the most common ones that are needed to use xgboost.
-If you are interested in more parameter settings, the complete parameter settings and detailed descriptions are [here](../../doc/parameter.md). Besides putting the parameters in the configuration file, we can set them by passing them as arguments as below:
+If you are interested in more parameter settings, the complete parameter settings and detailed descriptions are [here](../../doc/parameter.rst). Besides putting the parameters in the configuration file, we can set them by passing them as arguments as below:
 
 ```
 ../../xgboost mushroom.conf max_depth=6
@@ -80,12 +80,6 @@ booster = gblinear
 # L2 regularization term on weights, default 0
 lambda = 0.01
 # L1 regularization term on weights, default 0
-f ```agaricus.txt.test.buffer``` exists, and automatically loads from binary buffer if possible, this can speedup training process when you do training many times. You can disable it by setting ```use_buffer=0```.
-  - Buffer file can also be used as standalone input, i.e if buffer file exists, but original agaricus.txt.test was removed, xgboost will still run
-* Deviation from LibSVM input format: xgboost is compatible with LibSVM format, with the following minor differences:
-  - xgboost allows feature index starts from 0
-  - for binary classification, the label is 1 for positive, 0 for negative, instead of +1,-1
-  - the feature indices in each line *do not* need to be sorted
 alpha = 0.01
 # L2 regularization term on bias, default 0
 lambda_bias = 0.01
@@ -102,7 +96,7 @@ After training, we can use the output model to get the prediction of the test da
 For binary classification, the output predictions are probability confidence scores in [0,1], corresponds to the probability of the label to be positive.
 
 #### Dump Model
-This is a preliminary feature, so far only tree model support text dump. XGBoost can display the tree models in text files and we can scan the model in an easy way:
+This is a preliminary feature, so only tree models support text dump. XGBoost can display the tree models in text or JSON files, and we can scan the model in an easy way:
 ```
 ../../xgboost mushroom.conf task=dump model_in=0002.model name_dump=dump.raw.txt
 ../../xgboost mushroom.conf task=dump model_in=0002.model fmap=featmap.txt name_dump=dump.nice.txt

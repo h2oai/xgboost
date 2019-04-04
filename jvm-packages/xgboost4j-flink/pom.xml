@@ -6,10 +6,10 @@
     <parent>
         <groupId>ai.h2o</groupId>
         <artifactId>xgboost-jvm</artifactId>
-        <version>0.8-SNAPSHOT</version>
+        <version>0.83-SNAPSHOT</version>
     </parent>
     <artifactId>xgboost4j-flink</artifactId>
-    <version>0.8-SNAPSHOT</version>
+    <version>0.83-SNAPSHOT</version>
     <build>
         <plugins>
             <plugin>
@@ -26,7 +26,7 @@
         <dependency>
             <groupId>ai.h2o</groupId>
             <artifactId>xgboost4j</artifactId>
-            <version>0.8-SNAPSHOT</version>
+            <version>0.83-SNAPSHOT</version>
         </dependency>
         <dependency>
             <groupId>org.apache.commons</groupId>
@@ -47,6 +47,11 @@
             <groupId>org.apache.flink</groupId>
             <artifactId>flink-ml_${scala.binary.version}</artifactId>
             <version>${flink.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.hadoop</groupId>
+            <artifactId>hadoop-common</artifactId>
+            <version>2.7.3</version>
         </dependency>
     </dependencies>
 

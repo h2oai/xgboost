@@ -6,7 +6,7 @@
 #include <xgboost/logging.h>
 #include <dmlc/registry.h>
 #include <cstring>
-#include "./sparse_batch_page.h"
+#include "./sparse_page_writer.h"
 #include "./simple_dmatrix.h"
 #include "./simple_csr_source.h"
 #include "../common/common.h"
@@ -15,7 +15,7 @@
 #if DMLC_ENABLE_STD_THREAD
 #include "./sparse_page_source.h"
 #include "./sparse_page_dmatrix.h"
-#endif
+#endif  // DMLC_ENABLE_STD_THREAD
 
 namespace dmlc {
 DMLC_REGISTRY_ENABLE(::xgboost::data::SparsePageFormatReg);
@@ -24,51 +24,58 @@ DMLC_REGISTRY_ENABLE(::xgboost::data::SparsePageFormatReg);
 namespace xgboost {
 // implementation of inline functions
 void MetaInfo::Clear() {
-  num_row = num_col = num_nonzero = 0;
-  labels.clear();
-  root_index.clear();
-  group_ptr.clear();
-  weights.clear();
-  base_margin.clear();
+  num_row_ = num_col_ = num_nonzero_ = 0;
+  labels_.HostVector().clear();
+  root_index_.clear();
+  group_ptr_.clear();
+  qids_.clear();
+  weights_.HostVector().clear();
+  base_margin_.HostVector().clear();
 }
 
 void MetaInfo::SaveBinary(dmlc::Stream *fo) const {
   int32_t version = kVersion;
   fo->Write(&version, sizeof(version));
-  fo->Write(&num_row, sizeof(num_row));
-  fo->Write(&num_col, sizeof(num_col));
-  fo->Write(&num_nonzero, sizeof(num_nonzero));
-  fo->Write(labels);
-  fo->Write(group_ptr);
-  fo->Write(weights);
-  fo->Write(root_index);
-  fo->Write(base_margin);
+  fo->Write(&num_row_, sizeof(num_row_));
+  fo->Write(&num_col_, sizeof(num_col_));
+  fo->Write(&num_nonzero_, sizeof(num_nonzero_));
+  fo->Write(labels_.HostVector());
+  fo->Write(group_ptr_);
+  fo->Write(qids_);
+  fo->Write(weights_.HostVector());
+  fo->Write(root_index_);
+  fo->Write(base_margin_.HostVector());
 }
 
 void MetaInfo::LoadBinary(dmlc::Stream *fi) {
   int version;
   CHECK(fi->Read(&version, sizeof(version)) == sizeof(version)) << "MetaInfo: invalid version";
-  CHECK_EQ(version, kVersion) << "MetaInfo: invalid format";
-  CHECK(fi->Read(&num_row, sizeof(num_row)) == sizeof(num_row)) << "MetaInfo: invalid format";
-  CHECK(fi->Read(&num_col, sizeof(num_col)) == sizeof(num_col)) << "MetaInfo: invalid format";
-  CHECK(fi->Read(&num_nonzero, sizeof(num_nonzero)) == sizeof(num_nonzero))
+  CHECK(version >= 1 && version <= kVersion) << "MetaInfo: unsupported file version";
+  CHECK(fi->Read(&num_row_, sizeof(num_row_)) == sizeof(num_row_)) << "MetaInfo: invalid format";
+  CHECK(fi->Read(&num_col_, sizeof(num_col_)) == sizeof(num_col_)) << "MetaInfo: invalid format";
+  CHECK(fi->Read(&num_nonzero_, sizeof(num_nonzero_)) == sizeof(num_nonzero_))
       << "MetaInfo: invalid format";
-  CHECK(fi->Read(&labels)) <<  "MetaInfo: invalid format";
-  CHECK(fi->Read(&group_ptr)) << "MetaInfo: invalid format";
-  CHECK(fi->Read(&weights)) << "MetaInfo: invalid format";
-  CHECK(fi->Read(&root_index)) << "MetaInfo: invalid format";
-  CHECK(fi->Read(&base_margin)) << "MetaInfo: invalid format";
+  CHECK(fi->Read(&labels_.HostVector())) <<  "MetaInfo: invalid format";
+  CHECK(fi->Read(&group_ptr_)) << "MetaInfo: invalid format";
+  if (version >= kVersionQidAdded) {
+    CHECK(fi->Read(&qids_)) << "MetaInfo: invalid format";
+  } else {  // old format doesn't contain qid field
+    qids_.clear();
+  }
+  CHECK(fi->Read(&weights_.HostVector())) << "MetaInfo: invalid format";
+  CHECK(fi->Read(&root_index_)) << "MetaInfo: invalid format";
+  CHECK(fi->Read(&base_margin_.HostVector())) << "MetaInfo: invalid format";
 }
 
 // try to load group information from file, if exists
 inline bool MetaTryLoadGroup(const std::string& fname,
                              std::vector<unsigned>* group) {
   std::unique_ptr<dmlc::Stream> fi(dmlc::Stream::Create(fname.c_str(), "r", true));
-  if (fi.get() == nullptr) return false;
+  if (fi == nullptr) return false;
   dmlc::istream is(fi.get());
   group->clear();
   group->push_back(0);
-  unsigned nline;
+  unsigned nline = 0;
   while (is >> nline) {
     group->push_back(group->back() + nline);
   }
@@ -79,7 +86,7 @@ inline bool MetaTryLoadGroup(const std::string& fname,
 inline bool MetaTryLoadFloatInfo(const std::string& fname,
                                  std::vector<bst_float>* data) {
   std::unique_ptr<dmlc::Stream> fi(dmlc::Stream::Create(fname.c_str(), "r", true));
-  if (fi.get() == nullptr) return false;
+  if (fi == nullptr) return false;
   dmlc::istream is(fi.get());
   data->clear();
   bst_float value;
@@ -93,16 +100,16 @@ inline bool MetaTryLoadFloatInfo(const std::string& fname,
 #define DISPATCH_CONST_PTR(dtype, old_ptr, cast_ptr, proc)              \
   switch (dtype) {                                                      \
     case kFloat32: {                                                    \
-      const float* cast_ptr = reinterpret_cast<const float*>(old_ptr); proc; break; \
+      auto cast_ptr = reinterpret_cast<const float*>(old_ptr); proc; break; \
     }                                                                   \
     case kDouble: {                                                     \
-      const double* cast_ptr = reinterpret_cast<const double*>(old_ptr); proc; break; \
+      auto cast_ptr = reinterpret_cast<const double*>(old_ptr); proc; break; \
     }                                                                   \
     case kUInt32: {                                                     \
-      const uint32_t* cast_ptr = reinterpret_cast<const uint32_t*>(old_ptr); proc; break; \
+      auto cast_ptr = reinterpret_cast<const uint32_t*>(old_ptr); proc; break; \
     }                                                                   \
     case kUInt64: {                                                     \
-      const uint64_t* cast_ptr = reinterpret_cast<const uint64_t*>(old_ptr); proc; break; \
+      auto cast_ptr = reinterpret_cast<const uint64_t*>(old_ptr); proc; break; \
     }                                                                   \
     default: LOG(FATAL) << "Unknown data type" << dtype;                \
   }                                                                     \
@@ -110,28 +117,31 @@ inline bool MetaTryLoadFloatInfo(const std::string& fname,
 
 void MetaInfo::SetInfo(const char* key, const void* dptr, DataType dtype, size_t num) {
   if (!std::strcmp(key, "root_index")) {
-    root_index.resize(num);
+    root_index_.resize(num);
     DISPATCH_CONST_PTR(dtype, dptr, cast_dptr,
-                       std::copy(cast_dptr, cast_dptr + num, root_index.begin()));
+                       std::copy(cast_dptr, cast_dptr + num, root_index_.begin()));
   } else if (!std::strcmp(key, "label")) {
+    auto& labels = labels_.HostVector();
     labels.resize(num);
     DISPATCH_CONST_PTR(dtype, dptr, cast_dptr,
                        std::copy(cast_dptr, cast_dptr + num, labels.begin()));
   } else if (!std::strcmp(key, "weight")) {
+    auto& weights = weights_.HostVector();
     weights.resize(num);
     DISPATCH_CONST_PTR(dtype, dptr, cast_dptr,
                        std::copy(cast_dptr, cast_dptr + num, weights.begin()));
   } else if (!std::strcmp(key, "base_margin")) {
+    auto& base_margin = base_margin_.HostVector();
     base_margin.resize(num);
     DISPATCH_CONST_PTR(dtype, dptr, cast_dptr,
                        std::copy(cast_dptr, cast_dptr + num, base_margin.begin()));
   } else if (!std::strcmp(key, "group")) {
-    group_ptr.resize(num + 1);
+    group_ptr_.resize(num + 1);
     DISPATCH_CONST_PTR(dtype, dptr, cast_dptr,
-                       std::copy(cast_dptr, cast_dptr + num, group_ptr.begin() + 1));
-    group_ptr[0] = 0;
-    for (size_t i = 1; i < group_ptr.size(); ++i) {
-      group_ptr[i] = group_ptr[i - 1] + group_ptr[i];
+                       std::copy(cast_dptr, cast_dptr + num, group_ptr_.begin() + 1));
+    group_ptr_[0] = 0;
+    for (size_t i = 1; i < group_ptr_.size(); ++i) {
+      group_ptr_[i] = group_ptr_[i - 1] + group_ptr_[i];
     }
   }
 }
@@ -163,7 +173,9 @@ DMatrix* DMatrix::Load(const std::string& uri,
              << "-" <<  rabit::GetWorldSize()
              << cache_shards[i].substr(pos, cache_shards[i].length());
         }
-        if (i + 1 != cache_shards.size()) os << ':';
+        if (i + 1 != cache_shards.size()) {
+          os << ':';
+        }
       }
       cache_file = os.str();
     }
@@ -187,7 +199,7 @@ DMatrix* DMatrix::Load(const std::string& uri,
   if (file_format == "auto" && npart == 1) {
     int magic;
     std::unique_ptr<dmlc::Stream> fi(dmlc::Stream::Create(fname.c_str(), "r", true));
-    if (fi.get() != nullptr) {
+    if (fi != nullptr) {
       common::PeekableInStream is(fi.get());
       if (is.PeekRead(&magic, sizeof(magic)) == sizeof(magic) &&
           magic == data::SimpleCSRSource::kMagic) {
@@ -195,8 +207,8 @@ DMatrix* DMatrix::Load(const std::string& uri,
         source->LoadBinary(&is);
         DMatrix* dmat = DMatrix::Create(std::move(source), cache_file);
         if (!silent) {
-          LOG(CONSOLE) << dmat->info().num_row << 'x' << dmat->info().num_col << " matrix with "
-                       << dmat->info().num_nonzero << " entries loaded from " << uri;
+          LOG(CONSOLE) << dmat->Info().num_row_ << 'x' << dmat->Info().num_col_ << " matrix with "
+                       << dmat->Info().num_nonzero_ << " entries loaded from " << uri;
         }
         return dmat;
       }
@@ -207,22 +219,28 @@ DMatrix* DMatrix::Load(const std::string& uri,
       dmlc::Parser<uint32_t>::Create(fname.c_str(), partid, npart, file_format.c_str()));
   DMatrix* dmat = DMatrix::Create(parser.get(), cache_file);
   if (!silent) {
-    LOG(CONSOLE) << dmat->info().num_row << 'x' << dmat->info().num_col << " matrix with "
-                 << dmat->info().num_nonzero << " entries loaded from " << uri;
+    LOG(CONSOLE) << dmat->Info().num_row_ << 'x' << dmat->Info().num_col_ << " matrix with "
+                 << dmat->Info().num_nonzero_ << " entries loaded from " << uri;
   }
+  /* sync up number of features after matrix loaded.
+   * partitioned data will fail the train/val validation check
+   * since partitioned data not knowing the real number of features. */
+  rabit::Allreduce<rabit::op::Max>(&dmat->Info().num_col_, 1);
   // backward compatiblity code.
   if (!load_row_split) {
-    MetaInfo& info = dmat->info();
-    if (MetaTryLoadGroup(fname + ".group", &info.group_ptr) && !silent) {
-      LOG(CONSOLE) << info.group_ptr.size() - 1
+    MetaInfo& info = dmat->Info();
+    if (MetaTryLoadGroup(fname + ".group", &info.group_ptr_) && !silent) {
+      LOG(CONSOLE) << info.group_ptr_.size() - 1
                    << " groups are loaded from " << fname << ".group";
     }
-    if (MetaTryLoadFloatInfo(fname + ".base_margin", &info.base_margin) && !silent) {
-      LOG(CONSOLE) << info.base_margin.size()
+    if (MetaTryLoadFloatInfo
+        (fname + ".base_margin", &info.base_margin_.HostVector()) && !silent) {
+      LOG(CONSOLE) << info.base_margin_.Size()
                    << " base_margin are loaded from " << fname << ".base_margin";
     }
-    if (MetaTryLoadFloatInfo(fname + ".weight", &info.weights) && !silent) {
-      LOG(CONSOLE) << info.weights.size()
+    if (MetaTryLoadFloatInfo
+        (fname + ".weight", &info.weights_.HostVector()) && !silent) {
+      LOG(CONSOLE) << info.weights_.Size()
                    << " weights are loaded from " << fname << ".weight";
     }
   }
@@ -237,15 +255,16 @@ DMatrix* DMatrix::Create(dmlc::Parser<uint32_t>* parser,
     return DMatrix::Create(std::move(source), cache_prefix);
   } else {
 #if DMLC_ENABLE_STD_THREAD
-    if (!data::SparsePageSource::CacheExist(cache_prefix)) {
-      data::SparsePageSource::Create(parser, cache_prefix);
+    if (!data::SparsePageSource::CacheExist(cache_prefix, ".row.page")) {
+      data::SparsePageSource::CreateRowPage(parser, cache_prefix);
     }
-    std::unique_ptr<data::SparsePageSource> source(new data::SparsePageSource(cache_prefix));
+    std::unique_ptr<data::SparsePageSource> source(
+        new data::SparsePageSource(cache_prefix, ".row.page"));
     return DMatrix::Create(std::move(source), cache_prefix);
 #else
     LOG(FATAL) << "External memory is not enabled in mingw";
     return nullptr;
-#endif
+#endif  // DMLC_ENABLE_STD_THREAD
   }
 }
 
@@ -266,14 +285,13 @@ DMatrix* DMatrix::Create(std::unique_ptr<DataSource>&& source,
 #else
     LOG(FATAL) << "External memory is not enabled in mingw";
     return nullptr;
-#endif
+#endif  // DMLC_ENABLE_STD_THREAD
   }
 }
 }  // namespace xgboost
 
 namespace xgboost {
-namespace data {
-SparsePage::Format* SparsePage::Format::Create(const std::string& name) {
+  data::SparsePageFormat* data::SparsePageFormat::Create(const std::string& name) {
   auto *e = ::dmlc::Registry< ::xgboost::data::SparsePageFormatReg>::Get()->Find(name);
   if (e == nullptr) {
     LOG(FATAL) << "Unknown format type " << name;
@@ -282,7 +300,7 @@ SparsePage::Format* SparsePage::Format::Create(const std::string& name) {
 }
 
 std::pair<std::string, std::string>
-SparsePage::Format::DecideFormat(const std::string& cache_prefix) {
+data::SparsePageFormat::DecideFormat(const std::string& cache_prefix) {
   size_t pos = cache_prefix.rfind(".fmt-");
 
   if (pos != std::string::npos) {
@@ -299,6 +317,96 @@ SparsePage::Format::DecideFormat(const std::string& cache_prefix) {
   }
 }
 
+void SparsePage::Push(const SparsePage &batch) {
+  auto& data_vec = data.HostVector();
+  auto& offset_vec = offset.HostVector();
+  const auto& batch_offset_vec = batch.offset.HostVector();
+  const auto& batch_data_vec = batch.data.HostVector();
+  size_t top = offset_vec.back();
+  data_vec.resize(top + batch.data.Size());
+  std::memcpy(dmlc::BeginPtr(data_vec) + top,
+              dmlc::BeginPtr(batch_data_vec),
+              sizeof(Entry) * batch.data.Size());
+  size_t begin = offset.Size();
+  offset_vec.resize(begin + batch.Size());
+  for (size_t i = 0; i < batch.Size(); ++i) {
+    offset_vec[i + begin] = top + batch_offset_vec[i + 1];
+  }
+}
+
+void SparsePage::Push(const dmlc::RowBlock<uint32_t>& batch) {
+  auto& data_vec = data.HostVector();
+  auto& offset_vec = offset.HostVector();
+  data_vec.reserve(data.Size() + batch.offset[batch.size] - batch.offset[0]);
+  offset_vec.reserve(offset.Size() + batch.size);
+  CHECK(batch.index != nullptr);
+  for (size_t i = 0; i < batch.size; ++i) {
+    offset_vec.push_back(offset_vec.back() + batch.offset[i + 1] - batch.offset[i]);
+  }
+  for (size_t i = batch.offset[0]; i < batch.offset[batch.size]; ++i) {
+    uint32_t index = batch.index[i];
+    bst_float fvalue = batch.value == nullptr ? 1.0f : batch.value[i];
+    data_vec.emplace_back(index, fvalue);
+  }
+  CHECK_EQ(offset_vec.back(), data.Size());
+}
+
+void SparsePage::PushCSC(const SparsePage &batch) {
+  std::vector<xgboost::Entry>& self_data = data.HostVector();
+  std::vector<size_t>& self_offset = offset.HostVector();
+
+  auto const& other_data = batch.data.ConstHostVector();
+  auto const& other_offset = batch.offset.ConstHostVector();
+
+  if (other_data.empty()) {
+    return;
+  }
+  if (!self_data.empty()) {
+    CHECK_EQ(self_offset.size(), other_offset.size())
+        << "self_data.size(): " << this->data.Size() << ", "
+        << "other_data.size(): " << other_data.size() << std::flush;
+  } else {
+    self_data = other_data;
+    self_offset = other_offset;
+    return;
+  }
+
+  std::vector<size_t> offset(other_offset.size());
+  offset[0] = 0;
+
+  std::vector<xgboost::Entry> data(self_data.size() + batch.data.Size());
+
+  // n_cols in original csr data matrix, here in csc is n_rows
+  size_t const n_features = other_offset.size() - 1;
+  size_t beg = 0;
+  size_t ptr = 1;
+  for (size_t i = 0; i < n_features; ++i) {
+    size_t const self_beg = self_offset.at(i);
+    size_t const self_length = self_offset.at(i+1) - self_beg;
+    CHECK_LT(beg, data.size());
+    std::memcpy(dmlc::BeginPtr(data)+beg,
+                dmlc::BeginPtr(self_data) + self_beg,
+                sizeof(Entry) * self_length);
+    beg += self_length;
+
+    size_t const other_beg = other_offset.at(i);
+    size_t const other_length = other_offset.at(i+1) - other_beg;
+    CHECK_LT(beg, data.size());
+    std::memcpy(dmlc::BeginPtr(data)+beg,
+                dmlc::BeginPtr(other_data) + other_beg,
+                sizeof(Entry) * other_length);
+    beg += other_length;
+
+    CHECK_LT(ptr, offset.size());
+    offset.at(ptr) = beg;
+    ptr++;
+  }
+
+  self_data = std::move(data);
+  self_offset = std::move(offset);
+}
+
+namespace data {
 // List of files that will be force linked in static links.
 DMLC_REGISTRY_LINK_TAG(sparse_page_raw_format);
 }  // namespace data

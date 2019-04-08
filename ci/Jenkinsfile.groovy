@@ -28,7 +28,8 @@ XGB_VERSION = "${XGB_MAJOR_VERSION}.${currentBuild.number}"
 def targetNexus = params.targetNexus ?: TARGET_NEXUS_NONE
 targetNexus = targetNexus.toLowerCase()
 if (env.BRANCH_NAME != PUBLISHABLE_BRANCH_NAME) {
-    XGB_VERSION = "0.8.${currentBuild.number}-${env.BRANCH_NAME.replaceAll('/|\\ ', '-').toLowerCase()}-SNAPSHOT"
+    env.SAFE_BRANCH_NAME = env.BRANCH_NAME.replaceAll('/|\\ ', '-').toLowerCase()
+    XGB_VERSION = "0.8.${currentBuild.number}-${env.SAFE_BRANCH_NAME}-SNAPSHOT"
     if (targetNexus != TARGET_NEXUS_NONE) {
         targetNexus = TARGET_NEXUS_SNAPSHOT
     }
@@ -222,7 +223,7 @@ private GString getStageDirFromConfiguration(final config) {
 }
 
 private void s3Upload(final String folder, final String file, final String targetNexus) {
-    def s3Root = "s3://test.0xdata.com/h2o-release/xgboost/${env.BRANCH_NAME}/${XGB_VERSION}"
+    def s3Root = "s3://test.0xdata.com/h2o-release/xgboost/${env.SAFE_BRANCH_NAME}/${XGB_VERSION}"
     if (targetNexus == TARGET_NEXUS_PUBLIC) {
         s3Root = "s3://h2o-release/xgboost/${env.BRANCH_NAME}/${XGB_VERSION}"
     }

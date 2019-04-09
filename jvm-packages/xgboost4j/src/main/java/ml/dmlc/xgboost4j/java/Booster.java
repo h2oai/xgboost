@@ -24,17 +24,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-import com.esotericsoftware.kryo.Kryo;
-import com.esotericsoftware.kryo.KryoSerializable;
-import com.esotericsoftware.kryo.io.Input;
-import com.esotericsoftware.kryo.io.Output;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 
 /**
  * Booster for xgboost, this is a model API that support interactive build of a XGBoost Model
  */
-public class Booster implements Serializable, KryoSerializable {
+public class Booster implements Serializable {
 
   private static final Log logger = LogFactory.getLog(Booster.class);
 
@@ -66,8 +62,8 @@ public class Booster implements Serializable, KryoSerializable {
   }
 
   // handle to the booster.
-  private long handle = 0;
-  private int version = 0;
+  protected long handle = 0;
+  protected int version = 0;
 
   /**
    * Create a new Booster with empty stage.
@@ -676,7 +672,7 @@ public class Booster implements Serializable, KryoSerializable {
    * @param cacheMats The cached DMatrix.
    * @throws XGBoostError
    */
-  private void init(DMatrix[] cacheMats) throws XGBoostError {
+  protected void init(DMatrix[] cacheMats) throws XGBoostError {
     long[] handles = null;
     if (cacheMats != null) {
       handles = dmatrixsToHandles(cacheMats);
@@ -740,33 +736,6 @@ public class Booster implements Serializable, KryoSerializable {
     if (handle != 0L) {
       XGBoostJNI.XGBoosterFree(handle);
       handle = 0;
-    }
-  }
-
-  @Override
-  public void write(Kryo kryo, Output output) {
-    try {
-      byte[] serObj = this.toByteArray();
-      int serObjSize = serObj.length;
-      output.writeInt(serObjSize);
-      output.writeInt(version);
-      output.write(serObj);
-    } catch (XGBoostError ex) {
-      logger.error(ex.getMessage(), ex);
-    }
-  }
-
-  @Override
-  public void read(Kryo kryo, Input input) {
-    try {
-      this.init(null);
-      int serObjSize = input.readInt();
-      this.version = input.readInt();
-      byte[] bytes = new byte[serObjSize];
-      input.readBytes(bytes);
-      XGBoostJNI.checkCall(XGBoostJNI.XGBoosterLoadModelFromBuffer(this.handle, bytes));
-    } catch (XGBoostError ex) {
-      logger.error(ex.getMessage(), ex);
     }
   }
 }

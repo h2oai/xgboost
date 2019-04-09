@@ -27,8 +27,9 @@ XGB_VERSION = "${XGB_MAJOR_VERSION}.${currentBuild.number}"
 
 def targetNexus = params.targetNexus ?: TARGET_NEXUS_NONE
 targetNexus = targetNexus.toLowerCase()
+env.SAFE_BRANCH_NAME = env.BRANCH_NAME.replaceAll('/|\\ ', '-').toLowerCase()
 if (env.BRANCH_NAME != PUBLISHABLE_BRANCH_NAME) {
-    XGB_VERSION = "0.83.${currentBuild.number}-${env.BRANCH_NAME.replaceAll('/|\\ ', '-').toLowerCase()}-SNAPSHOT"
+    XGB_VERSION = "0.83.${currentBuild.number}-${env.SAFE_BRANCH_NAME}-SNAPSHOT"
     if (targetNexus != TARGET_NEXUS_NONE) {
         targetNexus = TARGET_NEXUS_SNAPSHOT
     }
@@ -168,9 +169,7 @@ ansiColor('xterm') {
                                 sh "make ${MAKE_OPTS} -f ci/Makefile.jenkins deploy_lib_jar_in_docker"
                             }
                             archiveArtifacts artifacts: "jvm-packages/xgboost4j/target/xgboost4j-${XGB_VERSION}.jar", allowEmptyArchive: false
-                            if (targetNexus == TARGET_NEXUS_PUBLIC) {
-                                s3Upload("jvm-packages/xgboost4j/target", "xgboost4j-${XGB_VERSION}.jar")
-                            }
+                            s3Upload("jvm-packages/xgboost4j/target", "xgboost4j-${XGB_VERSION}.jar", targetNexus)
                         }
                         CONFIGURATIONS.each { config ->
                             buildSummary.stageWithSummary("Deploy ${config.os}-${config.backend}") {
@@ -184,10 +183,8 @@ ansiColor('xterm') {
                                     withCredentials([file(credentialsId: 'nexus-settings-xml', variable: 'MAVEN_SETTINGS_PATH'), file(credentialsId: 'release-secret-key-ring-file', variable: 'SECRING_PATH')]) {
                                         sh "make ${MAKE_OPTS} TARGET_OS=${config.os} -f ci/Makefile.jenkins deploy_jar_${config.backend}_in_docker"
                                     }
-                                    if (targetNexus == TARGET_NEXUS_PUBLIC) {
-                                        s3Upload('ci-build', '*.jar')
-                                        s3Upload('ci-build', '*.whl')
-                                    }
+                                    s3Upload('ci-build', '*.jar', targetNexus)
+                                    s3Upload('ci-build', '*.whl', targetNexus)
                                 }
                             }
                         }
@@ -221,11 +218,15 @@ private GString getStageDirFromConfiguration(final config) {
     return "${config.os}-${config.backend}"
 }
 
-private void s3Upload(final String folder, final String file) {
+private void s3Upload(final String folder, final String file, final String targetNexus) {
+    def s3Root = "s3://test.0xdata.com/h2o-release/xgboost/${env.SAFE_BRANCH_NAME}/${XGB_VERSION}"
+    if (targetNexus == TARGET_NEXUS_PUBLIC) {
+        s3Root = "s3://h2o-release/xgboost/${env.SAFE_BRANCH_NAME}/${XGB_VERSION}"
+    }
     docker.withRegistry("https://docker.h2o.ai") {
         withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', accessKeyVariable: 'AWS_ACCESS_KEY_ID', credentialsId: 'AWS S3 Credentials', secretKeyVariable: 'AWS_SECRET_ACCESS_KEY']]) {
             docker.image('docker.h2o.ai/awscli').inside("--init -e AWS_ACCESS_KEY_ID=\${AWS_ACCESS_KEY_ID} -e AWS_SECRET_ACCESS_KEY=\${AWS_SECRET_ACCESS_KEY}") {
-                sh "aws s3 sync ${folder} s3://h2o-release/xgboost/${env.BRANCH_NAME}/${XGB_VERSION} --exclude '*' --include '${file}'"
+                sh "aws s3 sync ${folder} ${s3Root} --exclude '*' --include '${file}'"
             }
         }
     }

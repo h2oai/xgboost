@@ -17,9 +17,12 @@ package ml.dmlc.xgboost4j.java;
 
 import java.io.*;
 import java.lang.reflect.Constructor;
+import java.util.Arrays;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -59,7 +62,8 @@ public class Booster implements Serializable {
   }
 
   // handle to the booster.
-  private long handle = 0;
+  protected long handle = 0;
+  protected int version = 0;
 
   /**
    * Create a new Booster with empty stage.
@@ -419,14 +423,81 @@ public class Booster implements Serializable {
   }
 
   /**
+   * Get the dump of the model as a string array with specified feature names.
+   *
+   * @param featureNames Names of the features.
+   * @return dumped model information
+   * @throws XGBoostError
+   */
+  public String[] getModelDump(String[] featureNames, boolean withStats) throws XGBoostError {
+    return getModelDump(featureNames, withStats, "text");
+  }
+
+  public String[] getModelDump(String[] featureNames, boolean withStats, String format)
+    throws XGBoostError {
+    int statsFlag = 0;
+    if (withStats) {
+      statsFlag = 1;
+    }
+    if (format == null) {
+      format = "text";
+    }
+    String[][] modelInfos = new String[1][];
+    XGBoostJNI.checkCall(XGBoostJNI.XGBoosterDumpModelExWithFeatures(
+        handle, featureNames, statsFlag, format, modelInfos));
+    return modelInfos[0];
+  }
+
+  /**
+   * Supported feature importance types
+   *
+   * WEIGHT = Number of nodes that a feature was used to determine a split
+   * GAIN = Average information gain per split for a feature
+   * COVER = Average cover per split for a feature
+   * TOTAL_GAIN = Total information gain over all splits of a feature
+   * TOTAL_COVER = Total cover over all splits of a feature
+   */
+  public static class FeatureImportanceType {
+    public static final String WEIGHT = "weight";
+    public static final String GAIN = "gain";
+    public static final String COVER = "cover";
+    public static final String TOTAL_GAIN = "total_gain";
+    public static final String TOTAL_COVER = "total_cover";
+    public static final Set<String> ACCEPTED_TYPES = new HashSet<>(
+            Arrays.asList(WEIGHT, GAIN, COVER, TOTAL_GAIN, TOTAL_COVER));
+  }
+
+  /**
+   * Get importance of each feature with specified feature names.
+   *
+   * @return featureScoreMap  key: feature name, value: feature importance score, can be nill.
+   * @throws XGBoostError native error
+   */
+  public Map<String, Integer> getFeatureScore(String[] featureNames) throws XGBoostError {
+    String[] modelInfos = getModelDump(featureNames, false);
+    return getFeatureWeightsFromModel(modelInfos);
+  }
+
+  /**
    * Get importance of each feature
    *
-   * @return featureMap  key: feature index, value: feature importance score, can be nill
+   * @return featureScoreMap  key: feature index, value: feature importance score, can be nill
    * @throws XGBoostError native error
    */
   public Map<String, Integer> getFeatureScore(String featureMap) throws XGBoostError {
     String[] modelInfos = getModelDump(featureMap, false);
-    Map<String, Integer> featureScore = new HashMap<String, Integer>();
+    return getFeatureWeightsFromModel(modelInfos);
+  }
+
+  /**
+   * Get the importance of each feature based purely on weights (number of splits)
+   *
+   * @return featureScoreMap key: feature index,
+   * value: feature importance score based on weight
+   * @throws XGBoostError native error
+   */
+  private Map<String, Integer> getFeatureWeightsFromModel(String[] modelInfos) throws XGBoostError {
+    Map<String, Integer> featureScore = new HashMap<>();
     for (String tree : modelInfos) {
       for (String node : tree.split("\n")) {
         String[] array = node.split("\\[");
@@ -443,6 +514,94 @@ public class Booster implements Serializable {
       }
     }
     return featureScore;
+  }
+
+  /**
+   * Get the feature importances for gain or cover (average or total)
+   *
+   * @return featureImportanceMap key: feature index,
+   * values: feature importance score based on gain or cover
+   * @throws XGBoostError native error
+   */
+  public Map<String, Double> getScore(
+          String[] featureNames, String importanceType) throws XGBoostError {
+    String[] modelInfos = getModelDump(featureNames, true);
+    return getFeatureImportanceFromModel(modelInfos, importanceType);
+  }
+
+  /**
+   * Get the feature importances for gain or cover (average or total), with feature names
+   *
+   * @return featureImportanceMap key: feature name,
+   * values: feature importance score based on gain or cover
+   * @throws XGBoostError native error
+   */
+  public Map<String, Double> getScore(
+          String featureMap, String importanceType) throws XGBoostError {
+    String[] modelInfos = getModelDump(featureMap, true);
+    return getFeatureImportanceFromModel(modelInfos, importanceType);
+  }
+
+  /**
+   * Get the importance of each feature based on information gain or cover
+   *
+   * @return featureImportanceMap key: feature index, value: feature importance score
+   * based on information gain or cover
+   * @throws XGBoostError native error
+   */
+  private Map<String, Double> getFeatureImportanceFromModel(
+          String[] modelInfos, String importanceType) throws XGBoostError {
+    if (!FeatureImportanceType.ACCEPTED_TYPES.contains(importanceType)) {
+      throw new AssertionError(String.format("Importance type %s is not supported",
+              importanceType));
+    }
+    Map<String, Double> importanceMap = new HashMap<>();
+    Map<String, Double> weightMap = new HashMap<>();
+    if (importanceType == FeatureImportanceType.WEIGHT) {
+      Map<String, Integer> importanceWeights = getFeatureWeightsFromModel(modelInfos);
+      for (String feature: importanceWeights.keySet()) {
+        importanceMap.put(feature, new Double(importanceWeights.get(feature)));
+      }
+      return importanceMap;
+    }
+    /* Each split in the tree has this text form:
+    "0:[f28<-9.53674316e-07] yes=1,no=2,missing=1,gain=4000.53101,cover=1628.25"
+    So the line has to be split according to whether cover or gain is desired */
+    String splitter = "gain=";
+    if (importanceType == FeatureImportanceType.COVER
+        || importanceType == FeatureImportanceType.TOTAL_COVER) {
+      splitter = "cover=";
+    }
+    for (String tree: modelInfos) {
+      for (String node: tree.split("\n")) {
+        String[] array = node.split("\\[");
+        if (array.length == 1) {
+          continue;
+        }
+        String[] fidWithImportance = array[1].split("\\]");
+        // Extract gain or cover from string after closing bracket
+        Double importance = Double.parseDouble(
+            fidWithImportance[1].split(splitter)[1].split(",")[0]
+        );
+        String fid = fidWithImportance[0].split("<")[0];
+        if (importanceMap.containsKey(fid)) {
+          importanceMap.put(fid, importance + importanceMap.get(fid));
+          weightMap.put(fid, 1d + weightMap.get(fid));
+        } else {
+          importanceMap.put(fid, importance);
+          weightMap.put(fid, 1d);
+        }
+      }
+    }
+    /* By default we calculate total gain and total cover.
+    Divide by the number of nodes per feature to get gain / cover */
+    if (importanceType == FeatureImportanceType.COVER
+        || importanceType == FeatureImportanceType.GAIN) {
+      for (String fid: importanceMap.keySet()) {
+        importanceMap.put(fid, importanceMap.get(fid)/weightMap.get(fid));
+      }
+    }
+    return importanceMap;
   }
 
   /**
@@ -466,6 +625,14 @@ public class Booster implements Serializable {
     return modelInfos[0];
   }
 
+  public int getVersion() {
+    return this.version;
+  }
+
+  public void setVersion(int version) {
+    this.version = version;
+  }
+
   /**
    *
    * @return the saved byte array.
@@ -486,16 +653,18 @@ public class Booster implements Serializable {
   int loadRabitCheckpoint() throws XGBoostError {
     int[] out = new int[1];
     XGBoostJNI.checkCall(XGBoostJNI.XGBoosterLoadRabitCheckpoint(this.handle, out));
-    return out[0];
+    version = out[0];
+    return version;
   }
 
   /**
-   * Save the booster model into thread-local rabit checkpoint.
+   * Save the booster model into thread-local rabit checkpoint and increment the version.
    * This is only used in distributed training.
    * @throws XGBoostError
    */
   void saveRabitCheckpoint() throws XGBoostError {
     XGBoostJNI.checkCall(XGBoostJNI.XGBoosterSaveRabitCheckpoint(this.handle));
+    version += 1;
   }
 
   /**
@@ -503,7 +672,7 @@ public class Booster implements Serializable {
    * @param cacheMats The cached DMatrix.
    * @throws XGBoostError
    */
-  private void init(DMatrix[] cacheMats) throws XGBoostError {
+  protected void init(DMatrix[] cacheMats) throws XGBoostError {
     long[] handles = null;
     if (cacheMats != null) {
       handles = dmatrixsToHandles(cacheMats);
@@ -531,6 +700,7 @@ public class Booster implements Serializable {
   // making Booster serializable
   private void writeObject(java.io.ObjectOutputStream out) throws IOException {
     try {
+      out.writeInt(version);
       out.writeObject(this.toByteArray());
     } catch (XGBoostError ex) {
       ex.printStackTrace();
@@ -541,6 +711,8 @@ public class Booster implements Serializable {
   private void readObject(java.io.ObjectInputStream in)
           throws IOException, ClassNotFoundException {
     try {
+      this.init(null);
+      this.version = in.readInt();
       byte[] bytes = (byte[])in.readObject();
       initFromBytes(bytes);
     } catch (XGBoostError ex) {
@@ -566,5 +738,4 @@ public class Booster implements Serializable {
       handle = 0;
     }
   }
-
 }

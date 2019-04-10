@@ -6,6 +6,8 @@
 #include <xgboost/tree_updater.h>
 #include <dmlc/registry.h>
 
+#include "../common/host_device_vector.h"
+
 namespace dmlc {
 DMLC_REGISTRY_ENABLE(::xgboost::TreeUpdaterReg);
 }  // namespace dmlc
@@ -29,13 +31,12 @@ DMLC_REGISTRY_LINK_TAG(updater_colmaker);
 DMLC_REGISTRY_LINK_TAG(updater_skmaker);
 DMLC_REGISTRY_LINK_TAG(updater_refresh);
 DMLC_REGISTRY_LINK_TAG(updater_prune);
-DMLC_REGISTRY_LINK_TAG(updater_fast_hist);
+DMLC_REGISTRY_LINK_TAG(updater_quantile_hist);
 DMLC_REGISTRY_LINK_TAG(updater_histmaker);
 DMLC_REGISTRY_LINK_TAG(updater_sync);
 #ifdef XGBOOST_USE_CUDA
 DMLC_REGISTRY_LINK_TAG(updater_gpu);
 DMLC_REGISTRY_LINK_TAG(updater_gpu_hist);
-DMLC_REGISTRY_LINK_TAG(updater_gpu_hist_experimental);
-#endif
+#endif  // XGBOOST_USE_CUDA
 }  // namespace tree
 }  // namespace xgboost

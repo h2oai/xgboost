@@ -56,23 +56,24 @@ endfunction(set_default_configuration_release)
 
 # Generate nvcc compiler flags given a list of architectures
 # Also generates PTX for the most recent architecture for forwards compatibility
- function(format_gencode_flags flags out)
+function(format_gencode_flags flags out)
   # Set up architecture flags
-  if(NOT flags)
-    if((CUDA_VERSION_MAJOR EQUAL 9) OR (CUDA_VERSION_MAJOR GREATER 9))
+  if(NOT flags) 
+    if((CUDA_VERSION_MAJOR EQUAL 10) OR (CUDA_VERSION_MAJOR GREATER 10))
+        set(flags "35;50;52;60;61;70;75")
+    elseif(CUDA_VERSION_MAJOR EQUAL 9)
       set(flags "35;50;52;60;61;70")
     else()
       set(flags "35;50;52;60;61")
     endif()
   endif()
   # Generate SASS
-   foreach(ver ${flags})
-     set(${out} "${${out}}-gencode=arch=compute_${ver},code=sm_${ver};")
-   endforeach()
+  foreach(ver ${flags})
+    set(${out} "${${out}}-gencode arch=compute_${ver},code=sm_${ver};")
+  endforeach()
   # Generate PTX for last architecture
   list(GET flags -1 ver)
-  set(${out} "${${out}}-gencode=arch=compute_${ver},code=compute_${ver};")
-
+  set(${out} "${${out}}-gencode arch=compute_${ver},code=compute_${ver};")
   set(${out} "${${out}}" PARENT_SCOPE)
 endfunction(format_gencode_flags flags)
 
@@ -93,9 +94,9 @@ function(setup_rpackage_install_target rlib_target build_dir)
   install(CODE "file(WRITE \"${build_dir}/R-package/src/Makevars\" \"all:\")")
   install(CODE "file(WRITE \"${build_dir}/R-package/src/Makevars.win\" \"all:\")")
   set(XGB_DEPS_SCRIPT
-    "deps = setdiff(c('statar','data.table', 'magrittr', 'stringi'), rownames(installed.packages()));\
+    "deps = setdiff(c('data.table', 'magrittr', 'stringi'), rownames(installed.packages()));\
     if(length(deps)>0) install.packages(deps, repo = 'https://cloud.r-project.org/')")
   install(CODE "execute_process(COMMAND \"${LIBR_EXECUTABLE}\" \"-q\" \"-e\" \"${XGB_DEPS_SCRIPT}\")")
   install(CODE "execute_process(COMMAND \"${LIBR_EXECUTABLE}\" CMD INSTALL\
-    \"--no-multiarch\" \"${build_dir}/R-package\")")
+    \"--no-multiarch\" \"--build\" \"${build_dir}/R-package\")")
 endfunction(setup_rpackage_install_target)

@@ -14,13 +14,16 @@
 #include <functional>
 #include "./data.h"
 #include "./base.h"
+#include "../../src/common/host_device_vector.h"
+
 
 namespace xgboost {
+
 /*! \brief interface of objective function */
 class ObjFunction {
  public:
   /*! \brief virtual destructor */
-  virtual ~ObjFunction() {}
+  virtual ~ObjFunction() = default;
   /*!
    * \brief set configuration from pair iterators.
    * \param begin The beginning iterator.
@@ -41,10 +44,11 @@ class ObjFunction {
    * \param iteration current iteration number.
    * \param out_gpair output of get gradient, saves gradient and second order gradient in
    */
-  virtual void GetGradient(const std::vector<bst_float>& preds,
+  virtual void GetGradient(const HostDeviceVector<bst_float>& preds,
                            const MetaInfo& info,
                            int iteration,
-                           std::vector<bst_gpair>* out_gpair) = 0;
+                           HostDeviceVector<GradientPair>* out_gpair) = 0;
+
   /*! \return the default evaluation metric for the objective */
   virtual const char* DefaultEvalMetric() const = 0;
   // the following functions are optional, most of time default implementation is good enough
@@ -52,13 +56,14 @@ class ObjFunction {
    * \brief transform prediction values, this is only called when Prediction is called
    * \param io_preds prediction values, saves to this vector as well
    */
-  virtual void PredTransform(std::vector<bst_float> *io_preds) {}
+  virtual void PredTransform(HostDeviceVector<bst_float> *io_preds) {}
+
   /*!
    * \brief transform prediction values, this is only called when Eval is called,
    *  usually it redirect to PredTransform
    * \param io_preds prediction values, saves to this vector as well
    */
-  virtual void EvalTransform(std::vector<bst_float> *io_preds) {
+  virtual void EvalTransform(HostDeviceVector<bst_float> *io_preds) {
     this->PredTransform(io_preds);
   }
   /*!

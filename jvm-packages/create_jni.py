@@ -19,7 +19,7 @@ CONFIG = {
     "USE_AZURE": "OFF",
     "USE_S3": "OFF",
 
-    "PLUGIN_UPDATER_GPU": "OFF",
+    "USE_CUDA": "OFF",
     "JVM_BINDINGS": "ON"
 }
 
@@ -74,6 +74,7 @@ if __name__ == "__main__":
         os.environ["JAVA_HOME"] = subprocess.check_output(
             "/usr/libexec/java_home").strip().decode()
 
+    print("copying native library")
     # Select right library name
     library_name = {
         "win32": "xgboost4j.dll",

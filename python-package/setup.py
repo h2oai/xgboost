@@ -1,6 +1,7 @@
 # pylint: disable=invalid-name, exec-used
 """Setup xgboost package."""
 from __future__ import absolute_import
+import io
 import sys
 import os
 from setuptools import setup, find_packages
@@ -16,21 +17,28 @@ libpath_py = os.path.join(CURRENT_DIR, 'xgboost/libpath.py')
 libpath = {'__file__': libpath_py}
 exec(compile(open(libpath_py, "rb").read(), libpath_py, 'exec'), libpath, libpath)
 
-LIB_PATH = [os.path.relpath(libfile, CURRENT_DIR) for libfile in libpath['find_lib_path']()]
+LIB_PATH = []
+for libfile in libpath['find_lib_path']():
+    try:
+        relpath = os.path.relpath(libfile, CURRENT_DIR)
+        LIB_PATH.append(relpath)
+        break  # need only one
+    except ValueError:
+        continue
+
 print("Install libxgboost from: %s" % LIB_PATH)
 # Please use setup_pip.py for generating and deploying pip installation
 # detailed instruction in setup_pip.py
 setup(name='xgboost',
       version=open(os.path.join(CURRENT_DIR, 'xgboost/VERSION')).read().strip(),
-      # version='0.4a23',
       description="XGBoost Python Package",
-      long_description=open(os.path.join(CURRENT_DIR, 'README.rst')).read(),
+      long_description=io.open(os.path.join(CURRENT_DIR, 'README.rst'), encoding='utf-8').read(),
       install_requires=[
           'numpy',
           'scipy',
       ],
-      maintainer='Hongliang Liu',
-      maintainer_email='phunter.lau@gmail.com',
+      maintainer='Hyunsu Cho',
+      maintainer_email='chohyu01@cs.washington.edu',
       zip_safe=False,
       packages=find_packages(),
       # this will use MANIFEST.in during install where we specify additional files,

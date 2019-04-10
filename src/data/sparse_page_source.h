@@ -10,10 +10,13 @@
 #include <xgboost/base.h>
 #include <xgboost/data.h>
 #include <dmlc/threadediter.h>
-#include <vector>
+
 #include <algorithm>
+#include <memory>
 #include <string>
-#include "./sparse_batch_page.h"
+#include <vector>
+
+#include "sparse_page_writer.h"
 
 namespace xgboost {
 namespace data {
@@ -31,44 +34,55 @@ class SparsePageSource : public DataSource {
    * \brief Create source from cache files the cache_prefix.
    * \param cache_prefix The prefix of cache we want to solve.
    */
-  explicit SparsePageSource(const std::string& cache_prefix) noexcept(false);
+  explicit SparsePageSource(const std::string& cache_prefix,
+                            const std::string& page_type) noexcept(false);
   /*! \brief destructor */
-  virtual ~SparsePageSource();
+  ~SparsePageSource() override;
   // implement Next
   bool Next() override;
   // implement BeforeFirst
   void BeforeFirst() override;
   // implement Value
-  const RowBatch& Value() const override;
+  const SparsePage& Value() const override;
   /*!
    * \brief Create source by taking data from parser.
    * \param src source parser.
    * \param cache_info The cache_info of cache file location.
    */
-  static void Create(dmlc::Parser<uint32_t>* src,
+  static void CreateRowPage(dmlc::Parser<uint32_t>* src,
                      const std::string& cache_info);
   /*!
    * \brief Create source cache by copy content from DMatrix.
    * \param cache_info The cache_info of cache file location.
    */
-  static void Create(DMatrix* src,
+  static void CreateRowPage(DMatrix* src,
                      const std::string& cache_info);
+
+  /*!
+   * \brief Create source cache by copy content from DMatrix. Creates transposed column page, may be sorted or not.
+   * \param cache_info The cache_info of cache file location.
+   * \param sorted Whether columns should be pre-sorted
+   */
+  static void CreateColumnPage(DMatrix* src,
+                     const std::string& cache_info, bool sorted);
   /*!
    * \brief Check if the cache file already exists.
    * \param cache_info The cache prefix of files.
+   * \param page_type   Type of the page.
    * \return Whether cache file already exists.
    */
-  static bool CacheExist(const std::string& cache_info);
+  static bool CacheExist(const std::string& cache_info,
+                         const std::string& page_type);
   /*! \brief page size 32 MB */
   static const size_t kPageSize = 32UL << 20UL;
   /*! \brief magic number used to identify Page */
   static const int kMagic = 0xffffab02;
 
  private:
+  static void CreatePageFromDMatrix(DMatrix* src, const std::string& cache_info,
+                                    const std::string& page_type);
   /*! \brief number of rows */
   size_t base_rowid_;
-  /*! \brief temp data. */
-  RowBatch batch_;
   /*! \brief page currently on hold. */
   SparsePage *page_;
   /*! \brief internal clock ptr */
@@ -76,7 +90,7 @@ class SparsePageSource : public DataSource {
   /*! \brief file pointer to the row blob file. */
   std::vector<std::unique_ptr<dmlc::SeekStream> > files_;
   /*! \brief Sparse page format file. */
-  std::vector<std::unique_ptr<SparsePage::Format> > formats_;
+  std::vector<std::unique_ptr<SparsePageFormat> > formats_;
   /*! \brief internal prefetcher. */
   std::vector<std::unique_ptr<dmlc::ThreadedIter<SparsePage> > > prefetchers_;
 };

@@ -21,6 +21,7 @@ GradientBooster* GradientBooster::Create(
   }
   return (e->body)(cache_mats, base_margin);
 }
+
 }  // namespace xgboost
 
 namespace xgboost {

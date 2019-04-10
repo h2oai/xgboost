@@ -6,7 +6,7 @@ os:
   - linux
   - osx
 
-osx_image: xcode8
+osx_image: xcode9.3
 
 # Use Build Matrix to do lint and build seperately
 env:
@@ -24,6 +24,10 @@ env:
     - TASK=cmake_test
     # c++ test
     - TASK=cpp_test
+    # distributed test
+    - TASK=distributed_test
+    # address sanitizer test
+    - TASK=sanitizer_test
 
 matrix:
   exclude:
@@ -37,15 +41,21 @@ matrix:
       env: TASK=python_lightweight_test
     - os: osx
       env: TASK=cpp_test
+    - os: osx
+      env: TASK=distributed_test
+    - os: osx
+      env: TASK=sanitizer_test
 
 # dependent apt packages
 addons:
   apt:
     sources:
+      - llvm-toolchain-trusty-5.0
       - ubuntu-toolchain-r-test
       - george-edison55-precise-backports
     packages:
-      - cmake
+      - clang
+      - clang-tidy-5.0
       - cmake-data
       - doxygen
       - wget
@@ -54,6 +64,15 @@ addons:
       - graphviz
       - gcc-4.8
       - g++-4.8
+      - gcc-7
+      - g++-7
+  homebrew:
+    packages:
+      - gcc@7
+      - graphviz
+      - openssl
+      - libgit2
+    update: true
 
 before_install:
   - source dmlc-core/scripts/travis/travis_setup_env.sh

@@ -43,7 +43,7 @@ EOF
 
 # Build only basic package
 echo "Building package...."
-mvn ${MVN_OPTS} -Dmaven.test.skip=true -DskipTests clean package -am > build-log-${OS}-${XGB_BACKEND}-$(date +%s).log
+mvn ${MVN_OPTS} -Dmaven.test.skip=true -DskipTests clean package -am | tee build-log-${OS}-${XGB_BACKEND}-$(date +%s).log
 
 # Create output
 rm -rf "${OUTDIR}"

@@ -78,17 +78,8 @@ cd ../../
 	- CentOS one is used for libgomp v4 flavours
 	- Ubuntu one is used for libgomp v3 flavours
 - following steps use `ompv4`, if you wish to build `minimal`,`ompv3` or `gpuv*`, replace `ompv4` with desired flavour
-- **step 0/3** - clean and patch
+- **step 0/3** - clean
 	- `make -f ci/Makefile.jenkins mrproper`
-	- now patch dmlc-core:
-
-```[bash]
-cd dmlc-core/
-wget https://raw.githubusercontent.com/h2oai/xgboost/master/patches/01_dmlc_core_imports.patch
-git apply 01_dmlc_core_imports.patch
-cd ..
-```
-
 - **step 1/3** - build XGBoost lib:
 	-  `make -f ci/Makefile.jenkins build_ompv4_in_docker`
 	-  artifacts can be found in `lib/` dir
@@ -99,7 +90,7 @@ cd ..
 	- `make -f ci/Makefile.jenkins TARGET_OS=linux jar_ompv4_in_docker jar_package_ompv4_in_docker`
 	- artifacts can be found in `ci-build/xgboost4j-linux-ompv4/target/`
 - building in one line:
-	- `make -f ci/Makefile.jenkins TARGET_OS=linux mrproper build_ompv4_in_docker whl_ompv4_in_docker jar_ompv4_in_docker jar_package_ompv4_in_docker`
+	- `make -f ci/Makefile.jenkins TARGET_OS=linux mrproper build_ompv4_in_docker whls_ompv4_in_docker jar_ompv4_in_docker jar_package_ompv4_in_docker`
 
 ## Building Behind Proxy ##
 If need `mvn` in docker containers to use http/https proxy, add `MVN_OPTS="-DproxySet=true -Dhttp.proxyHost=yourHttpProxyHost -Dhttp.proxyPort=yourHttpProxyPort -Dhttps.proxyHost=yourHttpsProxyHost -Dhttps.proxyPort=yourHttpsProxyPort"` option to the to the `make` calls.

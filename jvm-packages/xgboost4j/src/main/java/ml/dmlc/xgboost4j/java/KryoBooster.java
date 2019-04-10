@@ -37,29 +37,32 @@ public class KryoBooster extends Booster implements KryoSerializable {
     super(true);
   }
 
+
   @Override
   public void write(Kryo kryo, Output output) {
-    byte[] serObj;
     try {
-      serObj = this.toByteArray();
+      byte[] serObj = this.toByteArray();
+      int serObjSize = serObj.length;
+      output.writeInt(serObjSize);
+      output.writeInt(version);
+      output.write(serObj);
     } catch (XGBoostError ex) {
+      logger.error(ex.getMessage(), ex);
       throw new RuntimeException("Booster serialization failed", ex);
     }
-    int serObjSize = serObj.length;
-    logger.debug("==== serialized obj size " + serObjSize);
-    output.writeInt(serObjSize);
-    output.write(serObj);
   }
 
   @Override
   public void read(Kryo kryo, Input input) {
-    int serObjSize = input.readInt();
-    logger.debug("==== the size of the object: " + serObjSize);
-    byte[] bytes = new byte[serObjSize];
-    input.readBytes(bytes);
     try {
-      initFromBytes(bytes);
+      this.init(null);
+      int serObjSize = input.readInt();
+      this.version = input.readInt();
+      byte[] bytes = new byte[serObjSize];
+      input.readBytes(bytes);
+      XGBoostJNI.checkCall(XGBoostJNI.XGBoosterLoadModelFromBuffer(this.handle, bytes));
     } catch (XGBoostError ex) {
+      logger.error(ex.getMessage(), ex);
       throw new RuntimeException("Booster deserialization failed", ex);
     }
   }

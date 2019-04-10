@@ -48,6 +48,7 @@ public class KryoBooster extends Booster implements KryoSerializable {
       output.write(serObj);
     } catch (XGBoostError ex) {
       logger.error(ex.getMessage(), ex);
+      throw new RuntimeException("Booster serialization failed", ex);
     }
   }
 
@@ -62,6 +63,7 @@ public class KryoBooster extends Booster implements KryoSerializable {
       XGBoostJNI.checkCall(XGBoostJNI.XGBoosterLoadModelFromBuffer(this.handle, bytes));
     } catch (XGBoostError ex) {
       logger.error(ex.getMessage(), ex);
+      throw new RuntimeException("Booster deserialization failed", ex);
     }
   }
 

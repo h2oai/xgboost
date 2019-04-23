@@ -69,8 +69,8 @@ mvn \
 
 ```[bash]
 cd ci/docker
-docker build -t docker.h2o.ai/opsh2oai/h2o-3-xgboost-build-centos --build-arg FROM_IMAGE=nvidia/cuda:8.0-devel-centos7 -f Dockerfile-gpu-centos-base .
-docker build -t docker.h2o.ai/opsh2oai/h2o-3-xgboost-build-ubuntu14 -f Dockerfile-gpu-ubuntu14 .
+docker build -t harbor.h2o.ai/opsh2oai/h2o-3-xgboost-build-centos --build-arg FROM_IMAGE=nvidia/cuda:8.0-devel-centos7 -f Dockerfile-gpu-centos-base .
+docker build -t harbor.h2o.ai/opsh2oai/h2o-3-xgboost-build-ubuntu14 -f Dockerfile-gpu-ubuntu14 .
 cd ../../
 ```
 	

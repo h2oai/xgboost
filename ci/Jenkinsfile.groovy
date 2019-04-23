@@ -159,7 +159,7 @@ ansiColor('xterm') {
             if (targetNexus != 'none') {
                 node('master') {
                     buildSummary.stageWithSummary('Nexus Deploy') {
-                        def awscliDockerImage = 'docker.h2o.ai/awscli'
+                        def awscliDockerImage = 'harbor.h2o.ai/opsh2oai/awscli'
                         sh "docker pull ${awscliDockerImage}"
 
                         dir ('build-lib') {
@@ -189,8 +189,8 @@ ansiColor('xterm') {
                             }
                         }
                         if (targetNexus == TARGET_NEXUS_PUBLIC) {
-                            docker.withRegistry("https://docker.h2o.ai") {
-                                docker.image('docker.h2o.ai/opsh2oai/hub').inside("--init -v /home/jenkins/.ssh:/home/jenkins/.ssh:ro -v /home/jenkins/.gitconfig:/home/jenkins/.gitconfig:ro") {
+                            docker.withRegistry("https://harbor.h2o.ai") {
+                                docker.image('harbor.h2o.ai/opsh2oai/hub').inside("--init -v /home/jenkins/.ssh:/home/jenkins/.ssh:ro -v /home/jenkins/.gitconfig:/home/jenkins/.gitconfig:ro") {
                                     buildSummary.stageWithSummary("GitHub Release") {
                                         withCredentials([string(credentialsId: 'h2o-ops-personal-auth-token', variable: 'GITHUB_TOKEN')]) {
                                             checkout scm
@@ -223,9 +223,9 @@ private void s3Upload(final String folder, final String file, final String targe
     if (targetNexus == TARGET_NEXUS_PUBLIC) {
         s3Root = "s3://h2o-release/xgboost/${env.SAFE_BRANCH_NAME}/${XGB_VERSION}"
     }
-    docker.withRegistry("https://docker.h2o.ai") {
+    docker.withRegistry("https://harbor.h2o.ai") {
         withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', accessKeyVariable: 'AWS_ACCESS_KEY_ID', credentialsId: 'AWS S3 Credentials', secretKeyVariable: 'AWS_SECRET_ACCESS_KEY']]) {
-            docker.image('docker.h2o.ai/awscli').inside("--init -e AWS_ACCESS_KEY_ID=\${AWS_ACCESS_KEY_ID} -e AWS_SECRET_ACCESS_KEY=\${AWS_SECRET_ACCESS_KEY}") {
+            docker.image('harbor.h2o.ai/opsh2oai/awscli').inside("--init -e AWS_ACCESS_KEY_ID=\${AWS_ACCESS_KEY_ID} -e AWS_SECRET_ACCESS_KEY=\${AWS_SECRET_ACCESS_KEY}") {
                 sh "aws s3 sync ${folder} ${s3Root} --exclude '*' --include '${file}'"
             }
         }

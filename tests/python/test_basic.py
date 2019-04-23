@@ -1,12 +1,36 @@
 # -*- coding: utf-8 -*-
+import sys
+from contextlib import contextmanager
+try:
+    # python 2
+    from StringIO import StringIO
+except ImportError:
+    # python 3
+    from io import StringIO
 import numpy as np
 import xgboost as xgb
 import unittest
-import itertools
 import json
 
 dpath = 'demo/data/'
 rng = np.random.RandomState(1994)
+
+
+@contextmanager
+def captured_output():
+    """
+    Reassign stdout temporarily in order to test printed statements
+    Taken from: https://stackoverflow.com/questions/4219717/how-to-assert-output-with-nosetest-unittest-in-python
+
+    Also works for pytest.
+    """
+    new_out, new_err = StringIO(), StringIO()
+    old_out, old_err = sys.stdout, sys.stderr
+    try:
+        sys.stdout, sys.stderr = new_out, new_err
+        yield sys.stdout, sys.stderr
+    finally:
+        sys.stdout, sys.stderr = old_out, old_err
 
 
 class TestBasic(unittest.TestCase):
@@ -14,7 +38,8 @@ class TestBasic(unittest.TestCase):
     def test_basic(self):
         dtrain = xgb.DMatrix(dpath + 'agaricus.txt.train')
         dtest = xgb.DMatrix(dpath + 'agaricus.txt.test')
-        param = {'max_depth': 2, 'eta': 1, 'silent': 1, 'objective': 'binary:logistic'}
+        param = {'max_depth': 2, 'eta': 1, 'silent': 1,
+                 'objective': 'binary:logistic'}
         # specify validations set to watch performance
         watchlist = [(dtest, 'eval'), (dtrain, 'train')]
         num_round = 2
@@ -22,7 +47,8 @@ class TestBasic(unittest.TestCase):
         # this is prediction
         preds = bst.predict(dtest)
         labels = dtest.get_label()
-        err = sum(1 for i in range(len(preds)) if int(preds[i] > 0.5) != labels[i]) / float(len(preds))
+        err = sum(1 for i in range(len(preds))
+                  if int(preds[i] > 0.5) != labels[i]) / float(len(preds))
         # error must be smaller than 10%
         assert err < 0.1
 
@@ -37,10 +63,30 @@ class TestBasic(unittest.TestCase):
         # assert they are the same
         assert np.sum(np.abs(preds2 - preds)) == 0
 
+    def test_np_view(self):
+        # Sliced Float32 array
+        y = np.array([12, 34, 56], np.float32)[::2]
+        from_view = xgb.DMatrix([], label=y).get_label()
+        from_array = xgb.DMatrix([], label=y + 0).get_label()
+        assert (from_view.shape == from_array.shape)
+        assert (from_view == from_array).all()
+
+        # Sliced UInt array
+        z = np.array([12, 34, 56], np.uint32)[::2]
+        dmat = xgb.DMatrix([])
+        dmat.set_uint_info('root_index', z)
+        from_view = dmat.get_uint_info('root_index')
+        dmat = xgb.DMatrix([])
+        dmat.set_uint_info('root_index', z + 0)
+        from_array = dmat.get_uint_info('root_index')
+        assert (from_view.shape == from_array.shape)
+        assert (from_view == from_array).all()
+
     def test_record_results(self):
         dtrain = xgb.DMatrix(dpath + 'agaricus.txt.train')
         dtest = xgb.DMatrix(dpath + 'agaricus.txt.test')
-        param = {'max_depth': 2, 'eta': 1, 'silent': 1, 'objective': 'binary:logistic'}
+        param = {'max_depth': 2, 'eta': 1, 'silent': 1,
+                 'objective': 'binary:logistic'}
         # specify validations set to watch performance
         watchlist = [(dtest, 'eval'), (dtrain, 'train')]
         num_round = 2
@@ -64,7 +110,8 @@ class TestBasic(unittest.TestCase):
         # this is prediction
         preds = bst.predict(dtest)
         labels = dtest.get_label()
-        err = sum(1 for i in range(len(preds)) if preds[i] != labels[i]) / float(len(preds))
+        err = sum(1 for i in range(len(preds))
+                  if preds[i] != labels[i]) / float(len(preds))
         # error must be smaller than 10%
         assert err < 0.1
 
@@ -95,6 +142,8 @@ class TestBasic(unittest.TestCase):
         dm = xgb.DMatrix(data)
         dm.feature_names = list('abcde')
         assert dm.feature_names == list('abcde')
+
+        assert dm.slice([0, 1]).feature_names == dm.feature_names
 
         dm.feature_types = 'q'
         assert dm.feature_types == list('qqqqq')
@@ -142,35 +191,6 @@ class TestBasic(unittest.TestCase):
             # different feature name must raises error
             dm = xgb.DMatrix(dummy, feature_names=list('abcde'))
             self.assertRaises(ValueError, bst.predict, dm)
-
-    def test_feature_importances(self):
-        data = np.random.randn(100, 5)
-        target = np.array([0, 1] * 50)
-
-        features = ['Feature1', 'Feature2', 'Feature3', 'Feature4', 'Feature5']
-
-        dm = xgb.DMatrix(data, label=target,
-                         feature_names=features)
-        params = {'objective': 'multi:softprob',
-                  'eval_metric': 'mlogloss',
-                  'eta': 0.3,
-                  'num_class': 3}
-
-        bst = xgb.train(params, dm, num_boost_round=10)
-
-        # number of feature importances should == number of features
-        scores1 = bst.get_score()
-        scores2 = bst.get_score(importance_type='weight')
-        scores3 = bst.get_score(importance_type='cover')
-        scores4 = bst.get_score(importance_type='gain')
-        assert len(scores1) == len(features)
-        assert len(scores2) == len(features)
-        assert len(scores3) == len(features)
-        assert len(scores4) == len(features)
-
-        # check backwards compatibility of get_fscore
-        fscores = bst.get_fscore()
-        assert scores1 == fscores
 
     def test_dump(self):
         data = np.random.randn(100, 2)
@@ -253,7 +273,8 @@ class TestBasic(unittest.TestCase):
 
     def test_cv(self):
         dm = xgb.DMatrix(dpath + 'agaricus.txt.train')
-        params = {'max_depth': 2, 'eta': 1, 'silent': 1, 'objective': 'binary:logistic'}
+        params = {'max_depth': 2, 'eta': 1, 'silent': 1,
+                  'objective': 'binary:logistic'}
 
         # return np.ndarray
         cv = xgb.cv(params, dm, num_boost_round=10, nfold=10, as_pandas=False)
@@ -262,32 +283,61 @@ class TestBasic(unittest.TestCase):
 
     def test_cv_no_shuffle(self):
         dm = xgb.DMatrix(dpath + 'agaricus.txt.train')
-        params = {'max_depth': 2, 'eta': 1, 'silent': 1, 'objective': 'binary:logistic'}
+        params = {'max_depth': 2, 'eta': 1, 'silent': 1,
+                  'objective': 'binary:logistic'}
 
         # return np.ndarray
-        cv = xgb.cv(params, dm, num_boost_round=10, shuffle=False, nfold=10, as_pandas=False)
+        cv = xgb.cv(params, dm, num_boost_round=10, shuffle=False, nfold=10,
+                    as_pandas=False)
         assert isinstance(cv, dict)
         assert len(cv) == (4)
 
+    def test_cv_explicit_fold_indices(self):
+        dm = xgb.DMatrix(dpath + 'agaricus.txt.train')
+        params = {'max_depth': 2, 'eta': 1, 'silent': 1, 'objective':
+                  'binary:logistic'}
+        folds = [
+            # Train        Test
+            ([1, 3], [5, 8]),
+            ([7, 9], [23, 43]),
+        ]
 
-def test_contributions():
-    dtrain = xgb.DMatrix(dpath + 'agaricus.txt.train')
-    dtest = xgb.DMatrix(dpath + 'agaricus.txt.test')
+        # return np.ndarray
+        cv = xgb.cv(params, dm, num_boost_round=10, folds=folds,
+                    as_pandas=False)
+        assert isinstance(cv, dict)
+        assert len(cv) == (4)
 
-    def test_fn(max_depth, num_rounds):
-        # train
-        params = {'max_depth': max_depth, 'eta': 1, 'silent': 1}
-        bst = xgb.train(params, dtrain, num_boost_round=num_rounds)
+    def test_cv_explicit_fold_indices_labels(self):
+        params = {'max_depth': 2, 'eta': 1, 'verbosity': 0, 'objective':
+                  'reg:linear'}
+        N = 100
+        F = 3
+        dm = xgb.DMatrix(data=np.random.randn(N, F), label=np.arange(N))
+        folds = [
+            # Train        Test
+            ([1, 3], [5, 8]),
+            ([7, 9], [23, 43, 11]),
+        ]
 
-        # predict
-        preds = bst.predict(dtest)
-        contribs = bst.predict(dtest, pred_contribs=True)
+        # Use callback to log the test labels in each fold
+        def cb(cbackenv):
+            print([fold.dtest.get_label() for fold in cbackenv.cvfolds])
 
-        # result should be (number of features + BIAS) * number of rows
-        assert contribs.shape == (dtest.num_row(), dtest.num_col() + 1)
+        # Run cross validation and capture standard out to test callback result
+        with captured_output() as (out, err):
+            xgb.cv(
+                params, dm, num_boost_round=1, folds=folds, callbacks=[cb],
+                as_pandas=False
+            )
+            output = out.getvalue().strip()
+        solution = ('[array([5., 8.], dtype=float32), array([23., 43., 11.],' +
+                    ' dtype=float32)]')
+        assert output == solution
 
-        # sum of contributions should be same as predictions
-        np.testing.assert_array_almost_equal(np.sum(contribs, axis=1), preds)
-
-    for max_depth, num_rounds in itertools.product(range(0, 3), range(1, 5)):
-        yield test_fn, max_depth, num_rounds
+    def test_get_info(self):
+        dtrain = xgb.DMatrix(dpath + 'agaricus.txt.train')
+        dtrain.get_float_info('label')
+        dtrain.get_float_info('weight')
+        dtrain.get_float_info('base_margin')
+        dtrain.get_uint_info('root_index')

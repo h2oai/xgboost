@@ -22,10 +22,11 @@
 #'   \item \code{gamma} minimum loss reduction required to make a further partition on a leaf node of the tree. the larger, the more conservative the algorithm will be. 
 #'   \item \code{max_depth} maximum depth of a tree. Default: 6
 #'   \item \code{min_child_weight} minimum sum of instance weight (hessian) needed in a child. If the tree partition step results in a leaf node with the sum of instance weight less than min_child_weight, then the building process will give up further partitioning. In linear regression mode, this simply corresponds to minimum number of instances needed to be in each node. The larger, the more conservative the algorithm will be. Default: 1
-#'   \item \code{subsample} subsample ratio of the training instance. Setting it to 0.5 means that xgboost randomly collected half of the data instances to grow trees and this will prevent overfitting. It makes computation shorter (because less data to analyse). It is advised to use this parameter with \code{eta} and increase \code{nround}. Default: 1 
+#'   \item \code{subsample} subsample ratio of the training instance. Setting it to 0.5 means that xgboost randomly collected half of the data instances to grow trees and this will prevent overfitting. It makes computation shorter (because less data to analyse). It is advised to use this parameter with \code{eta} and increase \code{nrounds}. Default: 1 
 #'   \item \code{colsample_bytree} subsample ratio of columns when constructing each tree. Default: 1
 #'   \item \code{num_parallel_tree} Experimental parameter. number of trees to grow per round. Useful to test Random Forest through Xgboost (set \code{colsample_bytree < 1}, \code{subsample  < 1}  and \code{round = 1}) accordingly. Default: 1
 #'   \item \code{monotone_constraints} A numerical vector consists of \code{1}, \code{0} and \code{-1} with its length equals to the number of features in the training data. \code{1} is increasing, \code{-1} is decreasing and \code{0} is no constraint.
+#'   \item \code{interaction_constraints} A list of vectors specifying feature indices of permitted interactions. Each item of the list represents one permitted interaction where specified features are allowed to interact with each other. Feature index values should start from \code{0} (\code{0} references the first column).  Leave argument unspecified for no interaction constraints.
 #' }
 #' 
 #' 2.2. Parameter for Linear Booster
@@ -121,12 +122,13 @@
 #'   \itemize{
 #'      \item \code{rmse} root mean square error. \url{http://en.wikipedia.org/wiki/Root_mean_square_error}
 #'      \item \code{logloss} negative log-likelihood. \url{http://en.wikipedia.org/wiki/Log-likelihood}
-#'      \item \code{mlogloss} multiclass logloss. \url{https://www.kaggle.com/wiki/MultiClassLogLoss/}
+#'      \item \code{mlogloss} multiclass logloss. \url{http://wiki.fast.ai/index.php/Log_Loss}
 #'      \item \code{error} Binary classification error rate. It is calculated as \code{(# wrong cases) / (# all cases)}.
 #'            By default, it uses the 0.5 threshold for predicted values to define negative and positive instances.
 #'            Different threshold (e.g., 0.) could be specified as "error@0."
 #'      \item \code{merror} Multiclass classification error rate. It is calculated as \code{(# wrong cases) / (# all cases)}.
 #'      \item \code{auc} Area under the curve. \url{http://en.wikipedia.org/wiki/Receiver_operating_characteristic#'Area_under_curve} for ranking evaluation.
+#'      \item \code{aucpr} Area under the PR curve. \url{https://en.wikipedia.org/wiki/Precision_and_recall} for ranking evaluation.
 #'      \item \code{ndcg} Normalized Discounted Cumulative Gain (for ranking task). \url{http://en.wikipedia.org/wiki/NDCG}
 #'   }
 #' 
@@ -162,6 +164,7 @@
 #'         (only available with early stopping).
 #'   \item \code{feature_names} names of the training dataset features
 #'         (only when comun names were defined in training data).
+#'   \item \code{nfeatures} number of features in training data.
 #' }
 #' 
 #' @seealso
@@ -169,6 +172,11 @@
 #' \code{\link{predict.xgb.Booster}},
 #' \code{\link{xgb.cv}}
 #' 
+#' @references
+#'
+#' Tianqi Chen and Carlos Guestrin, "XGBoost: A Scalable Tree Boosting System",
+#' 22nd SIGKDD Conference on Knowledge Discovery and Data Mining, 2016, \url{https://arxiv.org/abs/1603.02754}
+#'
 #' @examples
 #' data(agaricus.train, package='xgboost')
 #' data(agaricus.test, package='xgboost')
@@ -346,8 +354,8 @@ xgb.train <- function(params = list(), data, nrounds, watchlist = list(),
     if (inherits(xgb_model, 'xgb.Booster') &&
         !is_update &&
         !is.null(xgb_model$evaluation_log) &&
-        all.equal(colnames(evaluation_log),
-                  colnames(xgb_model$evaluation_log))) {
+        isTRUE(all.equal(colnames(evaluation_log),
+                         colnames(xgb_model$evaluation_log)))) {
       evaluation_log <- rbindlist(list(xgb_model$evaluation_log, evaluation_log))
     }
     bst$evaluation_log <- evaluation_log
@@ -358,6 +366,7 @@ xgb.train <- function(params = list(), data, nrounds, watchlist = list(),
   bst$callbacks <- callbacks
   if (!is.null(colnames(dtrain)))
     bst$feature_names <- colnames(dtrain)
-  
+  bst$nfeatures <- ncol(dtrain)
+
   return(bst)
 }

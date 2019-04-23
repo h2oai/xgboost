@@ -74,6 +74,19 @@ check.booster.params <- function(params, ...) {
         params[['monotone_constraints']] = vec2str
   }
   
+  # interaction constraints parser (convert from list of column indices to string)
+  if (!is.null(params[['interaction_constraints']]) && 
+      typeof(params[['interaction_constraints']]) != "character"){
+    # check input class
+    if (class(params[['interaction_constraints']]) != 'list') stop('interaction_constraints should be class list')
+    if (!all(unique(sapply(params[['interaction_constraints']], class)) %in% c('numeric','integer'))) {
+      stop('interaction_constraints should be a list of numeric/integer vectors')
+    }
+
+    # recast parameter as string
+    interaction_constraints <- sapply(params[['interaction_constraints']], function(x) paste0('[', paste(x, collapse=','), ']'))
+    params[['interaction_constraints']] <- paste0('[', paste(interaction_constraints, collapse=','), ']')
+  }
   return(params)
 }
 
@@ -262,7 +275,8 @@ xgb.createFolds <- function(y, k = 10)
       ## add enough random integers to get  length(seqVector) == numInClass[i]
       if (numInClass[i] %% k > 0) seqVector <- c(seqVector, sample.int(k, numInClass[i] %% k))
       ## shuffle the integers for fold assignment and assign to this classes's data
-      foldVector[y == dimnames(numInClass)$y[i]] <- sample(seqVector)
+      ## seqVector[sample.int(length(seqVector))] is used to handle length(seqVector) == 1
+      foldVector[y == dimnames(numInClass)$y[i]] <- seqVector[sample.int(length(seqVector))]
     }
   } else {
     foldVector <- seq(along = y)

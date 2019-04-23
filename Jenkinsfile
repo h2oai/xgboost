@@ -3,13 +3,21 @@
 // Jenkins pipeline
 // See documents at https://jenkins.io/doc/book/pipeline/jenkinsfile/
 
+import groovy.transform.Field
+
+/* Unrestricted tasks: tasks that do NOT generate artifacts */
+
 // Command to run command inside a docker container
-dockerRun = 'tests/ci_build/ci_build.sh'
+def dockerRun = 'tests/ci_build/ci_build.sh'
+// Utility functions
+@Field
+def utils
 
 def buildMatrix = [
-    [ "enabled": true,  "os" : "linux", "withGpu": true,  "withOmp": true, "pythonVersion": "2.7" ],
-    [ "enabled": true,  "os" : "linux", "withGpu": false, "withOmp": true, "pythonVersion": "2.7" ],
-    [ "enabled": false, "os" : "osx",   "withGpu": false, "withOmp": false, "pythonVersion": "2.7" ],
+    [ "enabled": true,  "os" : "linux", "withGpu": true, "withNccl": true,  "withOmp": true, "pythonVersion": "2.7", "cudaVersion": "9.2", "multiGpu": true],
+    [ "enabled": true,  "os" : "linux", "withGpu": true, "withNccl": true,  "withOmp": true, "pythonVersion": "2.7", "cudaVersion": "9.2" ],
+    [ "enabled": true,  "os" : "linux", "withGpu": true, "withNccl": true,  "withOmp": true, "pythonVersion": "2.7", "cudaVersion": "8.0" ],
+    [ "enabled": true,  "os" : "linux", "withGpu": true, "withNccl": false, "withOmp": true, "pythonVersion": "2.7", "cudaVersion": "8.0" ],
 ]
 
 pipeline {
@@ -26,126 +34,94 @@ pipeline {
 
     // Build stages
     stages {
-        stage('Get sources') {
-            agent any
+        stage('Jenkins: Get sources') {
+            agent {
+                label 'unrestricted'
+            }
             steps {
-                checkoutSrcs()
+                script {
+                    utils = load('tests/ci_build/jenkins_tools.Groovy')
+                    utils.checkoutSrcs()
+                }
                 stash name: 'srcs', excludes: '.git/'
                 milestone label: 'Sources ready', ordinal: 1
             }
         }
-        stage('Build & Test') {
+        stage('Jenkins: Build & Test') {
             steps {
                 script {
                     parallel (buildMatrix.findAll{it['enabled']}.collectEntries{ c ->
-                        def buildName = getBuildName(c)
-                        buildFactory(buildName, c)
-                    })
+                        def buildName = utils.getBuildName(c)
+                        utils.buildFactory(buildName, c, false, this.&buildPlatformCmake)
+                    } + [ "clang-tidy" : { buildClangTidyJob() } ])
                 }
             }
         }
     }
 }
 
-// initialize source codes
-def checkoutSrcs() {
-  retry(5) {
-    try {
-      timeout(time: 2, unit: 'MINUTES') {
-        checkout scm
-        sh 'git submodule update --init'
-      }
-    } catch (exc) {
-      deleteDir()
-      error "Failed to fetch source codes"
-    }
-  }
-}
-
-/**
- * Creates cmake and make builds
- */
-def buildFactory(buildName, conf) {
-    def os = conf["os"]
-    def nodeReq = conf["withGpu"] ? "${os} && gpu" : "${os}"
-    def dockerTarget = conf["withGpu"] ? "gpu" : "cpu"
-    [ ("cmake_${buildName}") : { buildPlatformCmake("cmake_${buildName}", conf, nodeReq, dockerTarget) },
-      ("make_${buildName}") : { buildPlatformMake("make_${buildName}", conf, nodeReq, dockerTarget) }
-    ]
-}
-
 /**
  * Build platform and test it via cmake.
  */
 def buildPlatformCmake(buildName, conf, nodeReq, dockerTarget) {
-    def opts = cmakeOptions(conf)
+    def opts = utils.cmakeOptions(conf)
     // Destination dir for artifacts
     def distDir = "dist/${buildName}"
+    def dockerArgs = ""
+    if (conf["withGpu"]) {
+        dockerArgs = "--build-arg CUDA_VERSION=" + conf["cudaVersion"]
+    }
+    def test_suite = conf["withGpu"] ? (conf["multiGpu"] ? "mgpu" : "gpu") : "cpu"
     // Build node - this is returned result
-    node(nodeReq) {
-        unstash name: 'srcs'
-        echo """
-        |===== XGBoost CMake build =====
-        |  dockerTarget: ${dockerTarget}
-        |  cmakeOpts   : ${opts}
-        |=========================
-        """.stripMargin('|')
-        // Invoke command inside docker
-        sh """
-        ${dockerRun} ${dockerTarget} tests/ci_build/build_via_cmake.sh ${opts}
-        ${dockerRun} ${dockerTarget} tests/ci_build/test_${dockerTarget}.sh
-        ${dockerRun} ${dockerTarget} bash -c "cd python-package; python setup.py bdist_wheel"
-        rm -rf "${distDir}"; mkdir -p "${distDir}/py"
-        cp xgboost "${distDir}"
-        cp -r lib "${distDir}"
-        cp -r python-package/dist "${distDir}/py"
-        """
-        archiveArtifacts artifacts: "${distDir}/**/*.*", allowEmptyArchive: true
+    retry(1) {
+        node(nodeReq) {
+            unstash name: 'srcs'
+            echo """
+            |===== XGBoost CMake build =====
+            |  dockerTarget: ${dockerTarget}
+            |  cmakeOpts   : ${opts}
+            |=========================
+            """.stripMargin('|')
+            // Invoke command inside docker
+            sh """
+            ${dockerRun} ${dockerTarget} ${dockerArgs} tests/ci_build/build_via_cmake.sh ${opts}
+            ${dockerRun} ${dockerTarget} ${dockerArgs} tests/ci_build/test_${test_suite}.sh
+            """
+            if (!conf["multiGpu"]) {
+                sh """
+                ${dockerRun} ${dockerTarget} ${dockerArgs} bash -c "cd python-package; rm -f dist/*; python setup.py bdist_wheel --universal"
+                rm -rf "${distDir}"; mkdir -p "${distDir}/py"
+                cp xgboost "${distDir}"
+                cp -r python-package/dist "${distDir}/py"
+                # Test the wheel for compatibility on a barebones CPU container
+                ${dockerRun} release ${dockerArgs} bash -c " \
+                    pip install --user python-package/dist/xgboost-*-none-any.whl && \
+		    pytest -v --fulltrace -s tests/python"
+                # Test the wheel for compatibility on CUDA 10.0 container
+                ${dockerRun} gpu --build-arg CUDA_VERSION=10.0 bash -c " \
+                    pip install --user python-package/dist/xgboost-*-none-any.whl && \
+		    pytest -v -s --fulltrace -m '(not mgpu) and (not slow)' tests/python-gpu"
+                """
+            }
+        }
     }
 }
 
 /**
- * Build platform via make
+ * Run a clang-tidy job on a GPU machine
  */
-def buildPlatformMake(buildName, conf, nodeReq, dockerTarget) {
-    def opts = makeOptions(conf)
-    // Destination dir for artifacts
-    def distDir = "dist/${buildName}"
-    // Build node
+def buildClangTidyJob() {
+    def nodeReq = "linux && gpu && unrestricted"
     node(nodeReq) {
         unstash name: 'srcs'
-        echo """
-        |===== XGBoost Make build =====
-        |  dockerTarget: ${dockerTarget}
-        |  makeOpts    : ${opts}
-        |=========================
-        """.stripMargin('|')
+        echo "Running clang-tidy job..."
         // Invoke command inside docker
+        // Install Google Test and Python yaml
+        dockerTarget = "clang_tidy"
+        dockerArgs = "--build-arg CUDA_VERSION=9.2"
         sh """
-        ${dockerRun} ${dockerTarget} tests/ci_build/build_via_make.sh ${opts}
+        ${dockerRun} ${dockerTarget} ${dockerArgs} tests/ci_build/clang_tidy.sh
         """
-    }
-}
-
-def makeOptions(conf) {
-    return ([
-        conf["withGpu"] ? 'PLUGIN_UPDATER_GPU=ON' : 'PLUGIN_UPDATER_GPU=OFF',
-        conf["withOmp"] ? 'USE_OPENMP=1' : 'USE_OPENMP=0']
-        ).join(" ")
-}
-
-
-def cmakeOptions(conf) {
-    return ([
-        conf["withGpu"] ? '-DPLUGIN_UPDATER_GPU:BOOL=ON' : '',
-        conf["withOmp"] ? '-DOPEN_MP:BOOL=ON' : '']
-        ).join(" ")
-}
-
-def getBuildName(conf) {
-    def gpuLabel = conf['withGpu'] ? "_gpu" : "_cpu"
-    def ompLabel = conf['withOmp'] ? "_omp" : ""
-    def pyLabel = "_py${conf['pythonVersion']}"
-    return "${conf['os']}${gpuLabel}${ompLabel}${pyLabel}"
-}
+      }
+  }
 

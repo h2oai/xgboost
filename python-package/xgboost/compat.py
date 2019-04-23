@@ -33,14 +33,35 @@ except ImportError:
 # pandas
 try:
     from pandas import DataFrame
+    from pandas import MultiIndex
     PANDAS_INSTALLED = True
 except ImportError:
+
+    class MultiIndex(object):
+        """ dummy for pandas.MultiIndex """
+        pass
 
     class DataFrame(object):
         """ dummy for pandas.DataFrame """
         pass
 
     PANDAS_INSTALLED = False
+
+# dt
+try:
+    import datatable
+    if hasattr(datatable, "Frame"):
+        DataTable = datatable.Frame
+    else:
+        DataTable = datatable.DataTable
+    DT_INSTALLED = True
+except ImportError:
+
+    class DataTable(object):
+        """ dummy for datatable.DataTable """
+        pass
+
+    DT_INSTALLED = False
 
 # sklearn
 try:

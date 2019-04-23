@@ -10,6 +10,8 @@
 
 #include <rabit/rabit.h>
 #include <utility>
+#include <map>
+#include <memory>
 #include <string>
 #include <vector>
 #include "./base.h"
@@ -37,7 +39,7 @@ namespace xgboost {
 class Learner : public rabit::Serializable {
  public:
   /*! \brief virtual destructor */
-  virtual ~Learner() {}
+  ~Learner() override = default;
   /*!
    * \brief set configuration from pair iterators.
    * \param begin The beginning iterator.
@@ -62,12 +64,12 @@ class Learner : public rabit::Serializable {
    * \brief load model from stream
    * \param fi input stream.
    */
-  virtual void Load(dmlc::Stream* fi) = 0;
+  void Load(dmlc::Stream* fi) override = 0;
   /*!
    * \brief save model to stream.
    * \param fo output stream
    */
-  virtual void Save(dmlc::Stream* fo) const = 0;
+  void Save(dmlc::Stream* fo) const override = 0;
   /*!
    * \brief update the model for one iteration
    *  With the specified objective function.
@@ -84,7 +86,7 @@ class Learner : public rabit::Serializable {
    */
   virtual void BoostOneIter(int iter,
                             DMatrix* train,
-                            std::vector<bst_gpair>* in_gpair) = 0;
+                            HostDeviceVector<GradientPair>* in_gpair) = 0;
   /*!
    * \brief evaluate the model for specific iteration using the configured metrics.
    * \param iter iteration number
@@ -104,13 +106,18 @@ class Learner : public rabit::Serializable {
    *   predictor, when it equals 0, this means we are using all the trees
    * \param pred_leaf whether to only predict the leaf index of each tree in a boosted tree predictor
    * \param pred_contribs whether to only predict the feature contributions
+   * \param approx_contribs whether to approximate the feature contributions for speed
+   * \param pred_interactions whether to compute the feature pair contributions
    */
   virtual void Predict(DMatrix* data,
                        bool output_margin,
-                       std::vector<bst_float> *out_preds,
+                       HostDeviceVector<bst_float> *out_preds,
                        unsigned ntree_limit = 0,
                        bool pred_leaf = false,
-                       bool pred_contribs = false) const = 0;
+                       bool pred_contribs = false,
+                       bool approx_contribs = false,
+                       bool pred_interactions = false) const = 0;
+
   /*!
    * \brief Set additional attribute to the Booster.
    *  The property will be saved along the booster.
@@ -162,9 +169,9 @@ class Learner : public rabit::Serializable {
    * \param out_preds output vector to hold the predictions
    * \param ntree_limit limit the number of trees used in prediction
    */
-  inline void Predict(const SparseBatch::Inst &inst,
+  inline void Predict(const SparsePage::Inst &inst,
                       bool output_margin,
-                      std::vector<bst_float> *out_preds,
+                      HostDeviceVector<bst_float> *out_preds,
                       unsigned ntree_limit = 0) const;
   /*!
    * \brief Create a new instance of learner.
@@ -172,6 +179,12 @@ class Learner : public rabit::Serializable {
    * \return Created learner.
    */
   static Learner* Create(const std::vector<std::shared_ptr<DMatrix> >& cache_data);
+
+  /*!
+   * \brief Get configuration arguments currently stored by the learner
+   * \return Key-value pairs representing configuration arguments
+   */
+  virtual const std::map<std::string, std::string>& GetConfigurationArguments() const = 0;
 
  protected:
   /*! \brief internal base score of the model */
@@ -185,11 +198,11 @@ class Learner : public rabit::Serializable {
 };
 
 // implementation of inline functions.
-inline void Learner::Predict(const SparseBatch::Inst& inst,
+inline void Learner::Predict(const SparsePage::Inst& inst,
                              bool output_margin,
-                             std::vector<bst_float>* out_preds,
+                             HostDeviceVector<bst_float>* out_preds,
                              unsigned ntree_limit) const {
-  gbm_->PredictInstance(inst, out_preds, ntree_limit);
+  gbm_->PredictInstance(inst, &out_preds->HostVector(), ntree_limit);
   if (!output_margin) {
     obj_->PredTransform(out_preds);
   }

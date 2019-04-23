@@ -1,98 +1,82 @@
 // Copyright by Contributors
 #include <xgboost/data.h>
+#include <dmlc/filesystem.h>
 #include "../../../src/data/sparse_page_dmatrix.h"
 
 #include "../helpers.h"
 
 TEST(SparsePageDMatrix, MetaInfo) {
-  std::string tmp_file = CreateSimpleTestData();
+  dmlc::TemporaryDirectory tempdir;
+  const std::string tmp_file = tempdir.path + "/simple.libsvm";
+  CreateSimpleTestData(tmp_file);
   xgboost::DMatrix * dmat = xgboost::DMatrix::Load(
-    tmp_file + "#" + tmp_file + ".cache", true, false);
-  std::remove(tmp_file.c_str());
+    tmp_file + "#" + tmp_file + ".cache", false, false);
+  std::cout << tmp_file << std::endl;
   EXPECT_TRUE(FileExists(tmp_file + ".cache"));
 
   // Test the metadata that was parsed
-  EXPECT_EQ(dmat->info().num_row, 2);
-  EXPECT_EQ(dmat->info().num_col, 5);
-  EXPECT_EQ(dmat->info().num_nonzero, 6);
-  EXPECT_EQ(dmat->info().labels.size(), dmat->info().num_row);
+  EXPECT_EQ(dmat->Info().num_row_, 2);
+  EXPECT_EQ(dmat->Info().num_col_, 5);
+  EXPECT_EQ(dmat->Info().num_nonzero_, 6);
+  EXPECT_EQ(dmat->Info().labels_.Size(), dmat->Info().num_row_);
 
-  // Clean up of external memory files
-  std::remove((tmp_file + ".cache").c_str());
-  std::remove((tmp_file + ".cache.row.page").c_str());
+  delete dmat;
 }
 
 TEST(SparsePageDMatrix, RowAccess) {
-  std::string tmp_file = CreateSimpleTestData();
+  // Create sufficiently large data to make two row pages
+  dmlc::TemporaryDirectory tempdir;
+  const std::string tmp_file = tempdir.path + "/big.libsvm";
+  CreateBigTestData(tmp_file, 5000000);
   xgboost::DMatrix * dmat = xgboost::DMatrix::Load(
     tmp_file + "#" + tmp_file + ".cache", true, false);
-  std::remove(tmp_file.c_str());
   EXPECT_TRUE(FileExists(tmp_file + ".cache.row.page"));
 
-  dmlc::DataIter<xgboost::RowBatch> * row_iter = dmat->RowIterator();
   // Loop over the batches and count the records
   long row_count = 0;
-  row_iter->BeforeFirst();
-  while (row_iter->Next()) row_count += row_iter->Value().size;
-  EXPECT_EQ(row_count, dmat->info().num_row);
+  for (auto &batch : dmat->GetRowBatches()) {
+    row_count += batch.Size();
+  }
+  EXPECT_EQ(row_count, dmat->Info().num_row_);
+
   // Test the data read into the first row
-  row_iter->BeforeFirst();
-  row_iter->Next();
-  xgboost::SparseBatch::Inst first_row = row_iter->Value()[0];
-  ASSERT_EQ(first_row.length, 3);
+  auto &batch = *dmat->GetRowBatches().begin();
+  auto first_row = batch[0];
+  ASSERT_EQ(first_row.size(), 3);
   EXPECT_EQ(first_row[2].index, 2);
   EXPECT_EQ(first_row[2].fvalue, 20);
-  row_iter = nullptr;
 
-  // Clean up of external memory files
-  std::remove((tmp_file + ".cache").c_str());
-  std::remove((tmp_file + ".cache.row.page").c_str());
+  delete dmat;
 }
 
-TEST(SparsePageDMatrix, ColAcess) {
-  std::string tmp_file = CreateSimpleTestData();
+TEST(SparsePageDMatrix, ColAccess) {
+  dmlc::TemporaryDirectory tempdir;
+  const std::string tmp_file = tempdir.path + "/simple.libsvm";
+  CreateSimpleTestData(tmp_file);
   xgboost::DMatrix * dmat = xgboost::DMatrix::Load(
     tmp_file + "#" + tmp_file + ".cache", true, false);
-  std::remove(tmp_file.c_str());
-  EXPECT_FALSE(FileExists(tmp_file + ".cache.col.page"));
 
-  EXPECT_EQ(dmat->HaveColAccess(), false);
-  const std::vector<bool> enable(dmat->info().num_col, true);
-  dmat->InitColAccess(enable, 1, 1); // Max 1 row per patch
-  ASSERT_EQ(dmat->HaveColAccess(), true);
-  EXPECT_TRUE(FileExists(tmp_file + ".cache.col.page"));
-
-  EXPECT_EQ(dmat->GetColSize(0), 2);
-  EXPECT_EQ(dmat->GetColSize(1), 1);
   EXPECT_EQ(dmat->GetColDensity(0), 1);
   EXPECT_EQ(dmat->GetColDensity(1), 0.5);
 
-  dmlc::DataIter<xgboost::ColBatch> * col_iter = dmat->ColIterator();
   // Loop over the batches and assert the data is as expected
-  long num_col_batch = 0;
-  col_iter->BeforeFirst();
-  while (col_iter->Next()) {
-    num_col_batch += 1;
-    EXPECT_EQ(col_iter->Value().size, dmat->info().num_col)
-      << "Expected batch size to be same as num_cols as max_row_perbatch is 1.";
+  for (auto col_batch : dmat->GetSortedColumnBatches()) {
+    EXPECT_EQ(col_batch.Size(), dmat->Info().num_col_);
+    EXPECT_EQ(col_batch[1][0].fvalue, 10.0f);
+    EXPECT_EQ(col_batch[1].size(), 1);
   }
-  EXPECT_EQ(num_col_batch, dmat->info().num_row)
-    << "Expected num batches to be same as num_rows as max_row_perbatch is 1";
-  col_iter = nullptr;
 
-  std::vector<xgboost::bst_uint> sub_feats = {4, 3};
-  dmlc::DataIter<xgboost::ColBatch> * sub_col_iter = dmat->ColIterator(sub_feats);
   // Loop over the batches and assert the data is as expected
-  sub_col_iter->BeforeFirst();
-  while (sub_col_iter->Next()) {
-    EXPECT_EQ(sub_col_iter->Value().size, sub_feats.size())
-      << "Expected size of a batch to be same as number of columns "
-      << "as max_row_perbatch was set to 1.";
+  for (auto col_batch : dmat->GetColumnBatches()) {
+    EXPECT_EQ(col_batch.Size(), dmat->Info().num_col_);
+    EXPECT_EQ(col_batch[1][0].fvalue, 10.0f);
+    EXPECT_EQ(col_batch[1].size(), 1);
   }
-  sub_col_iter = nullptr;
 
-  // Clean up of external memory files
-  std::remove((tmp_file + ".cache").c_str());
-  std::remove((tmp_file + ".cache.col.page").c_str());
-  std::remove((tmp_file + ".cache.row.page").c_str());
+  EXPECT_TRUE(FileExists(tmp_file + ".cache"));
+  EXPECT_TRUE(FileExists(tmp_file + ".cache.row.page"));
+  EXPECT_TRUE(FileExists(tmp_file + ".cache.col.page"));
+  EXPECT_TRUE(FileExists(tmp_file + ".cache.sorted.col.page"));
+
+  delete dmat;
 }

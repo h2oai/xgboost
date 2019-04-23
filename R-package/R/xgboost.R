@@ -77,10 +77,11 @@ NULL
 
 # Various imports
 #' @importClassesFrom Matrix dgCMatrix dgeMatrix
-#' @importFrom Matrix cBind
 #' @importFrom Matrix colSums
 #' @importFrom Matrix sparse.model.matrix
 #' @importFrom Matrix sparseVector
+#' @importFrom Matrix sparseMatrix
+#' @importFrom Matrix t
 #' @importFrom data.table data.table
 #' @importFrom data.table is.data.table
 #' @importFrom data.table as.data.table
@@ -100,9 +101,12 @@ NULL
 #' @importFrom stats median
 #' @importFrom utils head
 #' @importFrom graphics barplot
+#' @importFrom graphics lines
+#' @importFrom graphics points
 #' @importFrom graphics grid
 #' @importFrom graphics par
 #' @importFrom graphics title
+#' @importFrom grDevices rgb
 #' 
 #' @import methods
 #' @useDynLib xgboost, .registration = TRUE

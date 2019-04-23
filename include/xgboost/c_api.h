@@ -10,11 +10,12 @@
 #ifdef __cplusplus
 #define XGB_EXTERN_C extern "C"
 #include <cstdio>
+#include <cstdint>
 #else
 #define XGB_EXTERN_C
 #include <stdio.h>
 #include <stdint.h>
-#endif
+#endif  // __cplusplus
 
 // XGBoost C API will include APIs in Rabit C API
 #include <rabit/c_api.h>
@@ -23,23 +24,23 @@
 #define XGB_DLL XGB_EXTERN_C __declspec(dllexport)
 #else
 #define XGB_DLL XGB_EXTERN_C
-#endif
+#endif  // defined(_MSC_VER) || defined(_WIN32)
 
 // manually define unsigned long
 typedef uint64_t bst_ulong;  // NOLINT(*)
 
 
 /*! \brief handle to DMatrix */
-typedef void *DMatrixHandle;
+typedef void *DMatrixHandle;  // NOLINT(*)
 /*! \brief handle to Booster */
-typedef void *BoosterHandle;
+typedef void *BoosterHandle;  // NOLINT(*)
 /*! \brief handle to a data iterator */
-typedef void *DataIterHandle;
+typedef void *DataIterHandle;  // NOLINT(*)
 /*! \brief handle to a internal data holder. */
-typedef void *DataHolderHandle;
+typedef void *DataHolderHandle;  // NOLINT(*)
 
 /*! \brief Mini batch used in XGBoost Data Iteration */
-typedef struct {
+typedef struct {  // NOLINT(*)
   /*! \brief number of rows in the minibatch */
   size_t size;
   /*! \brief row pointer to the rows in the data */
@@ -49,7 +50,7 @@ typedef struct {
   long* offset; // NOLINT(*)
 #else
   int64_t* offset;  // NOLINT(*)
-#endif
+#endif  // __APPLE__
   /*! \brief labels of each instance */
   float* label;
   /*! \brief weight of each instance, can be NULL */
@@ -66,7 +67,7 @@ typedef struct {
  * \param handle The handle to the callback.
  * \param batch The data content to be set.
  */
-XGB_EXTERN_C typedef int XGBCallbackSetData(
+XGB_EXTERN_C typedef int XGBCallbackSetData(  // NOLINT(*)
     DataHolderHandle handle, XGBoostBatchCSR batch);
 
 /*!
@@ -80,9 +81,8 @@ XGB_EXTERN_C typedef int XGBCallbackSetData(
  * \param set_function_handle The handle to be passed to set function.
  * \return 0 if we are reaching the end and batch is not returned.
  */
-XGB_EXTERN_C typedef int XGBCallbackDataIterNext(
-    DataIterHandle data_handle,
-    XGBCallbackSetData* set_function,
+XGB_EXTERN_C typedef int XGBCallbackDataIterNext(  // NOLINT(*)
+    DataIterHandle data_handle, XGBCallbackSetData *set_function,
     DataHolderHandle set_function_handle);
 
 /*!
@@ -95,7 +95,16 @@ XGB_EXTERN_C typedef int XGBCallbackDataIterNext(
  *  this function is thread safe and can be called by different thread
  * \return const char* error information
  */
-XGB_DLL const char *XGBGetLastError();
+XGB_DLL const char *XGBGetLastError(void);
+
+/*!
+ * \brief register callback function for LOG(INFO) messages -- helpful messages
+ *        that are not errors.
+ * Note: this function can be called by multiple threads. The callback function
+ *       will run on the thread that registered it
+ * \return 0 for success, -1 for failure
+ */
+XGB_DLL int XGBRegisterLogCallback(void (*callback)(const char*));
 
 /*!
  * \brief load a data matrix
@@ -216,12 +225,26 @@ XGB_DLL int XGDMatrixCreateFromMat(const float *data,
  * \param nthread number of threads (up to maximum cores available, if <=0 use all cores)
  * \return 0 when success, -1 when failure happens
  */
-XGB_DLL int XGDMatrixCreateFromMat_omp(const float *data,
-                                       bst_ulong nrow,
-                                       bst_ulong ncol,
-                                       float missing,
-                                       DMatrixHandle *out,
+XGB_DLL int XGDMatrixCreateFromMat_omp(const float *data,  // NOLINT
+                                       bst_ulong nrow, bst_ulong ncol,
+                                       float missing, DMatrixHandle *out,
                                        int nthread);
+/*!
+ * \brief create matrix content from python data table
+ * \param data pointer to pointer to column data
+ * \param feature_stypes pointer to strings
+ * \param nrow number of rows
+ * \param ncol number columns
+ * \param out created dmatrix
+ * \param nthread number of threads (up to maximum cores available, if <=0 use all cores)
+ * \return 0 when success, -1 when failure happens
+ */
+XGB_DLL int XGDMatrixCreateFromDT(void** data,
+                                  const char ** feature_stypes,
+                                  bst_ulong nrow,
+                                  bst_ulong ncol,
+                                  DMatrixHandle* out,
+                                  int nthread);
 /*!
  * \brief create a new dmatrix from sliced content of existing matrix
  * \param handle instance of data matrix to be sliced
@@ -238,7 +261,7 @@ XGB_DLL int XGDMatrixSliceDMatrix(DMatrixHandle handle,
  * \brief free space in data matrix
  * \return 0 when success, -1 when failure happens
  */
-XGB_DLL int XGDMatrixFree(void *handle);
+XGB_DLL int XGDMatrixFree(DMatrixHandle handle);
 /*!
  * \brief load a data matrix into binary file
  * \param handle a instance of data matrix
@@ -264,7 +287,7 @@ XGB_DLL int XGDMatrixSetFloatInfo(DMatrixHandle handle,
  * \brief set uint32 vector to a content in info
  * \param handle a instance of data matrix
  * \param field field name
- * \param array pointer to float vector
+ * \param array pointer to unsigned int vector
  * \param len length of array
  * \return 0 when success, -1 when failure happens
  */
@@ -540,7 +563,7 @@ XGB_DLL int XGBoosterGetAttr(BoosterHandle handle,
  *
  * \param handle handle
  * \param key The key of the attribute.
- * \param value The value to be saved. 
+ * \param value The value to be saved.
  *              If nullptr, the attribute would be deleted.
  * \return 0 when success, -1 when failure happens
  */

@@ -1,9 +1,11 @@
 /*!
- * Copyright 2015 by Contributors
+ * Copyright 2015-2018 by Contributors
  * \file common.cc
  * \brief Enable all kinds of global variables in common.
  */
 #include <dmlc/thread_local.h>
+
+#include "common.h"
 #include "./random.h"
 
 namespace xgboost {
@@ -14,10 +16,17 @@ struct RandomThreadLocalEntry {
   GlobalRandomEngine engine;
 };
 
-typedef dmlc::ThreadLocalStore<RandomThreadLocalEntry> RandomThreadLocalStore;
+using RandomThreadLocalStore = dmlc::ThreadLocalStore<RandomThreadLocalEntry>;
 
 GlobalRandomEngine& GlobalRandom() {
   return RandomThreadLocalStore::Get()->engine;
 }
 }  // namespace common
+
+#if !defined(XGBOOST_USE_CUDA)
+int AllVisibleImpl::AllVisible() {
+  return 0;
+}
+#endif  // !defined(XGBOOST_USE_CUDA)
+
 }  // namespace xgboost

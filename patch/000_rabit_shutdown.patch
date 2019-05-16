@@ -1,0 +1,15 @@
+diff --git a/rabit/src/allreduce_robust.cc b/src/allreduce_robust.cc
+index b81af3e..5551a2d 100644
+--- a/rabit/src/allreduce_robust.cc
++++ b/rabit/src/allreduce_robust.cc
+@@ -54,7 +54,9 @@ void AllreduceRobust::Shutdown(void) {
+   // In OSX, one worker shutdowns and closes sockets while rest still run kCheckAck
+   // This cause rest workers checkandrecover and hang inf, https://github.com/dmlc/xgboost/pull/3818
+   // TODO(Chen Qin): a fundamental fix for this
+-  sleep(2);
++  if (world_size > 1) {
++    sleep(2);
++  }
+ #endif  // __APPLE__
+   AllreduceBase::Shutdown();
+ }

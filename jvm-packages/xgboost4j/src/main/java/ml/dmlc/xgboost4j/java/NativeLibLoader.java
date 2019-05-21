@@ -39,12 +39,24 @@ public class NativeLibLoader {
   public static synchronized void initXGBoost() throws IOException {
     if (!initialized) {
       // patch classloader class
-      addNativeDir(nativePath);
+      IOException nativeAddEx = null;
+      try {
+        addNativeDir(nativePath); // best effort, don't worry about outcome
+      } catch (IOException e) {
+        nativeAddEx = e; // will be logged later only if there is an actual issue with loading of the native library
+      }
       // initialize the Loader
       NativeLibLoaderService loaderService = NativeLibLoaderService.getInstance();
       loader = loaderService.createLoader();
       // load the native libs
-      loader.loadNativeLibs();
+      try {
+        loader.loadNativeLibs();
+      } catch (Exception e) {
+        if (nativeAddEx != null) {
+          logger.error("Failed to add native path to the classpath at runtime", nativeAddEx);
+        }
+        throw e;
+      }
       initialized = true;
     }
   }
@@ -205,10 +217,8 @@ public class NativeLibLoader {
       tmp[paths.length] = libPath;
       field.set(null, tmp);
     } catch (IllegalAccessException e) {
-      logger.error(e.getMessage());
       throw new IOException("Failed to get permissions to set library path");
     } catch (NoSuchFieldException e) {
-      logger.error(e.getMessage());
       throw new IOException("Failed to get field handle to set library path");
     }
   }

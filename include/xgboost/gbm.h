@@ -139,7 +139,7 @@ class GradientBooster {
    */
   virtual std::vector<std::string> DumpModel(const FeatureMap& fmap,
                                              bool with_stats,
-                                             std::string format) const = 0;
+                                             std::string format) = 0;
   /*!
    * \brief create a gradient booster from given name
    * \param name name of gradient booster

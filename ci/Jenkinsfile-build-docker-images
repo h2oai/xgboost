@@ -41,6 +41,12 @@ try {
             env.BRANCH_NAME = scmEnv['GIT_BRANCH'].replaceAll('origin/', '')
         }
 
+        withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', accessKeyVariable: 'AWS_ACCESS_KEY_ID', credentialsId: 'AWS S3 Credentials', secretKeyVariable: 'AWS_SECRET_ACCESS_KEY']]) {
+            docker.image('harbor.h2o.ai/opsh2oai/s3cmd').inside("-e AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID} -e AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}") {
+                sh "s3cmd -f get s3://artifacts.h2o.ai/releases/oracle/jdk-8/x64-linux/jdk1.8.0_171.zip"
+            }
+        }
+
         for (String image : IMAGES_MAP) {
             buildSummary.stageWithSummary("Build ${image.capitalize()} Image") {
                 dir('ci/docker') {

@@ -22,6 +22,7 @@ BuildResult result = BuildResult.FAILURE
 final List<String> IMAGES_MAP = ['centos', 'ubuntu14']
 // base of the image name
 final String IMAGE_NAME = "${params.registry}/opsh2oai/h2o-3-xgboost-build"
+final String IMAGE_TAG = "1"
 
 // initialize build summary
 buildSummary('https://github.com/h2oai/xgboost', true)
@@ -47,7 +48,7 @@ try {
                     if (image == 'centos') {
                         dockerfileSuffix = 'centos6-python3.7'
                     }
-                    sh "docker build -t ${IMAGE_NAME}-${image} --build-arg H2O_BRANCH=${env.BRANCH_NAME} -f Dockerfile-gpu-${dockerfileSuffix} ."
+                    sh "docker build -t ${IMAGE_NAME}-${image}:${IMAGE_TAG} --build-arg H2O_BRANCH=${env.BRANCH_NAME} -f Dockerfile-gpu-${dockerfileSuffix} ."
                 }
             }
         }
@@ -58,9 +59,9 @@ try {
                     withCredentials([usernamePassword(credentialsId: "${params.registry}", usernameVariable: 'REGISTRY_USERNAME', passwordVariable: 'REGISTRY_PASSWORD')]) {
                         sh """
                             docker login -u $REGISTRY_USERNAME -p $REGISTRY_PASSWORD ${params.registry}
-                            docker push ${IMAGE_NAME}-${image}
+                            docker push ${IMAGE_NAME}-${image}:${IMAGE_TAG}
                         """
-                        echo "###### Docker image ${IMAGE_NAME}-${image} built and pushed. ######"
+                        echo "###### Docker image ${IMAGE_NAME}-${image}:${IMAGE_TAG} built and pushed. ######"
                     }
                 }
             }

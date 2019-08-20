@@ -42,7 +42,9 @@ NEXUS_IP ?= 172.17.0.53
 PY_VERSION ?= $(shell python --version 2>&1 | egrep -o '[0-9]\.[0-9]' | tr -d '.')
 CHECK_LD_LIB_PATH := /usr/lib/jvm/java-8-oracle/jre/lib/amd64/server
 
-CENTOS_DOCKER_IMAGE := harbor.h2o.ai/opsh2oai/h2o-3-xgboost-build-centos
+DOCKER_IMAGE_VERSION=1
+
+CENTOS_DOCKER_IMAGE := harbor.h2o.ai/opsh2oai/h2o-3-xgboost-build-centos:$(DOCKER_IMAGE_VERSION)
 CENTOS_JAVA_HOME := /usr/lib/jvm/java-1.8.0
 CENTOS_PY_27_ENV_PATH := /opt/rh/python27/enable
 CENTOS_PY_35_ENV_PATH := /opt/rh/rh-python35/enable
@@ -50,7 +52,7 @@ CENTOS_PY_36_ENV_PATH := /opt/rh/rh-python36/enable
 CENTOS_PY_37_ENV_PATH := /envs/xgb-env-py3.7/bin/activate
 CENTOS_PY_ENV_PATH := $(CENTOS_PY_$(PY_VERSION)_ENV_PATH)
 
-UBUNTU_DOCKER_IMAGE ?= harbor.h2o.ai/opsh2oai/h2o-3-xgboost-build-ubuntu14
+UBUNTU_DOCKER_IMAGE ?= harbor.h2o.ai/opsh2oai/h2o-3-xgboost-build-ubuntu14:$(DOCKER_IMAGE_VERSION)
 UBUNTU_JAVA_HOME ?= /usr/lib/jvm/java-8-oracle
 UBUNTU_PY_27_ENV_PATH := /envs/xgb-env-py2.7/bin/activate
 UBUNTU_PY_35_ENV_PATH := /envs/xgb-env-py3.5/bin/activate

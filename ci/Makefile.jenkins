@@ -204,18 +204,14 @@ check_deps_prepare:
 	cd ci-build/check && unzip xgboost4j-native-$(OS)_$(BACKEND)$(OMP_VERSION).jar
 	cd ci-build/check && chmod +x lib/$(OS)_64/libxgboost4j*
 check_deps_linux: check_deps_prepare
-	ldd ci-build/check/lib/$(OS)_64/libxgboost4j_$(BACKEND).so > ci-build/check/ldd-check-$(OS)-$(DISTRO)-$(BACKEND)$(OMP_VERSION).log 2>&1
+	ldd ci-build/check/lib/$(OS)_64/libxgboost4j_$(BACKEND).so 2>&1 | tee ci-build/check/ldd-check-$(OS)-$(DISTRO)-$(BACKEND)$(OMP_VERSION).log
 ifneq (,$(findstring not found,$(shell cat ci-build/check/ldd-check-$(OS)-$(DISTRO)-$(BACKEND)$(OMP_VERSION).log 2> /dev/null)))
-	echo "ldd check failed! Please check the following output:" && \
-	ldd ci-build/check/lib/$(OS)_64/libxgboost4j_$(BACKEND).so && \
-	exit 1
+	echo "ldd check failed! Please check the output" && exit 1
 endif
 check_deps_osx: check_deps_prepare
-	otool -L ci-build/check/lib/$(OS)_64/libxgboost4j_$(BACKEND).dylib > ci-build/check/otool-check-$(OS)-$(DISTRO)-$(BACKEND)$(OMP_VERSION).log 2>&1
+	otool -L ci-build/check/lib/$(OS)_64/libxgboost4j_$(BACKEND).dylib 2>&1 | tee ci-build/check/otool-check-$(OS)-$(DISTRO)-$(BACKEND)$(OMP_VERSION).log
 ifneq (,$(findstring not found,$(shell cat ci-build/check/otool-check-$(OS)-$(DISTRO)-$(BACKEND)$(OMP_VERSION).log 2> /dev/null)))
-	echo "otool check failed! Please check the following output:" && \
-	otool -L ci-build/check/lib/$(OS)_64/libxgboost4j_$(BACKEND).dylib && \
-	exit 1
+	echo "otool check failed! Please check the output" && exit 1
 endif
 
 jar_package_%_in_docker:

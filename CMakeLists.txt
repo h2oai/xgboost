@@ -135,6 +135,7 @@ target_include_directories(runxgboost
   ${PROJECT_SOURCE_DIR}/include
   ${PROJECT_SOURCE_DIR}/dmlc-core/include
   ${PROJECT_SOURCE_DIR}/rabit/include)
+list(APPEND LINKED_LIBRARIES_PRIVATE pthread)
 target_link_libraries(runxgboost PRIVATE ${LINKED_LIBRARIES_PRIVATE})
 set_target_properties(
   runxgboost PROPERTIES

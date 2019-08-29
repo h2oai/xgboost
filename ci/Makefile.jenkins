@@ -42,7 +42,7 @@ NEXUS_IP ?= 172.17.0.53
 PY_VERSION ?= $(shell python --version 2>&1 | egrep -o '[0-9]\.[0-9]' | tr -d '.')
 CHECK_LD_LIB_PATH := /usr/lib/jvm/java-8-oracle/jre/lib/amd64/server
 
-DOCKER_IMAGE_VERSION=1
+DOCKER_IMAGE_VERSION=2
 
 CENTOS_DOCKER_IMAGE := harbor.h2o.ai/opsh2oai/h2o-3-xgboost-build-centos:$(DOCKER_IMAGE_VERSION)
 CENTOS_JAVA_HOME := /usr/lib/jvm/java-1.8.0
@@ -52,7 +52,7 @@ CENTOS_PY_36_ENV_PATH := /opt/rh/rh-python36/enable
 CENTOS_PY_37_ENV_PATH := /envs/xgb-env-py3.7/bin/activate
 CENTOS_PY_ENV_PATH := $(CENTOS_PY_$(PY_VERSION)_ENV_PATH)
 
-UBUNTU_DOCKER_IMAGE ?= harbor.h2o.ai/opsh2oai/h2o-3-xgboost-build-ubuntu14:$(DOCKER_IMAGE_VERSION)
+UBUNTU_DOCKER_IMAGE ?= harbor.h2o.ai/opsh2oai/h2o-3-xgboost-build-ubuntu:$(DOCKER_IMAGE_VERSION)
 UBUNTU_JAVA_HOME ?= /usr/lib/jvm/java-8-oracle
 UBUNTU_PY_27_ENV_PATH := /envs/xgb-env-py2.7/bin/activate
 UBUNTU_PY_35_ENV_PATH := /envs/xgb-env-py3.5/bin/activate
@@ -97,12 +97,12 @@ endif
 ifeq ($(EXEC_PRECHECKS),1)
 # Check if gcc is of expected version
 ifneq (,$(findstring CentOS,$(shell cat /etc/os-release 2> /dev/null)))
-    ifneq ($(shell gcc --version | head -1), gcc (GCC) 4.9.2 20150212 (Red Hat 4.9.2-6))
+    ifneq ($(shell gcc --version | head -1), gcc (GCC) 5.3.1 20160406 (Red Hat 5.3.1-6))
         $(error Unexpected gcc version.)
     endif
 endif
 # Check if cmake is of expected version
-ifneq ($(shell cmake --version | head -1), cmake version 3.5.2)
+ifneq ($(shell cmake --version | head -1), cmake version 3.12.3)
     $(error Unexpected cmake version.)
 endif
 endif
@@ -227,7 +227,7 @@ jar_package_%_in_docker:
 		$(CENTOS_DOCKER_IMAGE) \
 		-c "export JAVA_HOME=$(CENTOS_JAVA_HOME) && \
 			source $(CENTOS_PY_ENV_PATH) && \
-			source /opt/rh/devtoolset-3/enable && \
+			source /opt/rh/devtoolset-4/enable && \
 			make -f $(THIS_FILE) jar_package_$*"
 
 jar_package_%:
@@ -395,7 +395,7 @@ endif
 		$(CENTOS_DOCKER_IMAGE) \
 		-c "export JAVA_HOME=$(CENTOS_JAVA_HOME) && \
 			source $(CENTOS_PY_ENV_PATH) && \
-			source /opt/rh/devtoolset-3/enable && \
+			source /opt/rh/devtoolset-4/enable && \
 			make -f $(THIS_FILE) $*"
 
 centos_whl%:

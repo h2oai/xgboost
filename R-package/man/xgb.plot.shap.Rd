@@ -6,8 +6,8 @@
 \usage{
 xgb.plot.shap(data, shap_contrib = NULL, features = NULL, top_n = 1,
   model = NULL, trees = NULL, target_class = NULL,
-  approxcontrib = FALSE, subsample = NULL, n_col = 1, col = rgb(0,
-  0, 1, 0.2), pch = ".", discrete_n_uniq = 5, discrete_jitter = 0.01,
+  approxcontrib = FALSE, subsample = NULL, n_col = 1, col = rgb(0, 0, 1,
+  0.2), pch = ".", discrete_n_uniq = 5, discrete_jitter = 0.01,
   ylab = "SHAP", plot_NA = TRUE, col_NA = rgb(0.7, 0, 1, 0.6),
   pch_NA = ".", pos_NA = 1.07, plot_loess = TRUE, col_loess = 2,
   span_loess = 0.5, which = c("1d", "2d"), plot = TRUE, ...)
@@ -15,7 +15,7 @@ xgb.plot.shap(data, shap_contrib = NULL, features = NULL, top_n = 1,
 \arguments{
 \item{data}{data as a \code{matrix} or \code{dgCMatrix}.}
 
-\item{shap_contrib}{a matrix of SHAP contributions that was computed earlier for the above 
+\item{shap_contrib}{a matrix of SHAP contributions that was computed earlier for the above
 \code{data}. When it is NULL, it is computed internally using \code{model} and \code{data}.}
 
 \item{features}{a vector of either column indices or of feature names to plot. When it is NULL,
@@ -63,7 +63,7 @@ more than 5 distinct values.}
 
 \item{col_loess}{a color to use for the loess curves.}
 
-\item{span_loess}{the \code{span} paramerer in \code{\link[stats]{loess}}'s call.}
+\item{span_loess}{the \code{span} parameter in \code{\link[stats]{loess}}'s call.}
 
 \item{which}{whether to do univariate or bivariate plotting. NOTE: only 1D is implemented so far.}
 
@@ -104,7 +104,7 @@ a meaningful thing to do.
 data(agaricus.train, package='xgboost')
 data(agaricus.test, package='xgboost')
 
-bst <- xgboost(agaricus.train$data, agaricus.train$label, nrounds = 50, 
+bst <- xgboost(agaricus.train$data, agaricus.train$label, nrounds = 50,
                eta = 0.1, max_depth = 3, subsample = .5,
                method = "hist", objective = "binary:logistic", nthread = 2, verbose = 0)
 

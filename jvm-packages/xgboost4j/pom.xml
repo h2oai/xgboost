@@ -6,11 +6,10 @@
     <!--parent>
         <groupId>ai.h2o</groupId>
         <artifactId>xgboost-jvm</artifactId>
-        <version>0.82-SNAPSHOT</version>
+        <version>0.90-SNAPSHOT</version>
     </parent-->
-    <groupId>ai.h2o</groupId>
     <artifactId>xgboost4j</artifactId>
-    <version>0.82-SNAPSHOT</version>
+    <version>0.90-SNAPSHOT</version>
     <packaging>jar</packaging>
     <name>xgboost4j</name>
 
@@ -308,6 +307,30 @@
                       </goals>
                   </execution>
               </executions>
+          </plugin>
+          <plugin>
+              <groupId>org.apache.maven.plugins</groupId>
+              <artifactId>maven-jar-plugin</artifactId>
+              <version>3.0.2</version>
+              <executions>
+                  <execution>
+                      <goals>
+                          <goal>test-jar</goal>
+                      </goals>
+                  </execution>
+              </executions>
+          </plugin>
+          <plugin>
+              <groupId>org.apache.maven.plugins</groupId>
+              <artifactId>maven-resources-plugin</artifactId>
+              <version>3.1.0</version>
+              <configuration>
+                  <nonFilteredFileExtensions>
+                      <nonFilteredFileExtension>dll</nonFilteredFileExtension>
+                      <nonFilteredFileExtension>dylib</nonFilteredFileExtension>
+                      <nonFilteredFileExtension>so</nonFilteredFileExtension>
+                  </nonFilteredFileExtensions>
+              </configuration>
           </plugin>
       </plugins>
     </build>

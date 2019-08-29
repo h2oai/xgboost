@@ -21,7 +21,6 @@ import java.lang.reflect.Field;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 
-
 /**
  * class to load native library
  *
@@ -78,7 +77,13 @@ public class NativeLibLoader {
     @Override
     public void loadNativeLibs() throws IOException {
       for (String libName : libNames) {
-        smartLoad(libName);
+        try {
+          String libraryFromJar = nativeResourcePath + System.mapLibraryName(libName);
+          loadLibraryFromJar(libraryFromJar);
+        } catch (IOException ioe) {
+          logger.error("failed to load " + libName + " library from jar");
+          throw ioe;
+        }
       }
     }
   }

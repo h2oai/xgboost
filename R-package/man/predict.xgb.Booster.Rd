@@ -7,8 +7,8 @@
 \usage{
 \method{predict}{xgb.Booster}(object, newdata, missing = NA,
   outputmargin = FALSE, ntreelimit = NULL, predleaf = FALSE,
-  predcontrib = FALSE, approxcontrib = FALSE,
-  predinteraction = FALSE, reshape = FALSE, ...)
+  predcontrib = FALSE, approxcontrib = FALSE, predinteraction = FALSE,
+  reshape = FALSE, ...)
 
 \method{predict}{xgb.Booster.handle}(object, ...)
 }
@@ -91,7 +91,7 @@ in \url{http://blog.datadive.net/interpreting-random-forests/}.
 
 With \code{predinteraction = TRUE}, SHAP values of contributions of interaction of each pair of features
 are computed. Note that this operation might be rather expensive in terms of compute and memory.
-Since it quadratically depends on the number of features, it is recommended to perfom selection
+Since it quadratically depends on the number of features, it is recommended to perform selection
 of the most important features first. See below about the format of the returned results.
 }
 \examples{

@@ -1,6 +1,8 @@
 // Copyright by Contributors
 #include <xgboost/data.h>
 #include <dmlc/filesystem.h>
+#include <cinttypes>
+
 #include "../../../src/data/sparse_page_dmatrix.h"
 
 #include "../helpers.h"
@@ -24,20 +26,7 @@ TEST(SparsePageDMatrix, MetaInfo) {
 }
 
 TEST(SparsePageDMatrix, RowAccess) {
-  // Create sufficiently large data to make two row pages
-  dmlc::TemporaryDirectory tempdir;
-  const std::string tmp_file = tempdir.path + "/big.libsvm";
-  CreateBigTestData(tmp_file, 5000000);
-  xgboost::DMatrix * dmat = xgboost::DMatrix::Load(
-    tmp_file + "#" + tmp_file + ".cache", true, false);
-  EXPECT_TRUE(FileExists(tmp_file + ".cache.row.page"));
-
-  // Loop over the batches and count the records
-  long row_count = 0;
-  for (auto &batch : dmat->GetRowBatches()) {
-    row_count += batch.Size();
-  }
-  EXPECT_EQ(row_count, dmat->Info().num_row_);
+  std::unique_ptr<xgboost::DMatrix> dmat = xgboost::CreateSparsePageDMatrix(12, 64);
 
   // Test the data read into the first row
   auto &batch = *dmat->GetRowBatches().begin();
@@ -45,8 +34,6 @@ TEST(SparsePageDMatrix, RowAccess) {
   ASSERT_EQ(first_row.size(), 3);
   EXPECT_EQ(first_row[2].index, 2);
   EXPECT_EQ(first_row[2].fvalue, 20);
-
-  delete dmat;
 }
 
 TEST(SparsePageDMatrix, ColAccess) {

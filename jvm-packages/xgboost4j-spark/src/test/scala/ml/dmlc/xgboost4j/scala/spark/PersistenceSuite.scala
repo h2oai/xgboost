@@ -19,9 +19,11 @@ package ml.dmlc.xgboost4j.scala.spark
 import java.io.{File, FileNotFoundException}
 import java.util.Arrays
 
-import ml.dmlc.xgboost4j.scala.DMatrix
+import scala.io.Source
 
+import ml.dmlc.xgboost4j.scala.DMatrix
 import scala.util.Random
+
 import org.apache.spark.ml.feature._
 import org.apache.spark.ml.{Pipeline, PipelineModel}
 import org.apache.spark.network.util.JavaUtils
@@ -96,7 +98,7 @@ class PersistenceSuite extends FunSuite with PerTest with BeforeAndAfterAll {
     val testDM = new DMatrix(Regression.test.iterator)
 
     val paramMap = Map("eta" -> "0.1", "max_depth" -> "6", "silent" -> "1",
-      "objective" -> "reg:linear", "num_round" -> "10", "num_workers" -> numWorkers)
+      "objective" -> "reg:squarederror", "num_round" -> "10", "num_workers" -> numWorkers)
     val xgbr = new XGBoostRegressor(paramMap)
     val xgbrPath = new File(tempDir, "xgbr").getPath
     xgbr.write.overwrite().save(xgbrPath)
@@ -161,6 +163,18 @@ class PersistenceSuite extends FunSuite with PerTest with BeforeAndAfterAll {
     assert(xgbModel.getEta === xgbModel2.getEta)
     assert(xgbModel.getNumRound === xgbModel2.getNumRound)
     assert(xgbModel.getRawPredictionCol === xgbModel2.getRawPredictionCol)
+  }
+
+  test("cross-version model loading (0.82)") {
+    val modelPath = getClass.getResource("/model/0.82/model").getPath
+    val model = XGBoostClassificationModel.read.load(modelPath)
+    val r = new Random(0)
+    val df = ss.createDataFrame(Seq.fill(100)(r.nextInt(2)).map(i => (i, i))).
+      toDF("feature", "label")
+    val assembler = new VectorAssembler()
+      .setInputCols(df.columns.filter(!_.contains("label")))
+      .setOutputCol("features")
+    model.transform(assembler.transform(df)).show()
   }
 }
 

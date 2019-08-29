@@ -19,24 +19,39 @@ package ml.dmlc.xgboost4j.scala.spark
 import ml.dmlc.xgboost4j.scala.{DMatrix, XGBoost => ScalaXGBoost}
 import org.apache.spark.ml.linalg.Vector
 import org.apache.spark.sql.functions._
-import org.apache.spark.sql.Row
+import org.apache.spark.sql.{DataFrame, Row}
 import org.apache.spark.sql.types._
 import org.scalatest.FunSuite
 
 class XGBoostRegressorSuite extends FunSuite with PerTest {
 
-  test("XGBoost-Spark XGBoostRegressor ouput should match XGBoost4j: regression") {
+  test("XGBoost-Spark XGBoostRegressor output should match XGBoost4j") {
     val trainingDM = new DMatrix(Regression.train.iterator)
     val testDM = new DMatrix(Regression.test.iterator)
     val trainingDF = buildDataFrame(Regression.train)
     val testDF = buildDataFrame(Regression.test)
-    val round = 5
+    checkResultsWithXGBoost4j(trainingDM, testDM, trainingDF, testDF)
+  }
 
+  test("XGBoostRegressor should make correct predictions after upstream random sort") {
+    val trainingDM = new DMatrix(Regression.train.iterator)
+    val testDM = new DMatrix(Regression.test.iterator)
+    val trainingDF = buildDataFrameWithRandSort(Regression.train)
+    val testDF = buildDataFrameWithRandSort(Regression.test)
+    checkResultsWithXGBoost4j(trainingDM, testDM, trainingDF, testDF)
+  }
+
+  private def checkResultsWithXGBoost4j(
+      trainingDM: DMatrix,
+      testDM: DMatrix,
+      trainingDF: DataFrame,
+      testDF: DataFrame,
+      round: Int = 5): Unit = {
     val paramMap = Map(
       "eta" -> "1",
       "max_depth" -> "6",
       "silent" -> "1",
-      "objective" -> "reg:linear")
+      "objective" -> "reg:squarederror")
 
     val model1 = ScalaXGBoost.train(trainingDM, paramMap, round)
     val prediction1 = model1.predict(testDM)
@@ -45,7 +60,7 @@ class XGBoostRegressorSuite extends FunSuite with PerTest {
       "num_workers" -> numWorkers)).fit(trainingDF)
 
     val prediction2 = model2.transform(testDF).
-      collect().map(row => (row.getAs[Int]("id"), row.getAs[Double]("prediction"))).toMap
+        collect().map(row => (row.getAs[Int]("id"), row.getAs[Double]("prediction"))).toMap
 
     assert(prediction1.indices.count { i =>
       math.abs(prediction1(i)(0) - prediction2(i)) > 0.01
@@ -54,7 +69,9 @@ class XGBoostRegressorSuite extends FunSuite with PerTest {
 
     // check the equality of single instance prediction
     val firstOfDM = testDM.slice(Array(0))
-    val firstOfDF = testDF.head().getAs[Vector]("features")
+    val firstOfDF = testDF.filter(_.getAs[Int]("id") == 0)
+        .head()
+        .getAs[Vector]("features")
     val prediction3 = model1.predict(firstOfDM)(0)(0)
     val prediction4 = model2.predict(firstOfDF)
     assert(math.abs(prediction3 - prediction4) <= 0.01f)
@@ -69,7 +86,7 @@ class XGBoostRegressorSuite extends FunSuite with PerTest {
       "eta" -> "1",
       "max_depth" -> "6",
       "silent" -> "1",
-      "objective" -> "reg:linear",
+      "objective" -> "reg:squarederror",
       "num_round" -> round,
       "num_workers" -> numWorkers)
 
@@ -80,7 +97,7 @@ class XGBoostRegressorSuite extends FunSuite with PerTest {
       .setEta(1)
       .setMaxDepth(6)
       .setSilent(1)
-      .setObjective("reg:linear")
+      .setObjective("reg:squarederror")
       .setNumRound(round)
       .setNumWorkers(numWorkers)
       .fit(trainingDF)
@@ -108,7 +125,7 @@ class XGBoostRegressorSuite extends FunSuite with PerTest {
 
   test("use weight") {
     val paramMap = Map("eta" -> "1", "max_depth" -> "6", "silent" -> "1",
-      "objective" -> "reg:linear", "num_round" -> 5, "num_workers" -> numWorkers)
+      "objective" -> "reg:squarederror", "num_round" -> 5, "num_workers" -> numWorkers)
 
     val getWeightFromId = udf({id: Int => if (id == 0) 1.0f else 0.001f}, DataTypes.FloatType)
     val trainingDF = buildDataFrame(Regression.train)
@@ -123,7 +140,7 @@ class XGBoostRegressorSuite extends FunSuite with PerTest {
 
   test("test predictionLeaf") {
     val paramMap = Map("eta" -> "1", "max_depth" -> "6", "silent" -> "1",
-      "objective" -> "reg:linear", "num_round" -> 5, "num_workers" -> numWorkers)
+      "objective" -> "reg:squarederror", "num_round" -> 5, "num_workers" -> numWorkers)
     val training = buildDataFrame(Regression.train)
     val testDF = buildDataFrame(Regression.test)
     val groundTruth = testDF.count()
@@ -137,7 +154,7 @@ class XGBoostRegressorSuite extends FunSuite with PerTest {
 
   test("test predictionLeaf with empty column name") {
     val paramMap = Map("eta" -> "1", "max_depth" -> "6", "silent" -> "1",
-      "objective" -> "reg:linear", "num_round" -> 5, "num_workers" -> numWorkers)
+      "objective" -> "reg:squarederror", "num_round" -> 5, "num_workers" -> numWorkers)
     val training = buildDataFrame(Regression.train)
     val testDF = buildDataFrame(Regression.test)
     val xgb = new XGBoostRegressor(paramMap)
@@ -149,7 +166,7 @@ class XGBoostRegressorSuite extends FunSuite with PerTest {
 
   test("test predictionContrib") {
     val paramMap = Map("eta" -> "1", "max_depth" -> "6", "silent" -> "1",
-      "objective" -> "reg:linear", "num_round" -> 5, "num_workers" -> numWorkers)
+      "objective" -> "reg:squarederror", "num_round" -> 5, "num_workers" -> numWorkers)
     val training = buildDataFrame(Regression.train)
     val testDF = buildDataFrame(Regression.test)
     val groundTruth = testDF.count()
@@ -163,7 +180,7 @@ class XGBoostRegressorSuite extends FunSuite with PerTest {
 
   test("test predictionContrib with empty column name") {
     val paramMap = Map("eta" -> "1", "max_depth" -> "6", "silent" -> "1",
-      "objective" -> "reg:linear", "num_round" -> 5, "num_workers" -> numWorkers)
+      "objective" -> "reg:squarederror", "num_round" -> 5, "num_workers" -> numWorkers)
     val training = buildDataFrame(Regression.train)
     val testDF = buildDataFrame(Regression.test)
     val xgb = new XGBoostRegressor(paramMap)
@@ -175,7 +192,7 @@ class XGBoostRegressorSuite extends FunSuite with PerTest {
 
   test("test predictionLeaf and predictionContrib") {
     val paramMap = Map("eta" -> "1", "max_depth" -> "6", "silent" -> "1",
-      "objective" -> "reg:linear", "num_round" -> 5, "num_workers" -> numWorkers)
+      "objective" -> "reg:squarederror", "num_round" -> 5, "num_workers" -> numWorkers)
     val training = buildDataFrame(Regression.train)
     val testDF = buildDataFrame(Regression.test)
     val groundTruth = testDF.count()

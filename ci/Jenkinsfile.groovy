@@ -99,9 +99,9 @@ ansiColor('xterm') {
                     sh 'git submodule update --init --recursive'
                 }
 
-                buildSummary.stageWithSummary('Write Version, Patch Source Code and Stash') {
+                buildSummary.stageWithSummary('Write Version and Stash') {
                     sh """
-                        make ${MAKE_OPTS} -f ci/Makefile.jenkins centos_write_version_in_docker apply_patches
+                        make ${MAKE_OPTS} -f ci/Makefile.jenkins centos_write_version_in_docker
                     """
                     stash 'xgboost-sources'
                 }

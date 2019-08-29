@@ -8,8 +8,9 @@
         <artifactId>xgboost-jvm</artifactId>
         <version>0.90-SNAPSHOT</version>
     </parent-->
+    <groupId>ai.h2o</groupId>
     <artifactId>xgboost4j</artifactId>
-    <version>0.90-SNAPSHOT</version>
+    <version>0.90</version>
     <packaging>jar</packaging>
     <name>xgboost4j</name>
 

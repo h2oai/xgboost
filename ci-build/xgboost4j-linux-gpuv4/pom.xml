@@ -4,7 +4,7 @@
     <groupId>ai.h2o</groupId>
     <artifactId>xgboost4j-linux-gpuv4</artifactId>
     <packaging>jar</packaging>
-    <version>0.8-SNAPSHOT</version>
+    <version>0.90-SNAPSHOT</version>
     <name>xgboost4j-linux-gpuv4</name>
 
     <description>H2O XGBoost Libraries</description>

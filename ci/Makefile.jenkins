@@ -432,3 +432,6 @@ osx_whl%:
 
 osx_check_minimal:
 	$(MAKE) -f $(THIS_FILE) BACKEND=minimal check_deps_osx
+
+all_%:
+	$(MAKE) -f $(THIS_FILE) TARGET_OS=linux build_$*_in_docker whls_$*_in_docker jar_$*_in_docker

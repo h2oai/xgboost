@@ -90,6 +90,9 @@ lib/
 # spark
 metastore_db
 
+cmake-build-debug
+demo/regression/featmap.txt
+demo/regression/machine.txt
 plugin/updater_gpu/test/cpp/data
 /include/xgboost/build_config.h
 

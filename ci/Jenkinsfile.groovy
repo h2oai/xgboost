@@ -43,15 +43,10 @@ CONFIGURATIONS = [
     [backend: 'minimal', os: 'linux', hasImage: true],
     [backend: 'ompv4', os: 'linux', hasImage: true],
     [backend: 'gpuv4', os: 'linux', hasImage: true],
-
-//    [backend: 'ompv3', os: 'linux', hasImage: true],
-//    [backend: 'gpuv3', os: 'linux', hasImage: true],
 ]
 
 Map CHECK_IMAGES = [
     linux_minimal: [
-        [ name: 'Check MINIMAL with CentOS 6.5', os: 'centos6.5', hasImage: true ],
-        [ name: 'Check MINIMAL with CentOS 6.8', os: 'centos6.8', hasImage: true ],
         [ name: 'Check MINIMAL with CentOS 7.3', os: 'centos7.3', hasImage: true ],
         [ name: 'Check MINIMAL with Ubuntu 14', os: 'ubuntu14', hasImage: true ],
         [ name: 'Check MINIMAL with Ubuntu 16', os: 'ubuntu16', hasImage: true ]
@@ -59,20 +54,11 @@ Map CHECK_IMAGES = [
     osx_minimal: [
         [name: 'Check MINIMAL with OS X', node: 'osx', os: 'osx'],
     ],
-//    linux_ompv3: [
-//        [name: 'Check OMP with Ubuntu 14', os: 'ubuntu14', hasImage: true],
-//    ],
     linux_ompv4: [
-//        [name: 'Check OMP with CentOS 6.5', os: 'centos6.5', hasImage: true],
-//        [name: 'Check OMP with CentOS 6.8', os: 'centos6.8', hasImage: true],
         [name: 'Check OMP with CentOS 7.3', os: 'centos7.3', hasImage: true],
         [name: 'Check OMP with Ubuntu 16', os: 'ubuntu16', hasImage: true]
     ],
-//    linux_gpuv3: [
-//        [name: 'Check GPU with Ubuntu 14', os: 'ubuntu14', hasImage: true],
-//    ],
     linux_gpuv4: [
-//       [name: 'Check GPU with CentOS 6.9', os: 'centos6.9', hasImage: true],
        [name: 'Check GPU with CentOS 7.4', os: 'centos7.4', hasImage: true],
        [name: 'Check GPU with Ubuntu 16', os: 'ubuntu16', hasImage: true]
     ]

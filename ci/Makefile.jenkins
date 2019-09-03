@@ -12,10 +12,8 @@
 # executed inside a docker container. It is also possible to specify the backend "flavor", these are the        #
 # accepted values:                                                                                              #
 #    - minimal - no GPU and no OMP support used in the example above                                            #
-#    - ompv3   - no GPU, with OMP support (uses libgomp v3), for Ubuntu 14                                      #
-#    - gpuv3   - with GPU and with OMP support (uses libgomp v3), for Ubuntu 14                                 #
-#    - ompv4   - no GPU, with OMP support (uses libgomp v4), for Ubuntu 16 and CentOS                           #
-#    - gpuv4   - with GPU and with OMP support (uses libgomp v4), for Ubuntu 14 and CentOS                      #
+#    - ompv4   - no GPU, with OMP support (uses libgomp v4), for Ubuntu 16 and CentOS 7+                         #
+#    - gpuv4   - with GPU and with OMP support (uses libgomp v4), for Ubuntu 16 and CentOS ý+                   #
 #                                                                                                               #
 # Apart from these steps, Jenkins does also the following:                                                      #
 #    - checks if the built .so have all dependencies satisfied in diferent envs                                 #
@@ -52,13 +50,7 @@ CENTOS_PY_36_ENV_PATH := /opt/rh/rh-python36/enable
 CENTOS_PY_37_ENV_PATH := /envs/xgb-env-py3.7/bin/activate
 CENTOS_PY_ENV_PATH := $(CENTOS_PY_$(PY_VERSION)_ENV_PATH)
 
-UBUNTU_DOCKER_IMAGE ?= harbor.h2o.ai/opsh2oai/h2o-3-xgboost-build-ubuntu:$(DOCKER_IMAGE_VERSION)
 UBUNTU_JAVA_HOME ?= /usr/lib/jvm/java-8-oracle
-UBUNTU_PY_27_ENV_PATH := /envs/xgb-env-py2.7/bin/activate
-UBUNTU_PY_35_ENV_PATH := /envs/xgb-env-py3.5/bin/activate
-UBUNTU_PY_36_ENV_PATH := /envs/xgb-env-py3.6/bin/activate
-UBUNTU_PY_37_ENV_PATH := /envs/xgb-env-py3.7/bin/activate
-UBUNTU_PY_ENV_PATH := $(UBUNTU_PY_$(PY_VERSION)_ENV_PATH)
 
 OSX_PY_27_ENV_NAME := xgb-build-py2.7
 OSX_PY_35_ENV_NAME := xgb-build-py3.5
@@ -286,8 +278,6 @@ centos%_check_gpuv4_in_docker:
 	$(MAKE) -f $(THIS_FILE) BACKEND=gpu OMP_VERSION=v4 centos$*_check_deps_in_docker_impl
 ubuntu%_check_minimal_in_docker:
 	$(MAKE) -f $(THIS_FILE) BACKEND=minimal ubuntu$*_check_deps_in_docker_impl
-ubuntu14_check_%v3_in_docker:
-	$(MAKE) -f $(THIS_FILE) BACKEND=$* OMP_VERSION=v3 ubuntu14_check_deps_in_docker_impl
 ubuntu16_check_%v4_in_docker:
 	$(MAKE) -f $(THIS_FILE) BACKEND=$* OMP_VERSION=v4 ubuntu16_check_deps_in_docker_impl
 centos%_check_deps_in_docker_impl:
@@ -311,7 +301,7 @@ endif
 		make -f $(THIS_FILE) check_deps_linux"
 ubuntu%_check_deps_in_docker_impl:
 ifeq ($(CI),1)
-	docker pull $(UBUNTU_DOCKER_IMAGE)
+	docker pull harbor.h2o.ai/opsh2oai/h2o-3-xgb-runtime-$(BACKEND):ubuntu$*
 endif
 	docker run \
 		$(INTERACTIVE_FLAG) \
@@ -362,8 +352,6 @@ endif
 
 %_minimal_in_docker %v4_in_docker:
 	$(MAKE) -f $(THIS_FILE) centos_$@_impl
-%v3_in_docker:
-	$(MAKE) -f $(THIS_FILE) ubuntu14_$@_impl
 
 jar_%:
 	$(MAKE) -f $(THIS_FILE) BACKEND=$* jar_impl
@@ -400,32 +388,6 @@ endif
 
 centos_whl%:
 	source $(CENTOS_PY_$*_ENV_PATH) && $(MAKE) -f $(THIS_FILE) PY_VERSION=$* whl_impl
-
-ubuntu14_%_in_docker_impl:
-ifeq ($(CI),1)
-	docker pull $(UBUNTU_DOCKER_IMAGE)
-endif
-	docker run \
-		$(INTERACTIVE_FLAG) \
-		--init \
-		--rm \
-		--add-host=nexus:$(NEXUS_IP) \
-		--entrypoint /bin/bash \
-		-e MVN_OPTS="$(MVN_OPTS)" \
-		-e TARGET_NEXUS=$(TARGET_NEXUS) \
-		-e XGB_VERSION=$(XGB_VERSION) \
-		-e EXEC_PRECHECKS=1 \
-		-v `pwd`:/dot \
-		-u `id -u`:`id -g` \
-		-w /dot \
-		$(ADDITIONAL_DOCKER_ARGS) \
-		$(UBUNTU_DOCKER_IMAGE) \
-		-c "export JAVA_HOME=$(UBUNTU_JAVA_HOME) && \
-			source $(UBUNTU_PY_ENV_PATH) && \
-			make -f $(THIS_FILE) $*"
-
-ubuntu_whl%:
-	source $(UBUNTU_PY_$*_ENV_PATH) && $(MAKE) -f $(THIS_FILE) PY_VERSION=$* whl_impl
 
 osx_whl%:
 	source activate $(OSX_PY_$*_ENV_NAME) && $(MAKE) -f $(THIS_FILE) PY_VERSION=$* whl_impl

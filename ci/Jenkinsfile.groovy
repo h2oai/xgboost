@@ -40,7 +40,7 @@ MAKE_OPTS = "CI=1 XGB_VERSION=${XGB_VERSION} TARGET_NEXUS=${targetNexus} PY_VERS
 CONFIGURATIONS = [
     [backend: 'minimal', os: 'osx', node: 'osx'],
 
-//    [backend: 'minimal', os: 'linux', hasImage: true],
+    [backend: 'minimal', os: 'linux', hasImage: true],
     [backend: 'ompv4', os: 'linux', hasImage: true],
     [backend: 'gpuv4', os: 'linux', hasImage: true],
 
@@ -50,11 +50,11 @@ CONFIGURATIONS = [
 
 Map CHECK_IMAGES = [
     linux_minimal: [
-//        [ name: 'Check MINIMAL with CentOS 6.5', os: 'centos6.5', hasImage: true ],
-//        [ name: 'Check MINIMAL with CentOS 6.8', os: 'centos6.8', hasImage: true ],
-//        [ name: 'Check MINIMAL with CentOS 7.3', os: 'centos7.3', hasImage: true ],
-//        [ name: 'Check MINIMAL with Ubuntu 14', os: 'ubuntu14', hasImage: true ],
-//        [ name: 'Check MINIMAL with Ubuntu 16', os: 'ubuntu16', hasImage: true ]
+        [ name: 'Check MINIMAL with CentOS 6.5', os: 'centos6.5', hasImage: true ],
+        [ name: 'Check MINIMAL with CentOS 6.8', os: 'centos6.8', hasImage: true ],
+        [ name: 'Check MINIMAL with CentOS 7.3', os: 'centos7.3', hasImage: true ],
+        [ name: 'Check MINIMAL with Ubuntu 14', os: 'ubuntu14', hasImage: true ],
+        [ name: 'Check MINIMAL with Ubuntu 16', os: 'ubuntu16', hasImage: true ]
     ],
     osx_minimal: [
         [name: 'Check MINIMAL with OS X', node: 'osx', os: 'osx'],

@@ -22,14 +22,14 @@ DEFAULT_NODE_LABEL = 'docker && !mr-0xc8'
 PUBLISHABLE_BRANCH_NAME = 'h2o3'
 ARCHIVED_FILES = '**/ci-build/*.jar, **/ci-build/*.whl, **/ci-build/*.log, **/jvm-packages/xgboost4j/*.jar, **/jvm-packages/xgboost4j/*.log'
 
-XGB_MAJOR_VERSION = '0.82'
+XGB_MAJOR_VERSION = '0.90'
 XGB_VERSION = "${XGB_MAJOR_VERSION}.${currentBuild.number}"
 
 def targetNexus = params.targetNexus ?: TARGET_NEXUS_NONE
 targetNexus = targetNexus.toLowerCase()
 env.SAFE_BRANCH_NAME = env.BRANCH_NAME.replaceAll('/|\\ ', '-').toLowerCase()
 if (env.BRANCH_NAME != PUBLISHABLE_BRANCH_NAME) {
-    XGB_VERSION = "0.82.${currentBuild.number}-${env.SAFE_BRANCH_NAME}-SNAPSHOT"
+    XGB_VERSION = "${XGB_MAJOR_VERSION}.${currentBuild.number}-${env.SAFE_BRANCH_NAME}-SNAPSHOT"
     if (targetNexus != TARGET_NEXUS_NONE) {
         targetNexus = TARGET_NEXUS_SNAPSHOT
     }
@@ -43,15 +43,10 @@ CONFIGURATIONS = [
     [backend: 'minimal', os: 'linux', hasImage: true],
     [backend: 'ompv4', os: 'linux', hasImage: true],
     [backend: 'gpuv4', os: 'linux', hasImage: true],
-
-    [backend: 'ompv3', os: 'linux', hasImage: true],
-    [backend: 'gpuv3', os: 'linux', hasImage: true],
 ]
 
 Map CHECK_IMAGES = [
     linux_minimal: [
-        [ name: 'Check MINIMAL with CentOS 6.5', os: 'centos6.5', hasImage: true ],
-        [ name: 'Check MINIMAL with CentOS 6.8', os: 'centos6.8', hasImage: true ],
         [ name: 'Check MINIMAL with CentOS 7.3', os: 'centos7.3', hasImage: true ],
         [ name: 'Check MINIMAL with Ubuntu 14', os: 'ubuntu14', hasImage: true ],
         [ name: 'Check MINIMAL with Ubuntu 16', os: 'ubuntu16', hasImage: true ]
@@ -59,20 +54,11 @@ Map CHECK_IMAGES = [
     osx_minimal: [
         [name: 'Check MINIMAL with OS X', node: 'osx', os: 'osx'],
     ],
-    linux_ompv3: [
-        [name: 'Check OMP with Ubuntu 14', os: 'ubuntu14', hasImage: true],
-    ],
     linux_ompv4: [
-        [name: 'Check OMP with CentOS 6.5', os: 'centos6.5', hasImage: true],
-        [name: 'Check OMP with CentOS 6.8', os: 'centos6.8', hasImage: true],
         [name: 'Check OMP with CentOS 7.3', os: 'centos7.3', hasImage: true],
         [name: 'Check OMP with Ubuntu 16', os: 'ubuntu16', hasImage: true]
     ],
-    linux_gpuv3: [
-        [name: 'Check GPU with Ubuntu 14', os: 'ubuntu14', hasImage: true],
-    ],
     linux_gpuv4: [
-       [name: 'Check GPU with CentOS 6.9', os: 'centos6.9', hasImage: true],
        [name: 'Check GPU with CentOS 7.4', os: 'centos7.4', hasImage: true],
        [name: 'Check GPU with Ubuntu 16', os: 'ubuntu16', hasImage: true]
     ]
@@ -99,9 +85,9 @@ ansiColor('xterm') {
                     sh 'git submodule update --init --recursive'
                 }
 
-                buildSummary.stageWithSummary('Write Version, Patch Source Code and Stash') {
+                buildSummary.stageWithSummary('Write Version and Stash') {
                     sh """
-                        make ${MAKE_OPTS} -f ci/Makefile.jenkins centos_write_version_in_docker apply_patches
+                        make ${MAKE_OPTS} -f ci/Makefile.jenkins centos_write_version_in_docker
                     """
                     stash 'xgboost-sources'
                 }

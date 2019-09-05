@@ -5,23 +5,24 @@ import json
 from multiprocessing import Pool, cpu_count
 import shutil
 import os
+import sys
 import re
 import argparse
 
 
 def call(args):
     '''Subprocess run wrapper.'''
-    completed = subprocess.run(args, stdout=subprocess.PIPE,
-                               stderr=subprocess.DEVNULL)
+    completed = subprocess.run(args,
+                               stdout=subprocess.PIPE,
+                               stderr=subprocess.PIPE)
     error_msg = completed.stdout.decode('utf-8')
-    matched = re.match('.*xgboost.*warning.*', error_msg,
-                       re.MULTILINE | re.DOTALL)
+    matched = re.search('(src|tests)/.*warning:', error_msg,
+                        re.MULTILINE)
     if matched is None:
         return_code = 0
     else:
-        print(error_msg, '\n')
         return_code = 1
-    return completed.returncode | return_code
+    return (completed.returncode, return_code, error_msg)
 
 
 class ClangTidy(object):
@@ -59,7 +60,7 @@ class ClangTidy(object):
         '''Run CMake to generate compilation database.'''
         os.mkdir(self.cdb_path)
         os.chdir(self.cdb_path)
-        cmake_args = ['cmake', '..', '-DGENERATE_COMPILATION_DATABASE=ON',
+        cmake_args = ['cmake', '..', '-DCMAKE_EXPORT_COMPILE_COMMANDS=ON',
                       '-DGOOGLE_TEST=ON', '-DGTEST_ROOT={}'.format(
                           self.gtest_path)]
         if self.cuda_lint:
@@ -67,23 +68,64 @@ class ClangTidy(object):
         subprocess.run(cmake_args)
         os.chdir(self.root_path)
 
+    def convert_nvcc_command_to_clang(self, command):
+        '''Convert nvcc flags to corresponding clang flags.'''
+        components = command.split()
+        compiler: str = components[0]
+        if compiler.find('nvcc') != -1:
+            compiler = 'clang++'
+            components[0] = compiler
+        # check each component in a command
+        converted_components = [compiler]
+
+        for i in range(len(components)):
+            if components[i] == '-lineinfo':
+                continue
+            elif components[i] == '-fuse-ld=gold':
+                continue
+            elif components[i] == '-rdynamic':
+                continue
+            elif (components[i] == '-x' and
+                  components[i+1] == 'cu'):
+                # -x cu -> -x cuda
+                converted_components.append('-x')
+                converted_components.append('cuda')
+                components[i+1] = ''
+                continue
+            elif components[i].find('-Xcompiler') != -1:
+                continue
+            elif components[i].find('--expt') != -1:
+                continue
+            elif components[i].find('-ccbin') != -1:
+                continue
+            elif components[i].find('--generate-code') != -1:
+                keyword = 'code=sm'
+                pos = components[i].find(keyword)
+                capability = components[i][pos + len(keyword) + 1:
+                                           pos + len(keyword) + 3]
+                if pos != -1:
+                    converted_components.append(
+                        '--cuda-gpu-arch=sm_' + capability)
+            elif components[i].find('--std=c++11') != -1:
+                converted_components.append('-std=c++11')
+            else:
+                converted_components.append(components[i])
+
+        command = ''
+        for c in converted_components:
+            command = command + ' ' + c
+        command = command.strip()
+        return command
+
     def _configure_flags(self, path, command):
         common_args = ['clang-tidy',
-                       # "-header-filter='(xgboost\\/src|xgboost\\/include)'",
-                       '-config='+str(self.clang_tidy)]
+                       "-header-filter='(xgboost\\/src|xgboost\\/include)'",
+                       '-config='+self.clang_tidy]
         common_args.append(path)
         common_args.append('--')
+        command = self.convert_nvcc_command_to_clang(command)
 
         command = command.split()[1:]  # remove clang/c++/g++
-        # filter out not used flags
-        if '-fuse-ld=gold' in command:
-            command.remove('-fuse-ld=gold')
-        if '-rdynamic' in command:
-            command.remove('-rdynamic')
-        if '-Xcompiler=-fPIC' in command:
-            command.remove('-Xcompiler=-fPIC')
-        if '-Xcompiler=-fPIE' in command:
-            command.remove('-Xcompiler=-fPIE')
         if '-c' in command:
             index = command.index('-c')
             del command[index+1]
@@ -112,7 +154,10 @@ class ClangTidy(object):
         def should_lint(path):
             if not self.cpp_lint and path.endswith('.cc'):
                 return False
-            return True
+            isxgb = path.find('rabit') == -1
+            isxgb = isxgb and path.find('dmlc-core') == -1
+            if isxgb:
+                return True
 
         cdb_file = os.path.join(self.cdb_path, 'compile_commands.json')
         with open(cdb_file, 'r') as fd:
@@ -120,6 +165,7 @@ class ClangTidy(object):
         tidy_file = os.path.join(self.root_path, '.clang-tidy')
         with open(tidy_file) as fd:
             self.clang_tidy = yaml.load(fd)
+            self.clang_tidy = str(self.clang_tidy)
         all_files = []
         for entry in self.compile_commands:
             path = entry['file']
@@ -132,13 +178,57 @@ class ClangTidy(object):
     def run(self):
         '''Run clang-tidy.'''
         all_files = self._configure()
+        passed = True
+        BAR = '-'*32
         with Pool(cpu_count()) as pool:
             results = pool.map(call, all_files)
-        passed = True
-        if 1 in results:
+            for (process_status, tidy_status, msg) in results:
+                # Don't enforce clang-tidy to pass for now due to namespace
+                # for cub in thrust is not correct.
+                if tidy_status == 1:
+                    passed = False
+                    print(BAR, '\n'
+                          'Process return code:', process_status, ', ',
+                          'Tidy result code:', tidy_status, ', ',
+                          'Message:\n', msg,
+                          BAR, '\n')
+        if not passed:
             print('Please correct clang-tidy warnings.')
-            passed = False
         return passed
+
+
+def test_tidy():
+    '''See if clang-tidy and our regex is working correctly.  There are
+many subtleties we need to be careful.  For instances:
+
+    * Is the string re-directed to pipe encoded as UTF-8? or is it
+bytes?
+
+    * On Jenkins there's no 'xgboost' directory, are we catching the
+right keywords?
+
+    * Should we use re.DOTALL?
+
+    * Should we use re.MULTILINE?
+
+    Tests here are not thorough, at least we want to guarantee tidy is
+    not missing anything on Jenkins.
+
+    '''
+    root_path = os.path.abspath(os.path.curdir)
+    tidy_file = os.path.join(root_path, '.clang-tidy')
+    test_file_path = os.path.join(root_path,
+                                  'tests', 'ci_build', 'test_tidy.cc')
+
+    with open(tidy_file) as fd:
+        tidy_config = fd.read()
+        tidy_config = str(tidy_config)
+    tidy_config = '-config='+tidy_config
+    args = ['clang-tidy', tidy_config, test_file_path]
+    (proc_code, tidy_status, error_msg) = call(args)
+    assert proc_code == 0
+    assert tidy_status == 1
+    print('clang-tidy is working.')
 
 
 if __name__ == '__main__':
@@ -148,8 +238,10 @@ if __name__ == '__main__':
     parser.add_argument('--gtest-path', required=True,
                         help='Full path of Google Test library directory')
     args = parser.parse_args()
+
+    test_tidy()
+
     with ClangTidy(args.gtest_path, args.cpp, args.cuda) as linter:
         passed = linter.run()
-    # Uncomment it once the code base is clang-tidy conformant.
-    # if not passed:
-    #     sys.exit(1)
+    if not passed:
+        sys.exit(1)

@@ -12,10 +12,8 @@
 # executed inside a docker container. It is also possible to specify the backend "flavor", these are the        #
 # accepted values:                                                                                              #
 #    - minimal - no GPU and no OMP support used in the example above                                            #
-#    - ompv3   - no GPU, with OMP support (uses libgomp v3), for Ubuntu 14                                      #
-#    - gpuv3   - with GPU and with OMP support (uses libgomp v3), for Ubuntu 14                                 #
-#    - ompv4   - no GPU, with OMP support (uses libgomp v4), for Ubuntu 16 and CentOS                           #
-#    - gpuv4   - with GPU and with OMP support (uses libgomp v4), for Ubuntu 14 and CentOS                      #
+#    - ompv4   - no GPU, with OMP support (uses libgomp v4), for Ubuntu 16 and CentOS 7+                         #
+#    - gpuv4   - with GPU and with OMP support (uses libgomp v4), for Ubuntu 16 and CentOS ý+                   #
 #                                                                                                               #
 # Apart from these steps, Jenkins does also the following:                                                      #
 #    - checks if the built .so have all dependencies satisfied in diferent envs                                 #
@@ -34,7 +32,7 @@ TIMESTAMP := $(shell date +%s)
 SHELL:=/bin/bash
 THIS_FILE := $(lastword $(MAKEFILE_LIST))
 
-XGB_VERSION ?= 0.82-SNAPSHOT
+XGB_VERSION ?= 0.90-SNAPSHOT
 
 TARGET_NEXUS ?= snapshot
 NEXUS_IP ?= 172.17.0.53
@@ -42,7 +40,7 @@ NEXUS_IP ?= 172.17.0.53
 PY_VERSION ?= $(shell python --version 2>&1 | egrep -o '[0-9]\.[0-9]' | tr -d '.')
 CHECK_LD_LIB_PATH := /usr/lib/jvm/java-8-oracle/jre/lib/amd64/server
 
-DOCKER_IMAGE_VERSION=1
+DOCKER_IMAGE_VERSION=2
 
 CENTOS_DOCKER_IMAGE := harbor.h2o.ai/opsh2oai/h2o-3-xgboost-build-centos:$(DOCKER_IMAGE_VERSION)
 CENTOS_JAVA_HOME := /usr/lib/jvm/java-1.8.0
@@ -52,13 +50,7 @@ CENTOS_PY_36_ENV_PATH := /opt/rh/rh-python36/enable
 CENTOS_PY_37_ENV_PATH := /envs/xgb-env-py3.7/bin/activate
 CENTOS_PY_ENV_PATH := $(CENTOS_PY_$(PY_VERSION)_ENV_PATH)
 
-UBUNTU_DOCKER_IMAGE ?= harbor.h2o.ai/opsh2oai/h2o-3-xgboost-build-ubuntu14:$(DOCKER_IMAGE_VERSION)
 UBUNTU_JAVA_HOME ?= /usr/lib/jvm/java-8-oracle
-UBUNTU_PY_27_ENV_PATH := /envs/xgb-env-py2.7/bin/activate
-UBUNTU_PY_35_ENV_PATH := /envs/xgb-env-py3.5/bin/activate
-UBUNTU_PY_36_ENV_PATH := /envs/xgb-env-py3.6/bin/activate
-UBUNTU_PY_37_ENV_PATH := /envs/xgb-env-py3.7/bin/activate
-UBUNTU_PY_ENV_PATH := $(UBUNTU_PY_$(PY_VERSION)_ENV_PATH)
 
 OSX_PY_27_ENV_NAME := xgb-build-py2.7
 OSX_PY_35_ENV_NAME := xgb-build-py3.5
@@ -97,12 +89,12 @@ endif
 ifeq ($(EXEC_PRECHECKS),1)
 # Check if gcc is of expected version
 ifneq (,$(findstring CentOS,$(shell cat /etc/os-release 2> /dev/null)))
-    ifneq ($(shell gcc --version | head -1), gcc (GCC) 4.9.2 20150212 (Red Hat 4.9.2-6))
+    ifneq ($(shell gcc --version | head -1), gcc (GCC) 5.3.1 20160406 (Red Hat 5.3.1-6))
         $(error Unexpected gcc version.)
     endif
 endif
 # Check if cmake is of expected version
-ifneq ($(shell cmake --version | head -1), cmake version 3.5.2)
+ifneq ($(shell cmake --version | head -1), cmake version 3.12.3)
     $(error Unexpected cmake version.)
 endif
 endif
@@ -142,16 +134,12 @@ endif
 mrproper:
 	make clean_all
 	git clean -f -d -x
-	$(MAKE) -f $(THIS_FILE) apply_patches
 
 bash:
 	@bash
 
 write_version:
 	cd jvm-packages/xgboost4j && mvn -q $(MVN_OPTS) -DnewVersion=$(XGB_VERSION) versions:set
-
-apply_patches:
-	patch -p1 < patch/000_rabit_shutdown.patch
 
 build_impl:
 	mkdir -p build ci-build
@@ -231,7 +219,7 @@ jar_package_%_in_docker:
 		$(CENTOS_DOCKER_IMAGE) \
 		-c "export JAVA_HOME=$(CENTOS_JAVA_HOME) && \
 			source $(CENTOS_PY_ENV_PATH) && \
-			source /opt/rh/devtoolset-3/enable && \
+			source /opt/rh/devtoolset-4/enable && \
 			make -f $(THIS_FILE) jar_package_$*"
 
 jar_package_%:
@@ -290,8 +278,6 @@ centos%_check_gpuv4_in_docker:
 	$(MAKE) -f $(THIS_FILE) BACKEND=gpu OMP_VERSION=v4 centos$*_check_deps_in_docker_impl
 ubuntu%_check_minimal_in_docker:
 	$(MAKE) -f $(THIS_FILE) BACKEND=minimal ubuntu$*_check_deps_in_docker_impl
-ubuntu14_check_%v3_in_docker:
-	$(MAKE) -f $(THIS_FILE) BACKEND=$* OMP_VERSION=v3 ubuntu14_check_deps_in_docker_impl
 ubuntu16_check_%v4_in_docker:
 	$(MAKE) -f $(THIS_FILE) BACKEND=$* OMP_VERSION=v4 ubuntu16_check_deps_in_docker_impl
 centos%_check_deps_in_docker_impl:
@@ -315,7 +301,7 @@ endif
 		make -f $(THIS_FILE) check_deps_linux"
 ubuntu%_check_deps_in_docker_impl:
 ifeq ($(CI),1)
-	docker pull $(UBUNTU_DOCKER_IMAGE)
+	docker pull harbor.h2o.ai/opsh2oai/h2o-3-xgb-runtime-$(BACKEND):ubuntu$*
 endif
 	docker run \
 		$(INTERACTIVE_FLAG) \
@@ -366,8 +352,6 @@ endif
 
 %_minimal_in_docker %v4_in_docker:
 	$(MAKE) -f $(THIS_FILE) centos_$@_impl
-%v3_in_docker:
-	$(MAKE) -f $(THIS_FILE) ubuntu14_$@_impl
 
 jar_%:
 	$(MAKE) -f $(THIS_FILE) BACKEND=$* jar_impl
@@ -399,40 +383,17 @@ endif
 		$(CENTOS_DOCKER_IMAGE) \
 		-c "export JAVA_HOME=$(CENTOS_JAVA_HOME) && \
 			source $(CENTOS_PY_ENV_PATH) && \
-			source /opt/rh/devtoolset-3/enable && \
+			source /opt/rh/devtoolset-4/enable && \
 			make -f $(THIS_FILE) $*"
 
 centos_whl%:
 	source $(CENTOS_PY_$*_ENV_PATH) && $(MAKE) -f $(THIS_FILE) PY_VERSION=$* whl_impl
-
-ubuntu14_%_in_docker_impl:
-ifeq ($(CI),1)
-	docker pull $(UBUNTU_DOCKER_IMAGE)
-endif
-	docker run \
-		$(INTERACTIVE_FLAG) \
-		--init \
-		--rm \
-		--add-host=nexus:$(NEXUS_IP) \
-		--entrypoint /bin/bash \
-		-e MVN_OPTS="$(MVN_OPTS)" \
-		-e TARGET_NEXUS=$(TARGET_NEXUS) \
-		-e XGB_VERSION=$(XGB_VERSION) \
-		-e EXEC_PRECHECKS=1 \
-		-v `pwd`:/dot \
-		-u `id -u`:`id -g` \
-		-w /dot \
-		$(ADDITIONAL_DOCKER_ARGS) \
-		$(UBUNTU_DOCKER_IMAGE) \
-		-c "export JAVA_HOME=$(UBUNTU_JAVA_HOME) && \
-			source $(UBUNTU_PY_ENV_PATH) && \
-			make -f $(THIS_FILE) $*"
-
-ubuntu_whl%:
-	source $(UBUNTU_PY_$*_ENV_PATH) && $(MAKE) -f $(THIS_FILE) PY_VERSION=$* whl_impl
 
 osx_whl%:
 	source activate $(OSX_PY_$*_ENV_NAME) && $(MAKE) -f $(THIS_FILE) PY_VERSION=$* whl_impl
 
 osx_check_minimal:
 	$(MAKE) -f $(THIS_FILE) BACKEND=minimal check_deps_osx
+
+all_%:
+	$(MAKE) -f $(THIS_FILE) TARGET_OS=linux build_$*_in_docker whls_$*_in_docker jar_$*_in_docker

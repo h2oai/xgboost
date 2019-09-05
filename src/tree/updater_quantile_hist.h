@@ -22,11 +22,47 @@
 #include "./param.h"
 #include "./split_evaluator.h"
 #include "../common/random.h"
+#include "../common/timer.h"
 #include "../common/hist_util.h"
 #include "../common/row_set.h"
 #include "../common/column_matrix.h"
 
 namespace xgboost {
+
+/*!
+ * \brief A C-style array with in-stack allocation. As long as the array is smaller than MaxStackSize, it will be allocated inside the stack. Otherwise, it will be heap-allocated.
+ */
+template<typename T, size_t MaxStackSize>
+class MemStackAllocator {
+ public:
+  explicit MemStackAllocator(size_t required_size): required_size_(required_size) {
+  }
+
+  T* Get() {
+    if (!ptr_) {
+      if (MaxStackSize >= required_size_) {
+        ptr_ = stack_mem_;
+      } else {
+        ptr_ =  reinterpret_cast<T*>(malloc(required_size_ * sizeof(T)));
+        do_free_ = true;
+      }
+    }
+
+    return ptr_;
+  }
+
+  ~MemStackAllocator() {
+    if (do_free_) free(ptr_);
+  }
+
+
+ private:
+  T* ptr_ = nullptr;
+  bool do_free_ = false;
+  size_t required_size_;
+  T stack_mem_[MaxStackSize];
+};
+
 namespace tree {
 
 using xgboost::common::HistCutMatrix;
@@ -87,7 +123,9 @@ class QuantileHistMaker: public TreeUpdater {
                      std::unique_ptr<SplitEvaluator> spliteval)
       : param_(param), pruner_(std::move(pruner)),
         spliteval_(std::move(spliteval)), p_last_tree_(nullptr),
-        p_last_fmat_(nullptr) {}
+        p_last_fmat_(nullptr) {
+      builder_monitor_.Init("Quantile::Builder");
+    }
     // update one tree, growing
     virtual void Update(const GHistIndexMatrix& gmat,
                         const GHistIndexBlockMatrix& gmatb,
@@ -102,6 +140,7 @@ class QuantileHistMaker: public TreeUpdater {
                           const GHistIndexBlockMatrix& gmatb,
                           GHistRow hist,
                           bool sync_hist) {
+      builder_monitor_.Start("BuildHist");
       if (param_.enable_feature_grouping > 0) {
         hist_builder_.BuildBlockHist(gpair, row_indices, gmatb, hist);
       } else {
@@ -110,10 +149,13 @@ class QuantileHistMaker: public TreeUpdater {
       if (sync_hist) {
         this->histred_.Allreduce(hist.data(), hist_builder_.GetNumBins());
       }
+      builder_monitor_.Stop("BuildHist");
     }
 
     inline void SubtractionTrick(GHistRow self, GHistRow sibling, GHistRow parent) {
+      builder_monitor_.Start("SubtractionTrick");
       hist_builder_.SubtractionTrick(self, sibling, parent);
+      builder_monitor_.Stop("SubtractionTrick");
     }
 
     bool UpdatePredictionCache(const DMatrix* data,
@@ -128,84 +170,6 @@ class QuantileHistMaker: public TreeUpdater {
       unsigned timestamp;
       ExpandEntry(int nid, int depth, bst_float loss_chg, unsigned tstmp)
               : nid(nid), depth(depth), loss_chg(loss_chg), timestamp(tstmp) {}
-    };
-
-    struct TreeGrowingPerfMonitor {
-      enum timer_name {INIT_DATA, INIT_NEW_NODE, BUILD_HIST, EVALUATE_SPLIT, APPLY_SPLIT};
-
-      double global_start;
-
-      // performance counters
-      double tstart;
-      double time_init_data = 0;
-      double time_init_new_node = 0;
-      double time_build_hist = 0;
-      double time_evaluate_split = 0;
-      double time_apply_split = 0;
-
-      inline void StartPerfMonitor() {
-        global_start = dmlc::GetTime();
-      }
-
-      inline void EndPerfMonitor() {
-        CHECK_GT(global_start, 0);
-        double total_time = dmlc::GetTime() - global_start;
-        LOG(INFO) << "\nInitData:          "
-                  << std::fixed << std::setw(6) << std::setprecision(4) << time_init_data
-                  << " (" << std::fixed << std::setw(5) << std::setprecision(2)
-                  << time_init_data / total_time * 100 << "%)\n"
-                  << "InitNewNode:       "
-                  << std::fixed << std::setw(6) << std::setprecision(4) << time_init_new_node
-                  << " (" << std::fixed << std::setw(5) << std::setprecision(2)
-                  << time_init_new_node / total_time * 100 << "%)\n"
-                  << "BuildHist:         "
-                  << std::fixed << std::setw(6) << std::setprecision(4) << time_build_hist
-                  << " (" << std::fixed << std::setw(5) << std::setprecision(2)
-                  << time_build_hist / total_time * 100 << "%)\n"
-                  << "EvaluateSplit:     "
-                  << std::fixed << std::setw(6) << std::setprecision(4) << time_evaluate_split
-                  << " (" << std::fixed << std::setw(5) << std::setprecision(2)
-                  << time_evaluate_split / total_time * 100 << "%)\n"
-                  << "ApplySplit:        "
-                  << std::fixed << std::setw(6) << std::setprecision(4) << time_apply_split
-                  << " (" << std::fixed << std::setw(5) << std::setprecision(2)
-                  << time_apply_split / total_time * 100 << "%)\n"
-                  << "========================================\n"
-                  << "Total:             "
-                  << std::fixed << std::setw(6) << std::setprecision(4) << total_time;
-        // clear performance counters
-        time_init_data = 0;
-        time_init_new_node = 0;
-        time_build_hist = 0;
-        time_evaluate_split = 0;
-        time_apply_split = 0;
-      }
-
-      inline void TickStart() {
-        tstart = dmlc::GetTime();
-      }
-
-      inline void UpdatePerfTimer(const timer_name &timer_name) {
-        CHECK_GT(tstart, 0);
-        switch (timer_name) {
-          case INIT_DATA:
-            time_init_data += dmlc::GetTime() - tstart;
-            break;
-          case INIT_NEW_NODE:
-            time_init_new_node += dmlc::GetTime() - tstart;
-            break;
-          case BUILD_HIST:
-            time_build_hist += dmlc::GetTime() - tstart;
-            break;
-          case EVALUATE_SPLIT:
-            time_evaluate_split += dmlc::GetTime() - tstart;
-            break;
-          case APPLY_SPLIT:
-            time_apply_split += dmlc::GetTime() - tstart;
-            break;
-        }
-        tstart = -1;
-      }
     };
 
     // initialize temp data structure
@@ -347,7 +311,7 @@ class QuantileHistMaker: public TreeUpdater {
     enum DataLayout { kDenseDataZeroBased, kDenseDataOneBased, kSparseData };
     DataLayout data_layout_;
 
-    TreeGrowingPerfMonitor perf_monitor;
+    common::Monitor builder_monitor_;
     rabit::Reducer<GradStats, GradStats::Reduce> histred_;
   };
 

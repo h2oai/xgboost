@@ -42,7 +42,9 @@ class Column {
   uint32_t GetBaseIdx() const { return index_base_; }
   ColumnType GetType() const { return type_; }
   size_t GetRowIdx(size_t idx) const {
-    return type_ == ColumnType::kDenseColumn ? idx : row_ind_[idx];
+    // clang-tidy worries that row_ind_ might be a nullptr, which is possible,
+    // but low level structure is not safe anyway.
+    return type_ == ColumnType::kDenseColumn ? idx : row_ind_[idx];  // NOLINT
   }
   bool IsMissing(size_t idx) const {
     return index_[idx] == std::numeric_limits<uint32_t>::max();
@@ -68,8 +70,8 @@ class ColumnMatrix {
 
   // construct column matrix from GHistIndexMatrix
   inline void Init(const GHistIndexMatrix& gmat,
-                double  sparse_threshold) {
-    const auto nfeature = static_cast<bst_uint>(gmat.cut.row_ptr.size() - 1);
+                   double  sparse_threshold) {
+    const int32_t nfeature = static_cast<int32_t>(gmat.cut.row_ptr.size() - 1);
     const size_t nrow = gmat.row_ptr.size() - 1;
 
     // identify type of each column
@@ -84,7 +86,7 @@ class ColumnMatrix {
 
     gmat.GetFeatureCounts(&feature_counts_[0]);
     // classify features
-    for (bst_uint fid = 0; fid < nfeature; ++fid) {
+    for (int32_t fid = 0; fid < nfeature; ++fid) {
       if (static_cast<double>(feature_counts_[fid])
                  < sparse_threshold * nrow) {
         type_[fid] = kSparseColumn;
@@ -98,7 +100,7 @@ class ColumnMatrix {
     boundary_.resize(nfeature);
     size_t accum_index_ = 0;
     size_t accum_row_ind_ = 0;
-    for (bst_uint fid = 0; fid < nfeature; ++fid) {
+    for (int32_t fid = 0; fid < nfeature; ++fid) {
       boundary_[fid].index_begin = accum_index_;
       boundary_[fid].row_ind_begin = accum_row_ind_;
       if (type_[fid] == kDenseColumn) {
@@ -122,7 +124,9 @@ class ColumnMatrix {
     }
 
     // pre-fill index_ for dense columns
-    for (bst_uint fid = 0; fid < nfeature; ++fid) {
+
+    #pragma omp parallel for
+    for (int32_t fid = 0; fid < nfeature; ++fid) {
       if (type_[fid] == kDenseColumn) {
         const size_t ibegin = boundary_[fid].index_begin;
         uint32_t* begin = &index_[ibegin];
@@ -163,7 +167,8 @@ class ColumnMatrix {
      to determine type of bin id's */
   inline Column GetColumn(unsigned fid) const {
     Column c(type_[fid], &index_[boundary_[fid].index_begin], index_base_[fid],
-             &row_ind_[boundary_[fid].row_ind_begin],
+             (type_[fid] == ColumnType::kSparseColumn ?
+              &row_ind_[boundary_[fid].row_ind_begin] : nullptr),
              boundary_[fid].index_end - boundary_[fid].index_begin);
     return c;
   }
@@ -181,8 +186,8 @@ class ColumnMatrix {
 
   std::vector<size_t> feature_counts_;
   std::vector<ColumnType> type_;
-  std::vector<uint32_t> index_;  // index_: may store smaller integers; needs padding
-  std::vector<size_t> row_ind_;
+  SimpleArray<uint32_t> index_;  // index_: may store smaller integers; needs padding
+  SimpleArray<size_t> row_ind_;
   std::vector<ColumnBoundary> boundary_;
 
   // index_base_[fid]: least bin id for feature fid

@@ -81,7 +81,7 @@ xgb.get.handle <- function(object) {
 #' its handle (pointer) to an internal xgboost model would be invalid. The majority of xgboost methods
 #' should still work for such a model object since those methods would be using
 #' \code{xgb.Booster.complete} internally. However, one might find it to be more efficient to call the
-#' \code{xgb.Booster.complete} function explicitely once after loading a model as an R-object.
+#' \code{xgb.Booster.complete} function explicitly once after loading a model as an R-object.
 #' That would prevent further repeated implicit reconstruction of an internal booster model.
 #'
 #' @return
@@ -95,6 +95,7 @@ xgb.get.handle <- function(object) {
 #' saveRDS(bst, "xgb.model.rds")
 #'
 #' bst1 <- readRDS("xgb.model.rds")
+#' if (file.exists("xgb.model.rds")) file.remove("xgb.model.rds")
 #' # the handle is invalid:
 #' print(bst1$handle)
 #'
@@ -162,7 +163,7 @@ xgb.Booster.complete <- function(object, saveraw = TRUE) {
 #'
 #' With \code{predinteraction = TRUE}, SHAP values of contributions of interaction of each pair of features
 #' are computed. Note that this operation might be rather expensive in terms of compute and memory.
-#' Since it quadratically depends on the number of features, it is recommended to perfom selection
+#' Since it quadratically depends on the number of features, it is recommended to perform selection
 #' of the most important features first. See below about the format of the returned results.
 #'
 #' @return
@@ -190,7 +191,7 @@ xgb.Booster.complete <- function(object, saveraw = TRUE) {
 #'
 #' @seealso
 #' \code{\link{xgb.train}}.
-#' 
+#'
 #' @references
 #'
 #' Scott M. Lundberg, Su-In Lee, "A Unified Approach to Interpreting Model Predictions", NIPS Proceedings 2017, \url{https://arxiv.org/abs/1705.07874}
@@ -418,6 +419,7 @@ predict.xgb.Booster.handle <- function(object, ...) {
 #'
 #' xgb.save(bst, 'xgb.model')
 #' bst1 <- xgb.load('xgb.model')
+#' if (file.exists('xgb.model')) file.remove('xgb.model')
 #' print(xgb.attr(bst1, "my_attribute"))
 #' print(xgb.attributes(bst1))
 #'

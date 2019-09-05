@@ -6,7 +6,7 @@
 
     <groupId>ai.h2o</groupId>
     <artifactId>xgboost-jvm</artifactId>
-    <version>0.82-SNAPSHOT</version>
+    <version>0.90</version>
     <packaging>pom</packaging>
     <name>XGBoost JVM Package</name>
     <properties>
@@ -15,7 +15,7 @@
         <maven.compiler.source>1.7</maven.compiler.source>
         <maven.compiler.target>1.7</maven.compiler.target>
         <flink.version>1.5.0</flink.version>
-        <spark.version>2.3.3</spark.version>
+        <spark.version>2.4.3</spark.version>
         <scala.version>2.11.12</scala.version>
         <scala.binary.version>2.11</scala.binary.version>
     </properties>
@@ -291,6 +291,12 @@
         </snapshotRepository>
     </distributionManagement>
     <build>
+        <resources>
+            <resource>
+                <directory>src/main/resources</directory>
+                <filtering>true</filtering>
+            </resource>
+        </resources>
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>

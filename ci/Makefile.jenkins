@@ -134,6 +134,8 @@ endif
 mrproper:
 	make clean_all
 	git clean -f -d -x
+	cd dmlc-core && git reset --hard
+	cd rabit && git reset --hard
 	$(MAKE) -f $(THIS_FILE) apply_patches
 
 bash:

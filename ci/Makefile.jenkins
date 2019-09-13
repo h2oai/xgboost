@@ -134,12 +134,16 @@ endif
 mrproper:
 	make clean_all
 	git clean -f -d -x
+	$(MAKE) -f $(THIS_FILE) apply_patches
 
 bash:
 	@bash
 
 write_version:
 	cd jvm-packages/xgboost4j && mvn -q $(MVN_OPTS) -DnewVersion=$(XGB_VERSION) versions:set
+
+apply_patches:
+	patch -p1 < patch/000_rabit_shutdown.patch
 
 build_impl:
 	mkdir -p build ci-build

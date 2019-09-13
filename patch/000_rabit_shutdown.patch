@@ -8,7 +8,7 @@ index ce5a561..926bc6c 100644
  #if defined (__APPLE__)
 -        sleep(1);
 +  if (world_size > 1) {
-+      sleep();
++      sleep(1);
 +  }
  #endif
  

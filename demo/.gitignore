@@ -1,2 +1,4 @@
 *.libsvm
 *.pkl
+/regression/machine.txt
+/regression/featmap.txt

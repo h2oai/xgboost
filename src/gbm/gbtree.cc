@@ -298,10 +298,6 @@ void GBTree::CommitModel(std::vector<std::vector<std::unique_ptr<RegTree>>>&& ne
   monitor_.Stop("CommitModel");
 }
 
-std::vector<std::string> DumpModel(const FeatureMap& fmap, bool with_stats, std::string format) override {
-  return model_.DumpModel(fmap, with_stats, format);
-}
-
 void GBTree::LoadConfig(Json const& in) {
   CHECK_EQ(get<String>(in["name"]), "gbtree");
   fromJson(in["gbtree_train_param"], &tparam_);

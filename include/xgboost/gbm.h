@@ -142,7 +142,7 @@ class GradientBooster : public Model, public Configurable {
    */
   virtual std::vector<std::string> DumpModel(const FeatureMap& fmap,
                                              bool with_stats,
-                                             std::string format) = 0;
+                                             std::string format) const = 0;
   /*!
    * \brief Whether the current booster uses GPU.
    */

@@ -10,18 +10,19 @@
     </parent-->
     <groupId>ai.h2o</groupId>
     <artifactId>xgboost4j_2.12</artifactId>
-    <version>1.0.0</version>
+    <version>1.0.0-SNAPSHOT</version>
     <packaging>jar</packaging>
     <name>xgboost4j</name>
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
-        <maven.compiler.source>1.7</maven.compiler.source>
-        <maven.compiler.target>1.7</maven.compiler.target>
+        <maven.compiler.source>1.8</maven.compiler.source>
+        <maven.compiler.target>1.8</maven.compiler.target>
         <maven.version>3.3.9</maven.version>
-        <scala.version>2.11.8</scala.version>
-        <scala.binary.version>2.11</scala.binary.version>
+        <scala.version>2.12.8</scala.version>
+        <scala.binary.version>2.12</scala.binary.version>
+        <hadoop.version>2.7.3</hadoop.version>
     </properties>
 
     <description>H2O XGBoost Libraries</description>
@@ -156,10 +157,9 @@
             <scope>compile</scope>
         </dependency>
         <dependency>
-            <groupId>com.typesafe.akka</groupId>
-            <artifactId>akka-testkit_${scala.binary.version}</artifactId>
-            <version>2.5.23</version>
-            <scope>test</scope>
+            <groupId>com.esotericsoftware.kryo</groupId>
+            <artifactId>kryo</artifactId>
+            <version>2.21</version>
         </dependency>
     </dependencies>
 

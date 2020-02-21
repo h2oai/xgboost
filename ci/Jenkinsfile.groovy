@@ -22,7 +22,7 @@ DEFAULT_NODE_LABEL = 'docker && !mr-0xc8'
 PUBLISHABLE_BRANCH_NAME = 'h2o3'
 ARCHIVED_FILES = '**/ci-build/*.jar, **/ci-build/*.whl, **/ci-build/*.log, **/jvm-packages/xgboost4j/*.jar, **/jvm-packages/xgboost4j/*.log'
 
-XGB_MAJOR_VERSION = '0.90'
+XGB_MAJOR_VERSION = '1.0.0'
 XGB_VERSION = "${XGB_MAJOR_VERSION}.${currentBuild.number}"
 
 def targetNexus = params.targetNexus ?: TARGET_NEXUS_NONE
@@ -35,7 +35,7 @@ if (env.BRANCH_NAME != PUBLISHABLE_BRANCH_NAME) {
     }
 }
 
-MAKE_OPTS = "CI=1 XGB_VERSION=${XGB_VERSION} TARGET_NEXUS=${targetNexus} PY_VERSION=27"
+MAKE_OPTS = "CI=1 XGB_VERSION=${XGB_VERSION} TARGET_NEXUS=${targetNexus} PY_VERSION=35"
 
 CONFIGURATIONS = [
     [backend: 'minimal', os: 'osx', node: 'osx'],
@@ -154,8 +154,8 @@ ansiColor('xterm') {
                             withCredentials([file(credentialsId: 'nexus-settings-xml', variable: 'MAVEN_SETTINGS_PATH'), file(credentialsId: 'release-secret-key-ring-file', variable: 'SECRING_PATH')]) {
                                 sh "make ${MAKE_OPTS} -f ci/Makefile.jenkins deploy_lib_jar_in_docker"
                             }
-                            archiveArtifacts artifacts: "jvm-packages/xgboost4j/target/xgboost4j-${XGB_VERSION}.jar", allowEmptyArchive: false
-                            s3Upload("jvm-packages/xgboost4j/target", "xgboost4j-${XGB_VERSION}.jar", targetNexus)
+                            archiveArtifacts artifacts: "jvm-packages/xgboost4j/target/xgboost4j_2.12-${XGB_VERSION}.jar", allowEmptyArchive: false
+                            s3Upload("jvm-packages/xgboost4j/target", "xgboost4j_2.12-${XGB_VERSION}.jar", targetNexus)
                         }
                         CONFIGURATIONS.each { config ->
                             buildSummary.stageWithSummary("Deploy ${config.os}-${config.backend}") {

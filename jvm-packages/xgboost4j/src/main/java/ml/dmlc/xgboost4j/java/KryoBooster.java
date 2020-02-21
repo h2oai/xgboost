@@ -15,14 +15,14 @@
  */
 package ml.dmlc.xgboost4j.java;
 
+import java.util.Map;
+
 import com.esotericsoftware.kryo.Kryo;
 import com.esotericsoftware.kryo.KryoSerializable;
 import com.esotericsoftware.kryo.io.Input;
 import com.esotericsoftware.kryo.io.Output;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-
-import java.util.Map;
 
 @SuppressWarnings("unused")
 public class KryoBooster extends Booster implements KryoSerializable {

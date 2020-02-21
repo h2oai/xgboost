@@ -12,7 +12,7 @@ if [ -z ${XGB_BACKEND} ]; then
 fi
 
 OUTDIR="target/h2o"
-JAR_FILE="target/xgboost4j-${XGB_VERSION}.jar"
+JAR_FILE="target/xgboost4j_2.12-${XGB_VERSION}.jar"
 JAR_FILENAME=$(basename "$JAR_FILE")
 OS=$(uname | sed -e 's/Darwin/osx/' | tr '[:upper:]' '[:lower:]')
 BITS=$(getconf LONG_BIT)

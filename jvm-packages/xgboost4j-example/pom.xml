@@ -24,15 +24,9 @@
     </build>
     <dependencies>
         <dependency>
-<<<<<<< HEAD
             <groupId>ai.h2o</groupId>
-            <artifactId>xgboost4j-spark</artifactId>
-            <version>0.90</version>
-=======
-            <groupId>ml.dmlc</groupId>
             <artifactId>xgboost4j-spark_${scala.binary.version}</artifactId>
             <version>1.0.0</version>
->>>>>>> d90e7b31170b86f97eafb6b9b64027abb6881a3e
         </dependency>
         <dependency>
             <groupId>org.apache.spark</groupId>
@@ -41,15 +35,9 @@
             <scope>provided</scope>
         </dependency>
         <dependency>
-<<<<<<< HEAD
             <groupId>ai.h2o</groupId>
-            <artifactId>xgboost4j-flink</artifactId>
-            <version>0.90</version>
-=======
-            <groupId>ml.dmlc</groupId>
             <artifactId>xgboost4j-flink_${scala.binary.version}</artifactId>
             <version>1.0.0</version>
->>>>>>> d90e7b31170b86f97eafb6b9b64027abb6881a3e
         </dependency>
         <dependency>
             <groupId>org.apache.commons</groupId>

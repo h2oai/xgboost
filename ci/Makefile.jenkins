@@ -12,7 +12,7 @@
 # executed inside a docker container. It is also possible to specify the backend "flavor", these are the        #
 # accepted values:                                                                                              #
 #    - minimal - no GPU and no OMP support used in the example above                                            #
-#    - ompv4   - no GPU, with OMP support (uses libgomp v4), for Ubuntu 16 and CentOS 7+                         #
+#    - ompv4   - no GPU, with OMP support (uses libgomp v4), for Ubuntu 16 and CentOS 7+                        #
 #    - gpuv4   - with GPU and with OMP support (uses libgomp v4), for Ubuntu 16 and CentOS ý+                   #
 #                                                                                                               #
 # Apart from these steps, Jenkins does also the following:                                                      #
@@ -32,7 +32,7 @@ TIMESTAMP := $(shell date +%s)
 SHELL:=/bin/bash
 THIS_FILE := $(lastword $(MAKEFILE_LIST))
 
-XGB_VERSION ?= 0.90-SNAPSHOT
+XGB_VERSION ?= 1.0.0-SNAPSHOT
 
 TARGET_NEXUS ?= snapshot
 NEXUS_IP ?= 172.17.0.53
@@ -40,11 +40,10 @@ NEXUS_IP ?= 172.17.0.53
 PY_VERSION ?= $(shell python --version 2>&1 | egrep -o '[0-9]\.[0-9]' | tr -d '.')
 CHECK_LD_LIB_PATH := /usr/lib/jvm/java-8-oracle/jre/lib/amd64/server
 
-DOCKER_IMAGE_VERSION=2
+DOCKER_IMAGE_VERSION=3
 
 CENTOS_DOCKER_IMAGE := harbor.h2o.ai/opsh2oai/h2o-3-xgboost-build-centos:$(DOCKER_IMAGE_VERSION)
 CENTOS_JAVA_HOME := /usr/lib/jvm/java-1.8.0
-CENTOS_PY_27_ENV_PATH := /opt/rh/python27/enable
 CENTOS_PY_35_ENV_PATH := /opt/rh/rh-python35/enable
 CENTOS_PY_36_ENV_PATH := /opt/rh/rh-python36/enable
 CENTOS_PY_37_ENV_PATH := /envs/xgb-env-py3.7/bin/activate
@@ -52,7 +51,6 @@ CENTOS_PY_ENV_PATH := $(CENTOS_PY_$(PY_VERSION)_ENV_PATH)
 
 UBUNTU_JAVA_HOME ?= /usr/lib/jvm/java-8-oracle
 
-OSX_PY_27_ENV_NAME := xgb-build-py2.7
 OSX_PY_35_ENV_NAME := xgb-build-py3.5
 OSX_PY_36_ENV_NAME := xgb-build-py3.6
 OSX_PY_37_ENV_NAME := xgb-build-py3.7
@@ -146,7 +144,6 @@ write_version:
 
 apply_patches:
 	patch -p1 < patch/000_rabit_shutdown.patch
-	patch -p1 < patch/001_process_keepalive.patch
 
 generate_patch:
 	cd rabit && git diff | sed -Ee 's/([ab]\/)/\1rabit\//g' > ../patch/generated.patch
@@ -367,7 +364,6 @@ jar_%:
 	$(MAKE) -f $(THIS_FILE) BACKEND=$* jar_impl
 
 whls_%:
-	$(MAKE) -f $(THIS_FILE) BACKEND=$* $(DISTRO)_whl27
 	$(MAKE) -f $(THIS_FILE) BACKEND=$* $(DISTRO)_whl35
 	$(MAKE) -f $(THIS_FILE) BACKEND=$* $(DISTRO)_whl36
 	$(MAKE) -f $(THIS_FILE) BACKEND=$* $(DISTRO)_whl37

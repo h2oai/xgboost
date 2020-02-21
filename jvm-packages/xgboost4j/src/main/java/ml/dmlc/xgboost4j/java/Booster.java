@@ -54,8 +54,9 @@ public class Booster implements Serializable {
         logger.error("KryoBooster is not available", e);
         kryoBoosterClass = null;
       }
-    } else
+    } else {
       kryoBoosterClass = null;
+    }
 
     USE_KRYO_BOOSTER = kryoBoosterClass != null;
     KRYO_BOOSTER_CLASS = kryoBoosterClass;
@@ -74,13 +75,16 @@ public class Booster implements Serializable {
    * @throws XGBoostError native error
    */
   static Booster newBooster(Map<String, Object> params, DMatrix[] cacheMats) throws XGBoostError {
-    if (USE_KRYO_BOOSTER)
+    if (USE_KRYO_BOOSTER) {
       return newKryoBooster(params, cacheMats);
-    else
+    }
+    else {
       return new Booster(params, cacheMats, false);
+    }
   }
 
-  private static Booster newKryoBooster(Map<String, Object> params, DMatrix[] cacheMats) throws XGBoostError {
+  private static Booster newKryoBooster(Map<String, Object> params, DMatrix[] cacheMats)
+    throws XGBoostError {
     try {
       Constructor<?> constuctor = KRYO_BOOSTER_CLASS.getDeclaredConstructors()[0];
       return (Booster) constuctor.newInstance(params, cacheMats);
@@ -90,17 +94,23 @@ public class Booster implements Serializable {
     }
   }
 
-  protected Booster(Map<String, Object> params, DMatrix[] cacheMats, boolean isKryoBooster) throws XGBoostError {
+  protected Booster(Map<String, Object> params, DMatrix[] cacheMats, boolean isKryoBooster)
+    throws XGBoostError {
     this(isKryoBooster);
     init(cacheMats);
     setParam("validate_features", "0");
     setParams(params);
   }
 
-  // Booster is not actually initialized in this constructor; must be initialized later - used in deserialization
+  // Booster is not actually initialized in this constructor; must be
+  // initialized later - used in deserialization
   protected Booster(boolean isKryoBooster) {
-    if (USE_KRYO_BOOSTER != isKryoBooster)
-      throw new IllegalStateException("Attempt to instantiate a Booster without support for Kryo in an environment that supports Kryo.");
+    if (USE_KRYO_BOOSTER != isKryoBooster) {
+      throw new IllegalStateException(
+        "Attempt to instantiate a Booster without support for Kryo " +
+          "in an environment that supports Kryo."
+      );
+    }
   }
 
   /**

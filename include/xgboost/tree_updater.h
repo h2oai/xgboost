@@ -1,5 +1,5 @@
 /*!
- * Copyright 2014 by Contributors
+ * Copyright 2014-2019 by Contributors
  * \file tree_updater.h
  * \brief General primitive for tree learning,
  *   Updating a collection of trees given the information.
@@ -9,20 +9,29 @@
 #define XGBOOST_TREE_UPDATER_H_
 
 #include <dmlc/registry.h>
+#include <xgboost/base.h>
+#include <xgboost/data.h>
+#include <xgboost/tree_model.h>
+#include <xgboost/generic_parameters.h>
+#include <xgboost/host_device_vector.h>
+#include <xgboost/model.h>
+
 #include <functional>
 #include <vector>
 #include <utility>
 #include <string>
-#include "./base.h"
-#include "./data.h"
-#include "./tree_model.h"
-#include "../../src/common/host_device_vector.h"
 
 namespace xgboost {
+
+class Json;
+
 /*!
  * \brief interface of tree update module, that performs update of a tree.
  */
-class TreeUpdater {
+class TreeUpdater : public Configurable {
+ protected:
+  GenericParameter const* tparam_;
+
  public:
   /*! \brief virtual destructor */
   virtual ~TreeUpdater() = default;
@@ -30,7 +39,7 @@ class TreeUpdater {
    * \brief Initialize the updater with given arguments.
    * \param args arguments to the objective function.
    */
-  virtual void Init(const std::vector<std::pair<std::string, std::string> >& args) = 0;
+  virtual void Configure(const Args& args) = 0;
   /*!
    * \brief perform update to the tree models
    * \param gpair the gradient pair statistics of the data
@@ -59,11 +68,13 @@ class TreeUpdater {
     return false;
   }
 
+  virtual char const* Name() const = 0;
+
   /*!
    * \brief Create a tree updater given name
    * \param name Name of the tree updater.
    */
-  static TreeUpdater* Create(const std::string& name);
+  static TreeUpdater* Create(const std::string& name, GenericParameter const* tparam);
 };
 
 /*!

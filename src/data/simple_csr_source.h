@@ -10,11 +10,16 @@
 
 #include <xgboost/base.h>
 #include <xgboost/data.h>
-#include <vector>
-#include <algorithm>
 
+#include <algorithm>
+#include <string>
+#include <vector>
+#include <limits>
 
 namespace xgboost {
+
+class Json;
+
 namespace data {
 /*!
  * \brief The simplest form of data holder, can be used to create DMatrix.
@@ -25,9 +30,8 @@ namespace data {
  * DMatrix* dmat = DMatrix::Create(std::move(source));
  * \encode
  */
-class SimpleCSRSource : public DataSource {
+class SimpleCSRSource : public DataSource<SparsePage> {
  public:
-  // public data members
   // MetaInfo info;  // inheritated from DataSource
   SparsePage page_;
   /*! \brief default constructor */
@@ -41,12 +45,7 @@ class SimpleCSRSource : public DataSource {
    * \param src source data iter.
    */
   void CopyFrom(DMatrix* src);
-  /*!
-   * \brief copy content of data from parser, also set the additional information.
-   * \param src source data iter.
-   * \param info The additional information reflected in the parser.
-   */
-  void CopyFrom(dmlc::Parser<uint32_t>* src);
+
   /*!
    * \brief Load data from binary stream.
    * \param fi the pointer to load data from.

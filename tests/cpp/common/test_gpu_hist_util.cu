@@ -1,70 +1,91 @@
-#include "../../../src/common/device_helpers.cuh"
-#include "../../../src/common/hist_util.h"
-#include "gtest/gtest.h"
-#include "xgboost/c_api.h"
+#include <dmlc/filesystem.h>
+#include <gtest/gtest.h>
+
 #include <algorithm>
 #include <cmath>
+
+
 #include <thrust/device_vector.h>
 #include <thrust/iterator/counting_iterator.h>
+
+#include "xgboost/c_api.h"
+
+#include "../../../src/common/device_helpers.cuh"
+#include "../../../src/common/hist_util.h"
+
+#include "../helpers.h"
 
 namespace xgboost {
 namespace common {
 
-void TestDeviceSketch(const GPUSet& devices) {
+void TestDeviceSketch(bool use_external_memory) {
   // create the data
   int nrows = 10001;
-  std::vector<float> test_data(nrows);
-  auto count_iter = thrust::make_counting_iterator(0);
-  // fill in reverse order
-  std::copy(count_iter, count_iter + nrows, test_data.rbegin());
+  std::shared_ptr<xgboost::DMatrix> *dmat = nullptr;
 
-  // create the DMatrix
-  DMatrixHandle dmat_handle;
-  XGDMatrixCreateFromMat(test_data.data(), nrows, 1, -1,
-                         &dmat_handle);
-  auto dmat = static_cast<std::shared_ptr<xgboost::DMatrix> *>(dmat_handle);
+  size_t num_cols = 1;
+  dmlc::TemporaryDirectory tmpdir;
+  std::string file = tmpdir.path + "/big.libsvm";
+  if (use_external_memory) {
+    auto sp_dmat = CreateSparsePageDMatrix(nrows * 3, 128UL, file); // 3 entries/row
+    dmat = new std::shared_ptr<xgboost::DMatrix>(std::move(sp_dmat));
+    num_cols = 5;
+  } else {
+     std::vector<float> test_data(nrows);
+     auto count_iter = thrust::make_counting_iterator(0);
+     // fill in reverse order
+     std::copy(count_iter, count_iter + nrows, test_data.rbegin());
 
-  // parameters for finding quantiles
-  tree::TrainParam p;
-  p.max_bin = 20;
-  p.gpu_id = 0;
-  p.n_gpus = devices.Size();
-  // ensure that the exact quantiles are found
-  int gpu_batch_nrows = nrows * 10;
+     // create the DMatrix
+     DMatrixHandle dmat_handle;
+     XGDMatrixCreateFromMat(test_data.data(), nrows, 1, -1,
+                            &dmat_handle);
+     dmat = static_cast<std::shared_ptr<xgboost::DMatrix> *>(dmat_handle);
+  }
+
+  int device{0};
+  int max_bin{20};
+  int gpu_batch_nrows{0};
 
   // find quantiles on the CPU
-  HistCutMatrix hmat_cpu;
-  hmat_cpu.Init((*dmat).get(), p.max_bin);
+  HistogramCuts hmat_cpu;
+  hmat_cpu.Build((*dmat).get(), max_bin);
 
   // find the cuts on the GPU
-  const SparsePage& batch = *(*dmat)->GetRowBatches().begin();
-  HistCutMatrix hmat_gpu;
-  DeviceSketch(batch, (*dmat)->Info(), p, &hmat_gpu, gpu_batch_nrows);
+  HistogramCuts hmat_gpu;
+  size_t row_stride = DeviceSketch(device, max_bin, gpu_batch_nrows, dmat->get(), &hmat_gpu);
+
+  // compare the row stride with the one obtained from the dmatrix
+  bst_row_t expected_row_stride = 0;
+  for (const auto &batch : dmat->get()->GetBatches<xgboost::SparsePage>()) {
+    const auto &offset_vec = batch.offset.ConstHostVector();
+    for (int i = 1; i <= offset_vec.size() -1; ++i) {
+      expected_row_stride = std::max(expected_row_stride, offset_vec[i] - offset_vec[i-1]);
+    }
+  }
+
+  ASSERT_EQ(expected_row_stride, row_stride);
 
   // compare the cuts
   double eps = 1e-2;
-  ASSERT_EQ(hmat_gpu.min_val.size(), 1);
-  ASSERT_EQ(hmat_gpu.row_ptr.size(), 2);
-  ASSERT_EQ(hmat_gpu.cut.size(), hmat_cpu.cut.size());
-  ASSERT_LT(fabs(hmat_cpu.min_val[0] - hmat_gpu.min_val[0]), eps * nrows);
-  for (int i = 0; i < hmat_gpu.cut.size(); ++i) {
-    ASSERT_LT(fabs(hmat_cpu.cut[i] - hmat_gpu.cut[i]), eps * nrows);
+  ASSERT_EQ(hmat_gpu.MinValues().size(), num_cols);
+  ASSERT_EQ(hmat_gpu.Ptrs().size(), num_cols + 1);
+  ASSERT_EQ(hmat_gpu.Values().size(), hmat_cpu.Values().size());
+  ASSERT_LT(fabs(hmat_cpu.MinValues()[0] - hmat_gpu.MinValues()[0]), eps * nrows);
+  for (int i = 0; i < hmat_gpu.Values().size(); ++i) {
+    ASSERT_LT(fabs(hmat_cpu.Values()[i] - hmat_gpu.Values()[i]), eps * nrows);
   }
 
   delete dmat;
 }
 
 TEST(gpu_hist_util, DeviceSketch) {
-  TestDeviceSketch(GPUSet::Range(0, 1));
+  TestDeviceSketch(false);
 }
 
-#if defined(XGBOOST_USE_NCCL)
-TEST(gpu_hist_util, MGPU_DeviceSketch) {
-  auto devices = GPUSet::AllVisible();
-  CHECK_GT(devices.Size(), 1);
-  TestDeviceSketch(devices);
+TEST(gpu_hist_util, DeviceSketch_ExternalMemory) {
+  TestDeviceSketch(true);
 }
-#endif
 
 }  // namespace common
 }  // namespace xgboost

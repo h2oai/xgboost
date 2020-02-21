@@ -15,6 +15,7 @@
  */
 package ml.dmlc.xgboost4j.java;
 
+import java.io.*;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
@@ -25,6 +26,9 @@ import ml.dmlc.xgboost4j.java.util.BigDenseMatrix;
 import ml.dmlc.xgboost4j.LabeledPoint;
 import org.junit.Assert;
 import org.junit.Test;
+
+import static org.junit.Assert.assertArrayEquals;
+import static org.junit.Assert.assertEquals;
 
 /**
  * test cases for DMatrix
@@ -57,7 +61,8 @@ public class DMatrixTest {
   @Test
   public void testCreateFromFile() throws XGBoostError {
     //create DMatrix from file
-    DMatrix dmat = new DMatrix("../../demo/data/agaricus.txt.test");
+    String filePath = writeResourceIntoTempFile("/agaricus.txt.test");
+    DMatrix dmat = new DMatrix(filePath);
     //get label
     float[] labels = dmat.getLabel();
     //check length
@@ -308,8 +313,8 @@ public class DMatrixTest {
       // (2,3) -> 3
       for (int i = 0; i < 3; i++) {
         float[][] preds = booster.predict(new DMatrix(data[i], 1, 2));
-        Assert.assertEquals(1, preds.length);
-        Assert.assertArrayEquals(new float[]{(float) (i + 1)}, preds[0], 1e-2f);
+        assertEquals(1, preds.length);
+        assertArrayEquals(new float[]{(float) (i + 1)}, preds[0], 1e-2f);
       }
     } finally {
       if (trainMat != null)
@@ -319,6 +324,58 @@ public class DMatrixTest {
       }
       Rabit.shutdown();
     }
+  }
+
+  private String writeResourceIntoTempFile(String resource) {
+    InputStream input = getClass().getResourceAsStream(resource);
+    if (input == null) {
+      throw new IllegalArgumentException("Resource " + resource + " does not exist.");
+    }
+    File tmp;
+    try {
+      tmp = File.createTempFile("junit", ".test");
+    } catch (IOException e) {
+      throw new RuntimeException("Unable to write to temp file.", e);
+    }
+    byte[] buff = new byte[1024];
+    try (FileOutputStream output = new FileOutputStream(tmp)) {
+      int n;
+      while ((n = input.read(buff)) > 0) {
+        output.write(buff, 0, n);
+      }
+    } catch (IOException e) {
+      throw new RuntimeException("Unable to write to temp file.", e);
+    }
+    return tmp.getAbsolutePath();
+  }
+
+  @Test
+  public void testSetAndGetGroup() throws XGBoostError {
+    //create DMatrix from 10*5 dense matrix
+    int nrow = 10;
+    int ncol = 5;
+    float[] data0 = new float[nrow * ncol];
+    //put random nums
+    Random random = new Random();
+    for (int i = 0; i < nrow * ncol; i++) {
+      data0[i] = random.nextFloat();
+    }
+
+    //create label
+    float[] label0 = new float[nrow];
+    for (int i = 0; i < nrow; i++) {
+      label0[i] = random.nextFloat();
+    }
+
+    //create two groups
+    int[] groups = new int[]{5, 5};
+
+    DMatrix dmat0 = new DMatrix(data0, nrow, ncol, -0.1f);
+    dmat0.setLabel(label0);
+    dmat0.setGroup(groups);
+
+    //check
+    TestCase.assertTrue(Arrays.equals(new int[]{0, 5, 10}, dmat0.getGroup()));
   }
 
 }

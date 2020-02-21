@@ -17,7 +17,7 @@
 *.tar.gz
 *conf
 *buffer
-*model
+*.model
 *pyc
 *.train
 *.test
@@ -69,10 +69,8 @@ config.mk
 /xgboost
 *.data
 build_plugin
-.idea
 recommonmark/
 tags
-*.iml
 *.class
 target
 *.swp
@@ -90,12 +88,16 @@ lib/
 # spark
 metastore_db
 
-cmake-build-debug
-demo/regression/featmap.txt
-demo/regression/machine.txt
-plugin/updater_gpu/test/cpp/data
 /include/xgboost/build_config.h
 
 # files from R-package source install
 **/config.status
 R-package/src/Makevars
+
+# Visual Studio Code
+/.vscode/
+
+# IntelliJ/CLion
+.idea
+*.iml
+/cmake-build-debug/

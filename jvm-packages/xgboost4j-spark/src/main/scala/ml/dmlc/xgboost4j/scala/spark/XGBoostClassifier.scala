@@ -37,10 +37,6 @@ import org.json4s.DefaultFormats
 import scala.collection.JavaConverters._
 import scala.collection.{AbstractIterator, Iterator, mutable}
 
-private[spark] trait XGBoostClassifierParams extends GeneralParams with LearningTaskParams
-  with BoosterParams with HasWeightCol with HasBaseMarginCol with HasNumClass with ParamMapFuncs
-  with HasLeafPredictionCol with HasContribPredictionCol with NonParamVariables
-
 class XGBoostClassifier (
     override val uid: String,
     private val xgboostParams: Map[String, Any])
@@ -54,7 +50,7 @@ class XGBoostClassifier (
   def this(xgboostParams: Map[String, Any]) = this(
     Identifiable.randomUID("xgbc"), xgboostParams)
 
-  XGBoostToMLlibParams(xgboostParams)
+  XGBoost2MLlibParams(xgboostParams)
 
   def setWeightCol(value: String): this.type = set(weightCol, value)
 
@@ -182,11 +178,11 @@ class XGBoostClassifier (
 
     val trainingSet: RDD[XGBLabeledPoint] = DataUtils.convertDataFrameToXGBLabeledPointRDDs(
       col($(labelCol)), col($(featuresCol)), weight, baseMargin,
-      None, dataset.asInstanceOf[DataFrame]).head
+      None, $(numWorkers), needDeterministicRepartitioning, dataset.asInstanceOf[DataFrame]).head
     val evalRDDMap = getEvalSets(xgboostParams).map {
       case (name, dataFrame) => (name,
         DataUtils.convertDataFrameToXGBLabeledPointRDDs(col($(labelCol)), col($(featuresCol)),
-          weight, baseMargin, None, dataFrame).head)
+          weight, baseMargin, None, $(numWorkers), needDeterministicRepartitioning, dataFrame).head)
     }
     transformSchema(dataset.schema, logging = true)
     val derivedXGBParamMap = MLlib2XGBoostParams
@@ -247,6 +243,13 @@ class XGBoostClassificationModel private[ml](
 
   def setTreeLimit(value: Int): this.type = set(treeLimit, value)
 
+  def setMissing(value: Float): this.type = set(missing, value)
+
+  def setAllowZeroForMissingValue(value: Boolean): this.type = set(
+    allowNonZeroForMissing,
+    value
+  )
+
   def setInferBatchSize(value: Int): this.type = set(inferBatchSize, value)
 
   /**
@@ -255,7 +258,11 @@ class XGBoostClassificationModel private[ml](
    */
   override def predict(features: Vector): Double = {
     import DataUtils._
-    val dm = new DMatrix(XGBoost.processMissingValues(Iterator(features.asXGB), $(missing)))
+    val dm = new DMatrix(XGBoost.processMissingValues(
+      Iterator(features.asXGB),
+      $(missing),
+      $(allowNonZeroForMissing)
+    ))
     val probability = _booster.predict(data = dm)(0).map(_.toDouble)
     if (numClasses == 2) {
       math.round(probability(0))
@@ -292,7 +299,9 @@ class XGBoostClassificationModel private[ml](
 
         private val batchIterImpl = rowIterator.grouped($(inferBatchSize)).flatMap { batchRow =>
           if (batchCnt == 0) {
-            val rabitEnv = Array("DMLC_TASK_ID" -> TaskContext.getPartitionId().toString).toMap
+            val rabitEnv = Array(
+              "DMLC_TASK_ID" -> TaskContext.getPartitionId().toString,
+              "DMLC_WORKER_STOP_PROCESS_ON_ERROR" -> "false").toMap
             Rabit.init(rabitEnv.asJava)
           }
 
@@ -309,7 +318,11 @@ class XGBoostClassificationModel private[ml](
           }
 
           val dm = new DMatrix(
-            XGBoost.processMissingValues(features.map(_.asXGB), $(missing)),
+            XGBoost.processMissingValues(
+              features.map(_.asXGB),
+              $(missing),
+              $(allowNonZeroForMissing)
+            ),
             cacheInfo)
           try {
             val Array(rawPredictionItr, probabilityItr, predLeafItr, predContribItr) =

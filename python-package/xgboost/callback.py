@@ -1,7 +1,6 @@
 # coding: utf-8
 # pylint: disable=invalid-name, too-many-statements
 """Training Library containing training routines."""
-from __future__ import absolute_import
 
 from . import rabit
 from .core import EarlyStopException
@@ -19,11 +18,11 @@ def _get_callback_context(env):
 def _fmt_metric(value, show_stdv=True):
     """format metric string"""
     if len(value) == 2:
-        return '%s:%g' % (value[0], value[1])
+        return '{0}:{1:.5f}'.format(value[0], value[1])
     if len(value) == 3:
         if show_stdv:
-            return '%s:%g+%g' % (value[0], value[1], value[2])
-        return '%s:%g' % (value[0], value[1])
+            return  '{0}:{1:.5f}+{2:.5f}'.format(value[0], value[1], value[2])
+        return '{0}:{1:.5f}'.format(value[0], value[1])
     raise ValueError("wrong metric value")
 
 
@@ -134,14 +133,16 @@ def reset_learning_rate(learning_rates):
 
         if context == 'train':
             bst, i, n = env.model, env.iteration, env.end_iteration
-            bst.set_param('learning_rate', get_learning_rate(i, n, learning_rates))
+            bst.set_param(
+                'learning_rate', get_learning_rate(i, n, learning_rates))
         elif context == 'cv':
             i, n = env.iteration, env.end_iteration
             for cvpack in env.cvfolds:
                 bst = cvpack.bst
-                bst.set_param('learning_rate', get_learning_rate(i, n, learning_rates))
+                bst.set_param(
+                    'learning_rate', get_learning_rate(i, n, learning_rates))
 
-    callback.before_iteration = True
+    callback.before_iteration = False
     return callback
 
 
@@ -222,9 +223,9 @@ def early_stop(stopping_rounds, maximize=False, verbose=True):
 
     def callback(env):
         """internal function"""
-        score = env.evaluation_result_list[-1][1]
         if not state:
             init(env)
+        score = env.evaluation_result_list[-1][1]
         best_score = state['best_score']
         best_iteration = state['best_iteration']
         maximize_score = state['maximize_score']

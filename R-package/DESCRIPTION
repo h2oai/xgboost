@@ -1,8 +1,8 @@
 Package: xgboost
 Type: Package
 Title: Extreme Gradient Boosting
-Version: 0.90.0.1
-Date: 2019-05-18
+Version: 1.0.0.1
+Date: 2019-07-23
 Authors@R: c(
   person("Tianqi", "Chen", role = c("aut"),
          email = "tianqi.tchen@gmail.com"),
@@ -63,5 +63,5 @@ Imports:
     data.table (>= 1.9.6),
     magrittr (>= 1.5),
     stringi (>= 0.5.2)
-RoxygenNote: 6.1.0
+RoxygenNote: 7.0.2
 SystemRequirements: GNU make, C++11

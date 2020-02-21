@@ -1,13 +1,15 @@
 /*!
- * Copyright 2018 by Contributors
+ * Copyright 2018-2019 by Contributors
  */
-#include "../helpers.h"
-#include "../../../src/common/host_device_vector.h"
+#include <xgboost/host_device_vector.h>
 #include <xgboost/tree_updater.h>
 #include <gtest/gtest.h>
+
 #include <vector>
 #include <string>
 #include <memory>
+
+#include "../helpers.h"
 
 namespace xgboost {
 namespace tree {
@@ -25,9 +27,10 @@ TEST(Updater, Refresh) {
     {"reg_lambda", "1"}};
 
   RegTree tree = RegTree();
-  tree.param.InitAllowUnknown(cfg);
+  auto lparam = CreateEmptyGenericParam(GPUIDX);
+  tree.param.UpdateAllowUnknown(cfg);
   std::vector<RegTree*> trees {&tree};
-  std::unique_ptr<TreeUpdater> refresher(TreeUpdater::Create("refresh"));
+  std::unique_ptr<TreeUpdater> refresher(TreeUpdater::Create("refresh", &lparam));
 
   tree.ExpandNode(0, 2, 0.2f, false, 0.0, 0.2f, 0.8f, 0.0f, 0.0f);
   int cleft = tree[0].LeftChild();
@@ -36,7 +39,7 @@ TEST(Updater, Refresh) {
   tree.Stat(cleft).base_weight = 1.2;
   tree.Stat(cright).base_weight = 1.3;
 
-  refresher->Init(cfg);
+  refresher->Configure(cfg);
   refresher->Update(&gpair, dmat->get(), trees);
 
   bst_float constexpr kEps = 1e-6;

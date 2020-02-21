@@ -58,6 +58,16 @@ typedef struct {  // NOLINT(*)
   float* value;
 } XGBoostBatchCSR;
 
+/*!
+ * \brief Return the version of the XGBoost library being currently used.
+ *
+ *  The output variable is only written if it's not NULL.
+ *
+ * \param major Store the major version number
+ * \param minor Store the minor version number
+ * \param patch Store the patch (revision) number
+ */
+XGB_DLL void XGBoostVersion(int* major, int* minor, int* patch);
 
 /*!
  * \brief Callback to set the data to handle,
@@ -222,6 +232,20 @@ XGB_DLL int XGDMatrixSliceDMatrix(DMatrixHandle handle,
                                   bst_ulong len,
                                   DMatrixHandle *out);
 /*!
+ * \brief create a new dmatrix from sliced content of existing matrix
+ * \param handle instance of data matrix to be sliced
+ * \param idxset index set
+ * \param len length of index set
+ * \param out a sliced new matrix
+ * \param allow_groups allow slicing of an array with groups
+ * \return 0 when success, -1 when failure happens
+ */
+XGB_DLL int XGDMatrixSliceDMatrixEx(DMatrixHandle handle,
+                                    const int *idxset,
+                                    bst_ulong len,
+                                    DMatrixHandle *out,
+                                    int allow_groups);
+/*!
  * \brief free space in data matrix
  * \return 0 when success, -1 when failure happens
  */
@@ -259,8 +283,9 @@ XGB_DLL int XGDMatrixSetUIntInfo(DMatrixHandle handle,
                                  const char *field,
                                  const unsigned *array,
                                  bst_ulong len);
+
 /*!
- * \brief set label of the training matrix
+ * \brief (deprecated) Use XGDMatrixSetUIntInfo instead. Set group of the training matrix
  * \param handle a instance of data matrix
  * \param group pointer to group size
  * \param len length of array
@@ -269,8 +294,9 @@ XGB_DLL int XGDMatrixSetUIntInfo(DMatrixHandle handle,
 XGB_DLL int XGDMatrixSetGroup(DMatrixHandle handle,
                               const unsigned *group,
                               bst_ulong len);
+
 /*!
- * \brief get float info vector from matrix
+ * \brief get float info vector from matrix.
  * \param handle a instance of data matrix
  * \param field field name
  * \param out_len used to set result length
@@ -390,6 +416,7 @@ XGB_DLL int XGBoosterEvalOneIter(BoosterHandle handle,
  *          4:output feature contributions to individual predictions
  * \param ntree_limit limit number of trees used for prediction, this is only valid for boosted trees
  *    when the parameter is set to 0, we will use all the trees
+ * \param training Whether the prediction value is used for training.
  * \param out_len used to store length of returning result
  * \param out_result used to set a pointer to array
  * \return 0 when success, -1 when failure happens
@@ -398,11 +425,30 @@ XGB_DLL int XGBoosterPredict(BoosterHandle handle,
                              DMatrixHandle dmat,
                              int option_mask,
                              unsigned ntree_limit,
+                             int training,
                              bst_ulong *out_len,
                              const float **out_result);
+/*
+ * Short note for serialization APIs.  There are 3 different sets of serialization API.
+ *
+ * - Functions with the term "Model" handles saving/loading XGBoost model like trees or
+ *   linear weights.  Striping out parameters configuration like training algorithms or
+ *   CUDA device ID helps user to reuse the trained model for different tasks, examples
+ *   are prediction, training continuation or interpretation.
+ *
+ * - Functions with the term "Config" handles save/loading configuration.  It helps user
+ *   to study the internal of XGBoost.  Also user can use the load method for specifying
+ *   paramters in a structured way.  These functions are introduced in 1.0.0, and are not
+ *   yet stable.
+ *
+ * - Functions with the term "Serialization" are combined of above two.  They are used in
+ *   situations like check-pointing, or continuing training task in distributed
+ *   environment.  In these cases the task must be carried out without any user
+ *   intervention.
+ */
 
 /*!
- * \brief load model from existing file
+ * \brief Load model from existing file
  * \param handle handle
  * \param fname file name
 * \return 0 when success, -1 when failure happens
@@ -410,7 +456,7 @@ XGB_DLL int XGBoosterPredict(BoosterHandle handle,
 XGB_DLL int XGBoosterLoadModel(BoosterHandle handle,
                                const char *fname);
 /*!
- * \brief save model into existing file
+ * \brief Save model into existing file
  * \param handle handle
  * \param fname file name
  * \return 0 when success, -1 when failure happens
@@ -435,9 +481,75 @@ XGB_DLL int XGBoosterLoadModelFromBuffer(BoosterHandle handle,
  * \param out_dptr the argument to hold the output data pointer
  * \return 0 when success, -1 when failure happens
  */
-XGB_DLL int XGBoosterGetModelRaw(BoosterHandle handle,
-                                 bst_ulong *out_len,
+XGB_DLL int XGBoosterGetModelRaw(BoosterHandle handle, bst_ulong *out_len,
                                  const char **out_dptr);
+
+/*!
+ * \brief Memory snapshot based serialization method.  Saves everything states
+ * into buffer.
+ *
+ * \param handle handle
+ * \param out_len the argument to hold the output length
+ * \param out_dptr the argument to hold the output data pointer
+ * \return 0 when success, -1 when failure happens
+ */
+XGB_DLL int XGBoosterSerializeToBuffer(BoosterHandle handle, bst_ulong *out_len,
+                                       const char **out_dptr);
+/*!
+ * \brief Memory snapshot based serialization method.  Loads the buffer returned
+ *        from `XGBoosterSerializeToBuffer'.
+ *
+ * \param handle handle
+ * \param buf pointer to the buffer
+ * \param len the length of the buffer
+ * \return 0 when success, -1 when failure happens
+ */
+XGB_DLL int XGBoosterUnserializeFromBuffer(BoosterHandle handle,
+                                           const void *buf, bst_ulong len);
+
+/*!
+ * \brief Initialize the booster from rabit checkpoint.
+ *  This is used in distributed training API.
+ * \param handle handle
+ * \param version The output version of the model.
+ * \return 0 when success, -1 when failure happens
+ */
+XGB_DLL int XGBoosterLoadRabitCheckpoint(BoosterHandle handle,
+                                         int* version);
+
+/*!
+ * \brief Save the current checkpoint to rabit.
+ * \param handle handle
+ * \return 0 when success, -1 when failure happens
+ */
+XGB_DLL int XGBoosterSaveRabitCheckpoint(BoosterHandle handle);
+
+
+/*!
+ * \brief Save XGBoost's internal configuration into a JSON document.  Currently the
+ *        support is experimental, function signature may change in the future without
+ *        notice.
+ *
+ * \param handle handle to Booster object.
+ * \param out_str A valid pointer to array of characters.  The characters array is
+ *                allocated and managed by XGBoost, while pointer to that array needs to
+ *                be managed by caller.
+ * \return 0 when success, -1 when failure happens
+ */
+XGB_DLL int XGBoosterSaveJsonConfig(BoosterHandle handle, bst_ulong *out_len,
+                                    char const **out_str);
+/*!
+ * \brief Load XGBoost's internal configuration from a JSON document.  Currently the
+ *        support is experimental, function signature may change in the future without
+ *        notice.
+ *
+ * \param handle handle to Booster object.
+ * \param json_parameters string representation of a JSON document.
+ * \return 0 when success, -1 when failure happens
+ */
+XGB_DLL int XGBoosterLoadJsonConfig(BoosterHandle handle,
+                                    char const *json_parameters);
+
 /*!
  * \brief dump model, return array of strings representing model dump
  * \param handle handle
@@ -544,25 +656,4 @@ XGB_DLL int XGBoosterSetAttr(BoosterHandle handle,
 XGB_DLL int XGBoosterGetAttrNames(BoosterHandle handle,
                                   bst_ulong* out_len,
                                   const char*** out);
-
-// --- Distributed training API----
-// NOTE: functions in rabit/c_api.h will be also available in libxgboost.so
-/*!
- * \brief Initialize the booster from rabit checkpoint.
- *  This is used in distributed training API.
- * \param handle handle
- * \param version The output version of the model.
- * \return 0 when success, -1 when failure happens
- */
-XGB_DLL int XGBoosterLoadRabitCheckpoint(
-    BoosterHandle handle,
-    int* version);
-
-/*!
- * \brief Save the current checkpoint to rabit.
- * \param handle handle
- * \return 0 when success, -1 when failure happens
- */
-XGB_DLL int XGBoosterSaveRabitCheckpoint(BoosterHandle handle);
-
 #endif  // XGBOOST_C_API_H_

@@ -1,18 +1,19 @@
 /*!
- * Copyright 2018 by Contributors
+ * Copyright 2018-2019 by Contributors
  */
-#include "../helpers.h"
-#include "../../../src/tree/param.h"
-#include "../../../src/tree/updater_quantile_hist.h"
-#include "../../../src/tree/split_evaluator.h"
-#include "../../../src/common/host_device_vector.h"
-
+#include <xgboost/host_device_vector.h>
 #include <xgboost/tree_updater.h>
 #include <gtest/gtest.h>
 
 #include <algorithm>
 #include <vector>
 #include <string>
+
+#include "../helpers.h"
+#include "../../../src/tree/param.h"
+#include "../../../src/tree/updater_quantile_hist.h"
+#include "../../../src/tree/split_evaluator.h"
+#include "xgboost/data.h"
 
 namespace xgboost {
 namespace tree {
@@ -25,8 +26,10 @@ class QuantileHistMock : public QuantileHistMaker {
 
     BuilderMock(const TrainParam& param,
                 std::unique_ptr<TreeUpdater> pruner,
-                std::unique_ptr<SplitEvaluator> spliteval)
-        : RealImpl(param, std::move(pruner), std::move(spliteval)) {}
+                std::unique_ptr<SplitEvaluator> spliteval,
+                FeatureInteractionConstraintHost int_constraint,
+                DMatrix const* fmat)
+        : RealImpl(param, std::move(pruner), std::move(spliteval), std::move(int_constraint), fmat) {}
 
    public:
     void TestInitData(const GHistIndexMatrix& gmat,
@@ -46,24 +49,26 @@ class QuantileHistMock : public QuantileHistMaker {
       const size_t num_row = p_fmat->Info().num_row_;
       const size_t num_col = p_fmat->Info().num_col_;
       /* Validate HistCutMatrix */
-      ASSERT_EQ(gmat.cut.row_ptr.size(), num_col + 1);
+      ASSERT_EQ(gmat.cut.Ptrs().size(), num_col + 1);
       for (size_t fid = 0; fid < num_col; ++fid) {
-        // Each feature must have at least one quantile point (cut)
-        const size_t ibegin = gmat.cut.row_ptr[fid];
-        const size_t iend = gmat.cut.row_ptr[fid + 1];
-        ASSERT_LT(ibegin, iend);
+        const size_t ibegin = gmat.cut.Ptrs()[fid];
+        const size_t iend = gmat.cut.Ptrs()[fid + 1];
+        // Ordered,  but empty feature is allowed.
+        ASSERT_LE(ibegin, iend);
         for (size_t i = ibegin; i < iend - 1; ++i) {
           // Quantile points must be sorted in ascending order
           // No duplicates allowed
-          ASSERT_LT(gmat.cut.cut[i], gmat.cut.cut[i + 1]);
+          ASSERT_LT(gmat.cut.Values()[i], gmat.cut.Values()[i + 1])
+              << "ibegin: " << ibegin << ", "
+              << "iend: " << iend;
         }
       }
 
       /* Validate GHistIndexMatrix */
       ASSERT_EQ(gmat.row_ptr.size(), num_row + 1);
       ASSERT_LT(*std::max_element(gmat.index.begin(), gmat.index.end()),
-                gmat.cut.row_ptr.back());
-      for (const auto& batch : p_fmat->GetRowBatches()) {
+                gmat.cut.Ptrs().back());
+      for (const auto& batch : p_fmat->GetBatches<xgboost::SparsePage>()) {
         for (size_t i = 0; i < batch.Size(); ++i) {
           const size_t rid = batch.base_rowid + i;
           ASSERT_LT(rid, num_row);
@@ -76,15 +81,15 @@ class QuantileHistMock : public QuantileHistMaker {
             const size_t bin_id = gmat.index[gmat_row_offset + j];
             const size_t fid = inst[j].index;
             // The bin ID must correspond to correct feature
-            ASSERT_GE(bin_id, gmat.cut.row_ptr[fid]);
-            ASSERT_LT(bin_id, gmat.cut.row_ptr[fid + 1]);
+            ASSERT_GE(bin_id, gmat.cut.Ptrs()[fid]);
+            ASSERT_LT(bin_id, gmat.cut.Ptrs()[fid + 1]);
             // The bin ID must correspond to a region between two
             // suitable quantile points
-            ASSERT_LT(inst[j].fvalue, gmat.cut.cut[bin_id]);
-            if (bin_id > gmat.cut.row_ptr[fid]) {
-              ASSERT_GE(inst[j].fvalue, gmat.cut.cut[bin_id - 1]);
+            ASSERT_LT(inst[j].fvalue, gmat.cut.Values()[bin_id]);
+            if (bin_id > gmat.cut.Ptrs()[fid]) {
+              ASSERT_GE(inst[j].fvalue, gmat.cut.Values()[bin_id - 1]);
             } else {
-              ASSERT_GE(inst[j].fvalue, gmat.cut.min_val[fid]);
+              ASSERT_GE(inst[j].fvalue, gmat.cut.MinValues()[fid]);
             }
           }
         }
@@ -102,10 +107,10 @@ class QuantileHistMock : public QuantileHistMaker {
       GHistIndexBlockMatrix dummy;
       hist_.AddHistRow(nid);
       BuildHist(gpair, row_set_collection_[nid],
-                gmat, dummy, hist_[nid], false);
+                gmat, dummy, hist_[nid]);
 
       // Check if number of histogram bins is correct
-      ASSERT_EQ(hist_[nid].size(), gmat.cut.row_ptr.back());
+      ASSERT_EQ(hist_[nid].size(), gmat.cut.Ptrs().back());
       std::vector<GradientPairPrecise> histogram_expected(hist_[nid].size());
 
       // Compute the correct histogram (histogram_expected)
@@ -135,7 +140,7 @@ class QuantileHistMock : public QuantileHistMaker {
             {0.27f, 0.29f}, {0.37f, 0.39f}, {-0.47f, 0.49f}, {0.57f, 0.59f} };
       size_t constexpr kMaxBins = 4;
       auto dmat = CreateDMatrix(kNRows, kNCols, 0, 3);
-        // dense, no missing values
+      // dense, no missing values
 
       common::GHistIndexMatrix gmat;
       gmat.Init((*dmat).get(), kMaxBins);
@@ -144,7 +149,7 @@ class QuantileHistMock : public QuantileHistMaker {
       hist_.AddHistRow(0);
 
       BuildHist(row_gpairs, row_set_collection_[0],
-                gmat, quantile_index_block, hist_[0], false);
+                gmat, quantile_index_block, hist_[0]);
 
       RealImpl::InitNewNode(0, gmat, row_gpairs, *(*dmat), tree);
 
@@ -159,7 +164,7 @@ class QuantileHistMock : public QuantileHistMaker {
       }
       // Initialize split evaluator
       std::unique_ptr<SplitEvaluator> evaluator(SplitEvaluator::Create("elastic_net"));
-      evaluator->Init({});
+      evaluator->Init(&param_);
 
       // Now enumerate all feature*threshold combination to get best split
       // To simplify logic, we make some assumptions:
@@ -171,8 +176,8 @@ class QuantileHistMock : public QuantileHistMaker {
       size_t best_split_feature = std::numeric_limits<size_t>::max();
       // Enumerate all features
       for (size_t fid = 0; fid < num_feature; ++fid) {
-        const size_t bin_id_min = gmat.cut.row_ptr[fid];
-        const size_t bin_id_max = gmat.cut.row_ptr[fid + 1];
+        const size_t bin_id_min = gmat.cut.Ptrs()[fid];
+        const size_t bin_id_max = gmat.cut.Ptrs()[fid + 1];
         // Enumerate all bin ID in [bin_id_min, bin_id_max), i.e. every possible
         // choice of thresholds for feature fid
         for (size_t split_thresh = bin_id_min;
@@ -206,12 +211,22 @@ class QuantileHistMock : public QuantileHistMaker {
       }
 
       /* Now compare against result given by EvaluateSplit() */
-      RealImpl::EvaluateSplit(0, gmat, hist_, *(*dmat), tree);
+      ExpandEntry node(ExpandEntry::kRootNid, ExpandEntry::kEmptyNid,
+          tree.GetDepth(0), snode_[0].best.loss_chg, 0);
+      RealImpl::EvaluateSplit({node}, gmat, hist_, *(*dmat), tree);
       ASSERT_EQ(snode_[0].best.SplitIndex(), best_split_feature);
-      ASSERT_EQ(snode_[0].best.split_value, gmat.cut.cut[best_split_threshold]);
+      ASSERT_EQ(snode_[0].best.split_value, gmat.cut.Values()[best_split_threshold]);
 
       delete dmat;
     }
+
+    void TestEvaluateSplitParallel(const GHistIndexBlockMatrix &quantile_index_block,
+                                   const RegTree &tree) {
+      omp_set_num_threads(2);
+      TestEvaluateSplit(quantile_index_block, tree);
+      omp_set_num_threads(1);
+    }
+
   };
 
   int static constexpr kNRows = 8, kNCols = 16;
@@ -223,13 +238,16 @@ class QuantileHistMock : public QuantileHistMaker {
   explicit QuantileHistMock(
       const std::vector<std::pair<std::string, std::string> >& args) :
       cfg_{args} {
-    QuantileHistMaker::Init(args);
+    QuantileHistMaker::Configure(args);
+    spliteval_->Init(&param_);
+    dmat_ = CreateDMatrix(kNRows, kNCols, 0.8, 3);
     builder_.reset(
         new BuilderMock(
             param_,
             std::move(pruner_),
-            std::unique_ptr<SplitEvaluator>(spliteval_->GetHostClone())));
-    dmat_ = CreateDMatrix(kNRows, kNCols, 0.8, 3);
+            std::unique_ptr<SplitEvaluator>(spliteval_->GetHostClone()),
+            int_constraint_,
+            dmat_->get()));
   }
   ~QuantileHistMock() override { delete dmat_; }
 
@@ -241,7 +259,7 @@ class QuantileHistMock : public QuantileHistMaker {
     gmat.Init((*dmat_).get(), kMaxBins);
 
     RegTree tree = RegTree();
-    tree.param.InitAllowUnknown(cfg_);
+    tree.param.UpdateAllowUnknown(cfg_);
 
     std::vector<GradientPair> gpair =
         { {0.23f, 0.24f}, {0.23f, 0.24f}, {0.23f, 0.24f}, {0.23f, 0.24f},
@@ -252,7 +270,7 @@ class QuantileHistMock : public QuantileHistMaker {
 
   void TestBuildHist() {
     RegTree tree = RegTree();
-    tree.param.InitAllowUnknown(cfg_);
+    tree.param.UpdateAllowUnknown(cfg_);
 
     size_t constexpr kMaxBins = 4;
     common::GHistIndexMatrix gmat;
@@ -263,7 +281,7 @@ class QuantileHistMock : public QuantileHistMaker {
 
   void TestEvaluateSplit() {
     RegTree tree = RegTree();
-    tree.param.InitAllowUnknown(cfg_);
+    tree.param.UpdateAllowUnknown(cfg_);
 
     builder_->TestEvaluateSplit(gmatb_, tree);
   }

@@ -81,14 +81,6 @@ JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGDMatrixCreateFro
 
 /*
  * Class:     ml_dmlc_xgboost4j_java_XGBoostJNI
- * Method:    XGDMatrixCreateFrom2DMat
- * Signature: ([FIIF[J)I
- */
-JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGDMatrixCreateFrom2DMat
-  (JNIEnv *, jclass, jobjectArray, jlong, jint, jfloat, jlongArray);
-
-/*
- * Class:     ml_dmlc_xgboost4j_java_XGBoostJNI
  * Method:    XGDMatrixSliceDMatrix
  * Signature: (J[I[J)I
  */
@@ -126,14 +118,6 @@ JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGDMatrixSetFloatI
  */
 JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGDMatrixSetUIntInfo
   (JNIEnv *, jclass, jlong, jstring, jintArray);
-
-/*
- * Class:     ml_dmlc_xgboost4j_java_XGBoostJNI
- * Method:    XGDMatrixSetGroup
- * Signature: (J[I)I
- */
-JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGDMatrixSetGroup
-  (JNIEnv *, jclass, jlong, jintArray);
 
 /*
  * Class:     ml_dmlc_xgboost4j_java_XGBoostJNI

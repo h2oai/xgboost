@@ -54,6 +54,13 @@ setup(name=open(os.path.join(CURRENT_DIR, 'xgboost/NAME')).read().strip(),
       ],
       maintainer='H2O.ai',
       maintainer_email='support@h2o.ai',
+      extras_require={
+          'pandas': ['pandas'],
+          'sklearn': ['sklearn'],
+          'dask': ['dask', 'pandas', 'distributed'],
+          'datatable': ['datatable'],
+          'plotting': ['graphviz', 'matplotlib']
+      },
       zip_safe=False,
       packages=find_packages(),
       # don't need this and don't use this, give everything to MANIFEST.in
@@ -76,6 +83,7 @@ setup(name=open(os.path.join(CURRENT_DIR, 'xgboost/NAME')).read().strip(),
                    'Programming Language :: Python :: 3',
                    'Programming Language :: Python :: 3.5',
                    'Programming Language :: Python :: 3.6',
-                   'Programming Language :: Python :: 3.7'],
-      python_requires='>=3.4',
-      url='https://github.com/h2oai/xgboost')
+                   'Programming Language :: Python :: 3.7',
+                   'Programming Language :: Python :: 3.8'],
+      python_requires='>=3.5',
+url='https://github.com/h2oai/xgboost')

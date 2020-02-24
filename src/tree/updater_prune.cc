@@ -10,6 +10,7 @@
 #include <string>
 #include <memory>
 
+#include "xgboost/json.h"
 #include "./param.h"
 #include "../common/io.h"
 
@@ -22,13 +23,27 @@ DMLC_REGISTRY_FILE_TAG(updater_prune);
 class TreePruner: public TreeUpdater {
  public:
   TreePruner() {
-    syncher_.reset(TreeUpdater::Create("sync"));
+    syncher_.reset(TreeUpdater::Create("sync", tparam_));
   }
+  char const* Name() const override {
+    return "prune";
+  }
+
   // set training parameter
-  void Init(const std::vector<std::pair<std::string, std::string> >& args) override {
-    param_.InitAllowUnknown(args);
-    syncher_->Init(args);
+  void Configure(const Args& args) override {
+    param_.UpdateAllowUnknown(args);
+    syncher_->Configure(args);
   }
+
+  void LoadConfig(Json const& in) override {
+    auto const& config = get<Object const>(in);
+    fromJson(config.at("train_param"), &this->param_);
+  }
+  void SaveConfig(Json* p_out) const override {
+    auto& out = *p_out;
+    out["train_param"] = toJson(param_);
+  }
+
   // update the tree, do pruning
   void Update(HostDeviceVector<GradientPair> *gpair,
               DMatrix *p_fmat,
@@ -71,7 +86,7 @@ class TreePruner: public TreeUpdater {
         npruned = this->TryPruneLeaf(tree, nid, tree.GetDepth(nid), npruned);
       }
     }
-    LOG(INFO) << "tree pruning end, " << tree.param.num_roots << " roots, "
+    LOG(INFO) << "tree pruning end, "
               << tree.NumExtraNodes() << " extra nodes, " << npruned
               << " pruned nodes, max_depth=" << tree.MaxDepth();
   }

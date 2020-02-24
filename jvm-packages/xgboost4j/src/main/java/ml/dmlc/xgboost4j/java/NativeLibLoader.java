@@ -42,7 +42,9 @@ public class NativeLibLoader {
       try {
         addNativeDir(nativePath); // best effort, don't worry about outcome
       } catch (IOException e) {
-        nativeAddEx = e; // will be logged later only if there is an actual issue with loading of the native library
+        nativeAddEx = e;
+        // will be logged later only if there is an actual issue with
+        // loading of the native library
       }
       // initialize the Loader
       NativeLibLoaderService loaderService = NativeLibLoaderService.getInstance();

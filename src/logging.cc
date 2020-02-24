@@ -5,11 +5,12 @@
  * \author Tianqi Chen
  */
 #include <rabit/rabit.h>
-#include <dmlc/parameter.h>
-#include <xgboost/logging.h>
 
 #include <iostream>
 #include <map>
+
+#include "xgboost/parameter.h"
+#include "xgboost/logging.h"
 
 #if !defined(XGBOOST_STRICT_R_MODE) || XGBOOST_STRICT_R_MODE == 0
 // Override logging mechanism for non-R interfaces
@@ -50,8 +51,8 @@ bool ConsoleLogger::ShouldLog(LogVerbosity verbosity) {
   return verbosity <= global_verbosity_ || verbosity == LV::kIgnore;
 }
 
-void ConsoleLogger::Configure(const std::map<std::string, std::string>& args) {
-  param_.InitAllowUnknown(args);
+void ConsoleLogger::Configure(Args const& args) {
+  param_.UpdateAllowUnknown(args);
   // Deprecated, but when trying to display deprecation message some R
   // tests trying to catch stdout will fail.
   if (param_.silent) {

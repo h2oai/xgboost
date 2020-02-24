@@ -15,9 +15,9 @@
  */
 package ml.dmlc.xgboost4j.java.util;
 
-import sun.misc.Unsafe;
-
 import java.lang.reflect.Field;
+
+import sun.misc.Unsafe;
 
 /**
  * Simple class to obtain access to the {@link Unsafe} object. Use responsibly :)
@@ -26,12 +26,14 @@ public final class UtilUnsafe {
 
   static Unsafe UNSAFE = getUnsafe();
 
-  private UtilUnsafe() { } // dummy private constructor
+  private UtilUnsafe() {
+  } // dummy private constructor
 
   private static Unsafe getUnsafe() {
     // Not on bootclasspath
-    if( UtilUnsafe.class.getClassLoader() == null )
+    if (UtilUnsafe.class.getClassLoader() == null) {
       return Unsafe.getUnsafe();
+    }
     try {
       final Field fld = Unsafe.class.getDeclaredField("theUnsafe");
       fld.setAccessible(true);

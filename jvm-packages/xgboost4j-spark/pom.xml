@@ -5,8 +5,8 @@
     <modelVersion>4.0.0</modelVersion>
     <parent>
         <groupId>ai.h2o</groupId>
-        <artifactId>xgboost-jvm</artifactId>
-        <version>0.90</version>
+        <artifactId>xgboost-jvm_2.12</artifactId>
+        <version>1.0.0</version>
     </parent>
     <artifactId>xgboost4j-spark</artifactId>
     <build>
@@ -23,8 +23,8 @@
     <dependencies>
         <dependency>
             <groupId>ai.h2o</groupId>
-            <artifactId>xgboost4j</artifactId>
-            <version>0.90-SNAPSHOT</version>
+            <artifactId>xgboost4j_${scala.binary.version}</artifactId>
+            <version>1.0.0</version>
         </dependency>
         <dependency>
             <groupId>org.apache.spark</groupId>

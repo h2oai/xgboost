@@ -3,6 +3,8 @@
  * \file elementwise_metric.cc
  * \brief evaluation metrics for elementwise binary or regression.
  * \author Kailong Chen, Tianqi Chen
+ *
+ *  The expressions like wsum == 0 ? esum : esum / wsum is used to handle empty dataset.
  */
 #include <rabit/rabit.h>
 #include <xgboost/metric.h>
@@ -30,8 +32,7 @@ DMLC_REGISTRY_FILE_TAG(elementwise_metric);
 template <typename EvalRow>
 class ElementWiseMetricsReduction {
  public:
-  explicit ElementWiseMetricsReduction(EvalRow policy) :
-    policy_(std::move(policy)) {}
+  explicit ElementWiseMetricsReduction(EvalRow policy) : policy_(std::move(policy)) {}
 
   PackedReduceResult CpuReduceMetrics(
       const HostDeviceVector<bst_float>& weights,
@@ -58,27 +59,32 @@ class ElementWiseMetricsReduction {
 
 #if defined(XGBOOST_USE_CUDA)
 
+  ~ElementWiseMetricsReduction() {
+    if (device_ >= 0) {
+      dh::safe_cuda(cudaSetDevice(device_));
+      allocator_.Free();
+    }
+  }
+
   PackedReduceResult DeviceReduceMetrics(
-      GPUSet::GpuIdType device_id,
-      size_t device_index,
       const HostDeviceVector<bst_float>& weights,
       const HostDeviceVector<bst_float>& labels,
       const HostDeviceVector<bst_float>& preds) {
-    size_t n_data = preds.DeviceSize(device_id);
+    size_t n_data = preds.Size();
 
     thrust::counting_iterator<size_t> begin(0);
     thrust::counting_iterator<size_t> end = begin + n_data;
 
-    auto s_label = labels.DeviceSpan(device_id);
-    auto s_preds = preds.DeviceSpan(device_id);
-    auto s_weights = weights.DeviceSpan(device_id);
+    auto s_label = labels.DeviceSpan();
+    auto s_preds = preds.DeviceSpan();
+    auto s_weights = weights.DeviceSpan();
 
     bool const is_null_weight = weights.Size() == 0;
 
     auto d_policy = policy_;
 
     PackedReduceResult result = thrust::transform_reduce(
-        thrust::cuda::par(allocators_.at(device_index)),
+        thrust::cuda::par(allocator_),
         begin, end,
         [=] XGBOOST_DEVICE(size_t idx) {
           bst_float weight = is_null_weight ? 1.0f : s_weights[idx];
@@ -96,37 +102,25 @@ class ElementWiseMetricsReduction {
 #endif  // XGBOOST_USE_CUDA
 
   PackedReduceResult Reduce(
-      GPUSet devices,
+      const GenericParameter &tparam,
+      int device,
       const HostDeviceVector<bst_float>& weights,
       const HostDeviceVector<bst_float>& labels,
       const HostDeviceVector<bst_float>& preds) {
     PackedReduceResult result;
 
-    if (devices.IsEmpty()) {
+    if (device < 0) {
       result = CpuReduceMetrics(weights, labels, preds);
     }
 #if defined(XGBOOST_USE_CUDA)
     else {  // NOLINT
-      if (allocators_.size() != devices.Size()) {
-        allocators_.clear();
-        allocators_.resize(devices.Size());
-      }
-      preds.Shard(devices);
-      labels.Shard(devices);
-      weights.Shard(devices);
-      std::vector<PackedReduceResult> res_per_device(devices.Size());
+      device_ = device;
+      preds.SetDevice(device_);
+      labels.SetDevice(device_);
+      weights.SetDevice(device_);
 
-#pragma omp parallel for schedule(static, 1) if (devices.Size() > 1)
-      for (GPUSet::GpuIdType id = *devices.begin(); id < *devices.end(); ++id) {
-        dh::safe_cuda(cudaSetDevice(id));
-        size_t index = devices.Index(id);
-        res_per_device.at(index) =
-            DeviceReduceMetrics(id, index, weights, labels, preds);
-      }
-
-      for (auto const& res : res_per_device) {
-        result += res;
-      }
+      dh::safe_cuda(cudaSetDevice(device_));
+      result = DeviceReduceMetrics(weights, labels, preds);
     }
 #endif  // defined(XGBOOST_USE_CUDA)
     return result;
@@ -135,7 +129,8 @@ class ElementWiseMetricsReduction {
  private:
   EvalRow policy_;
 #if defined(XGBOOST_USE_CUDA)
-  std::vector<dh::CubMemory> allocators_;
+  int device_{-1};
+  dh::CubMemory allocator_;
 #endif  // defined(XGBOOST_USE_CUDA)
 };
 
@@ -149,7 +144,21 @@ struct EvalRowRMSE {
     return diff * diff;
   }
   static bst_float GetFinal(bst_float esum, bst_float wsum) {
-    return std::sqrt(esum / wsum);
+    return wsum == 0 ? std::sqrt(esum) : std::sqrt(esum / wsum);
+  }
+};
+
+struct EvalRowRMSLE {
+  char const* Name() const {
+    return "rmsle";
+  }
+
+  XGBOOST_DEVICE bst_float EvalRow(bst_float label, bst_float pred) const {
+    bst_float diff = std::log1p(label) - std::log1p(pred);
+    return diff * diff;
+  }
+  static bst_float GetFinal(bst_float esum, bst_float wsum) {
+    return wsum == 0 ? std::sqrt(esum) : std::sqrt(esum / wsum);
   }
 };
 
@@ -162,7 +171,7 @@ struct EvalRowMAE {
     return std::abs(label - pred);
   }
   static bst_float GetFinal(bst_float esum, bst_float wsum) {
-    return esum / wsum;
+    return wsum == 0 ? esum : esum / wsum;
   }
 };
 
@@ -184,7 +193,7 @@ struct EvalRowLogLoss {
   }
 
   static bst_float GetFinal(bst_float esum, bst_float wsum) {
-    return esum / wsum;
+    return wsum == 0 ? esum : esum / wsum;
   }
 };
 
@@ -219,7 +228,7 @@ struct EvalError {
   }
 
   static bst_float GetFinal(bst_float esum, bst_float wsum) {
-    return esum / wsum;
+    return wsum == 0 ? esum : esum / wsum;
   }
 
  private:
@@ -239,7 +248,7 @@ struct EvalPoissonNegLogLik {
   }
 
   static bst_float GetFinal(bst_float esum, bst_float wsum) {
-    return esum / wsum;
+    return wsum == 0 ? esum : esum / wsum;
   }
 };
 
@@ -272,7 +281,7 @@ struct EvalGammaNLogLik {
     return -((y * theta - b) / a + c);
   }
   static bst_float GetFinal(bst_float esum, bst_float wsum) {
-    return esum / wsum;
+    return wsum == 0 ? esum : esum / wsum;
   }
 };
 
@@ -298,7 +307,7 @@ struct EvalTweedieNLogLik {
     return -a + b;
   }
   static bst_float GetFinal(bst_float esum, bst_float wsum) {
-    return esum / wsum;
+    return wsum == 0 ? esum : esum / wsum;
   }
 
  protected:
@@ -314,26 +323,22 @@ struct EvalEWiseBase : public Metric {
   explicit EvalEWiseBase(char const* policy_param) :
     policy_{policy_param}, reducer_{policy_} {}
 
-  void Configure(
-      const std::vector<std::pair<std::string, std::string> >& args) override {
-    param_.InitAllowUnknown(args);
-  }
-
   bst_float Eval(const HostDeviceVector<bst_float>& preds,
                  const MetaInfo& info,
                  bool distributed) override {
-    CHECK_NE(info.labels_.Size(), 0U) << "label set cannot be empty";
+    if (info.labels_.Size() == 0) {
+      LOG(WARNING) << "label set is empty";
+    }
     CHECK_EQ(preds.Size(), info.labels_.Size())
         << "label and prediction size not match, "
         << "hint: use merror or mlogloss for multi-class classification";
-    const auto ndata = static_cast<omp_ulong>(info.labels_.Size());
-    // Dealing with ndata < n_gpus.
-    GPUSet devices = GPUSet::All(param_.gpu_id, param_.n_gpus, ndata);
+    int device = tparam_->gpu_id;
 
     auto result =
-        reducer_.Reduce(devices, info.weights_, info.labels_, preds);
+        reducer_.Reduce(*tparam_, device, info.weights_, info.labels_, preds);
 
     double dat[2] { result.Residue(), result.Weights() };
+
     if (distributed) {
       rabit::Allreduce<rabit::op::Sum>(dat, 2);
     }
@@ -347,14 +352,16 @@ struct EvalEWiseBase : public Metric {
  private:
   Policy policy_;
 
-  MetricParam param_;
-
   ElementWiseMetricsReduction<Policy> reducer_;
 };
 
 XGBOOST_REGISTER_METRIC(RMSE, "rmse")
 .describe("Rooted mean square error.")
 .set_body([](const char* param) { return new EvalEWiseBase<EvalRowRMSE>(); });
+
+XGBOOST_REGISTER_METRIC(RMSLE, "rmsle")
+.describe("Rooted mean square log error.")
+.set_body([](const char* param) { return new EvalEWiseBase<EvalRowRMSLE>(); });
 
 XGBOOST_REGISTER_METRIC(MAE, "mae")
 .describe("Mean absolute error.")

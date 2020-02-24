@@ -323,34 +323,6 @@ JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGDMatrixCreateFro
 
 /*
  * Class:     ml_dmlc_xgboost4j_java_XGBoostJNI
- * Method:    XGDMatrixCreateFrom2DCSCEx
- * Signature: ([J[J[F)J
- */
-JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGDMatrixCreateFrom2DCSCEx
-  (JNIEnv *jenv, jclass jcls, jobjectArray jindptr, jobjectArray jindices, jobjectArray jdata, jint jrow, jint jcol, jlong total, jlongArray jout) {
-  DMatrixHandle result;
-
-  bst_ulong nindptr = (bst_ulong)jenv->GetArrayLength(jindptr);
-  bst_ulong nelem = (bst_ulong)jenv->GetArrayLength(jdata);
-
-  jlong* indptr = flatten_long(jenv, jindptr, jcol, NULL);
-
-  jint* indices = flatten_int(jenv, jindices, total, 0);
-
-  jfloat* data = flatten_float(jenv, jdata, total, NULL);
-
-  jint ret = (jint) XGDMatrixCreateFromCSCEx((size_t const *)indptr, (unsigned int const *)indices, (float const *)data, nindptr, nelem, jrow, &result);
-  setHandle(jenv, jout, result);
-  delete[] indptr;
-  delete[] indices;
-  delete[] data;
-
-  return ret;
-}
-
-
-/*
- * Class:     ml_dmlc_xgboost4j_java_XGBoostJNI
  * Method:    XGDMatrixCreateFromMatRef
  * Signature: (JIIF)J
  */
@@ -417,7 +389,8 @@ JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGDMatrixSliceDMat
   jint* indexset = jenv->GetIntArrayElements(jindexset, 0);
   bst_ulong len = (bst_ulong)jenv->GetArrayLength(jindexset);
 
-  jint ret = (jint) XGDMatrixSliceDMatrix(handle, (int const *)indexset, len, &result);
+  // default to not allowing slicing with group ID specified -- feel free to add if necessary
+  jint ret = (jint) XGDMatrixSliceDMatrixEx(handle, (int const *)indexset, len, &result, 0);
   setHandle(jenv, jout, result);
   //release
   jenv->ReleaseIntArrayElements(jindexset, indexset, 0);
@@ -486,22 +459,6 @@ JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGDMatrixSetUIntIn
   if (field) jenv->ReleaseStringUTFChars(jfield, (const char *)field);
   jenv->ReleaseIntArrayElements(jarray, array, 0);
 
-  return ret;
-}
-
-/*
- * Class:     ml_dmlc_xgboost4j_java_XGBoostJNI
- * Method:    XGDMatrixSetGroup
- * Signature: (J[I)V
- */
-JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGDMatrixSetGroup
-  (JNIEnv * jenv, jclass jcls, jlong jhandle, jintArray jarray) {
-  DMatrixHandle handle = (DMatrixHandle) jhandle;
-  jint* array = jenv->GetIntArrayElements(jarray, NULL);
-  bst_ulong len = (bst_ulong)jenv->GetArrayLength(jarray);
-  int ret = XGDMatrixSetGroup(handle, (unsigned int const *)array, len);
-  //release
-  jenv->ReleaseIntArrayElements(jarray, array, 0);
   return ret;
 }
 
@@ -694,7 +651,8 @@ JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGBoosterPredict
   DMatrixHandle dmat = (DMatrixHandle) jdmat;
   bst_ulong len;
   float *result;
-  int ret = XGBoosterPredict(handle, dmat, joption_mask, (unsigned int) jntree_limit, &len, (const float **) &result);
+  int ret = XGBoosterPredict(handle, dmat, joption_mask, (unsigned int) jntree_limit, 0,
+                             &len, (const float **) &result);
   if (len) {
     jsize jlen = (jsize) len;
     jfloatArray jarray = jenv->NewFloatArray(jlen);
@@ -955,8 +913,11 @@ JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_RabitInit
     argv.push_back(&args[i][0]);
   }
 
-  RabitInit(args.size(), dmlc::BeginPtr(argv));
-  return 0;
+  if (RabitInit(args.size(), dmlc::BeginPtr(argv))) {
+    return 0;
+  } else {
+    return 1;
+  }
 }
 
 /*
@@ -966,8 +927,11 @@ JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_RabitInit
  */
 JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_RabitFinalize
   (JNIEnv *jenv, jclass jcls) {
-  RabitFinalize();
-  return 0;
+  if (RabitFinalize()) {
+    return 0;
+  } else {
+    return 1;
+  }
 }
 
 /*

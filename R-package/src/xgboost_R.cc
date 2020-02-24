@@ -136,9 +136,10 @@ SEXP XGDMatrixSliceDMatrix_R(SEXP handle, SEXP idxset) {
     idxvec[i] = INTEGER(idxset)[i] - 1;
   }
   DMatrixHandle res;
-  CHECK_CALL(XGDMatrixSliceDMatrix(R_ExternalPtrAddr(handle),
-                                   BeginPtr(idxvec), len,
-                                   &res));
+  CHECK_CALL(XGDMatrixSliceDMatrixEx(R_ExternalPtrAddr(handle),
+                                     BeginPtr(idxvec), len,
+                                     &res,
+                                     0));
   ret = PROTECT(R_MakeExternalPtr(res, R_NilValue, R_NilValue));
   R_RegisterCFinalizerEx(ret, _DMatrixFinalizer, TRUE);
   R_API_END();
@@ -165,7 +166,9 @@ SEXP XGDMatrixSetInfo_R(SEXP handle, SEXP field, SEXP array) {
     for (int i = 0; i < len; ++i) {
       vec[i] = static_cast<unsigned>(INTEGER(array)[i]);
     }
-    CHECK_CALL(XGDMatrixSetGroup(R_ExternalPtrAddr(handle), BeginPtr(vec), len));
+    CHECK_CALL(XGDMatrixSetUIntInfo(R_ExternalPtrAddr(handle),
+                                    CHAR(asChar(field)),
+                                    BeginPtr(vec), len));
   } else {
     std::vector<float> vec(len);
     #pragma omp parallel for schedule(static)
@@ -173,8 +176,8 @@ SEXP XGDMatrixSetInfo_R(SEXP handle, SEXP field, SEXP array) {
       vec[i] = REAL(array)[i];
     }
     CHECK_CALL(XGDMatrixSetFloatInfo(R_ExternalPtrAddr(handle),
-                                   CHAR(asChar(field)),
-                                   BeginPtr(vec), len));
+                                     CHAR(asChar(field)),
+                                     BeginPtr(vec), len));
   }
   R_API_END();
   return R_NilValue;
@@ -292,24 +295,26 @@ SEXP XGBoosterEvalOneIter_R(SEXP handle, SEXP iter, SEXP dmats, SEXP evnames) {
     vec_sptr.push_back(vec_names[i].c_str());
   }
   CHECK_CALL(XGBoosterEvalOneIter(R_ExternalPtrAddr(handle),
-                                asInteger(iter),
-                                BeginPtr(vec_dmats),
-                                BeginPtr(vec_sptr),
-                                len, &ret));
+                                  asInteger(iter),
+                                  BeginPtr(vec_dmats),
+                                  BeginPtr(vec_sptr),
+                                  len, &ret));
   R_API_END();
   return mkString(ret);
 }
 
-SEXP XGBoosterPredict_R(SEXP handle, SEXP dmat, SEXP option_mask, SEXP ntree_limit) {
+SEXP XGBoosterPredict_R(SEXP handle, SEXP dmat, SEXP option_mask,
+                        SEXP ntree_limit, SEXP training) {
   SEXP ret;
   R_API_BEGIN();
   bst_ulong olen;
   const float *res;
   CHECK_CALL(XGBoosterPredict(R_ExternalPtrAddr(handle),
-                            R_ExternalPtrAddr(dmat),
-                            asInteger(option_mask),
-                            asInteger(ntree_limit),
-                            &olen, &res));
+                              R_ExternalPtrAddr(dmat),
+                              asInteger(option_mask),
+                              asInteger(ntree_limit),
+                              asInteger(training),
+                              &olen, &res));
   ret = PROTECT(allocVector(REALSXP, olen));
   for (size_t i = 0; i < olen; ++i) {
     REAL(ret)[i] = res[i];

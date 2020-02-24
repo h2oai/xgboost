@@ -42,11 +42,6 @@ ifeq ($(USE_OPENMP), 0)
 endif
 include $(DMLC_CORE)/make/dmlc.mk
 
-# include the plugins
-ifdef XGB_PLUGINS
-include $(XGB_PLUGINS)
-endif
-
 # set compiler defaults for OSX versus *nix
 # let people override either
 OS := $(shell uname)
@@ -67,8 +62,8 @@ export CXX = g++
 endif
 endif
 
-export LDFLAGS= -pthread -lm $(ADD_LDFLAGS) $(DMLC_LDFLAGS) $(PLUGIN_LDFLAGS)
-export CFLAGS= -DDMLC_LOG_CUSTOMIZE=1 -std=c++11 -Wall -Wno-unknown-pragmas -Iinclude $(ADD_CFLAGS) $(PLUGIN_CFLAGS)
+export LDFLAGS= -pthread -lm $(ADD_LDFLAGS) $(DMLC_LDFLAGS)
+export CFLAGS= -DDMLC_LOG_CUSTOMIZE=1 -std=c++11 -Wall -Wno-unknown-pragmas -Iinclude $(ADD_CFLAGS)
 CFLAGS += -I$(DMLC_CORE)/include -I$(RABIT)/include -I$(GTEST_PATH)/include
 #java include path
 export JAVAINCFLAGS = -I${JAVA_HOME}/include -I./java
@@ -130,7 +125,7 @@ $(RABIT)/lib/$(LIB_RABIT): $(wildcard $(RABIT)/src/*.cc)
 jvm: jvm-packages/lib/libxgboost4j.so
 
 SRC = $(wildcard src/*.cc src/*/*.cc)
-ALL_OBJ = $(patsubst src/%.cc, build/%.o, $(SRC)) $(PLUGIN_OBJS)
+ALL_OBJ = $(patsubst src/%.cc, build/%.o, $(SRC))
 AMALGA_OBJ = amalgamation/xgboost-all0.o
 LIB_DEP = $(DMLC_CORE)/libdmlc.a $(RABIT)/lib/$(LIB_RABIT)
 ALL_DEP = $(filter-out build/cli_main.o, $(ALL_OBJ)) $(LIB_DEP)
@@ -140,11 +135,6 @@ include tests/cpp/xgboost_test.mk
 build/%.o: src/%.cc
 	@mkdir -p $(@D)
 	$(CXX) $(CFLAGS) -MM -MT build/$*.o $< >build/$*.d
-	$(CXX) -c $(CFLAGS) $< -o $@
-
-build_plugin/%.o: plugin/%.cc
-	@mkdir -p $(@D)
-	$(CXX) $(CFLAGS) -MM -MT build_plugin/$*.o $< >build_plugin/$*.d
 	$(CXX) -c $(CFLAGS) $< -o $@
 
 # The should be equivalent to $(ALL_OBJ)  except for build/cli_main.o
@@ -180,7 +170,7 @@ lint: rcpplint
 	  python-package/xgboost/include python-package/xgboost/lib \
 	  python-package/xgboost/make python-package/xgboost/rabit \
 	  python-package/xgboost/src --pylint-rc ${PWD}/python-package/.pylintrc xgboost \
-	  ${LINT_LANG} include src plugin python-package
+	  ${LINT_LANG} include src python-package
 
 pylint:
 	flake8 --ignore E501 python-package
@@ -200,7 +190,7 @@ cover: check
 endif
 
 clean:
-	$(RM) -rf build build_plugin lib bin *~ */*~ */*/*~ */*/*/*~ */*.o */*/*.o */*/*/*.o #xgboost
+	$(RM) -rf build lib bin *~ */*~ */*/*~ */*/*/*~ */*.o */*/*.o */*/*/*.o #xgboost
 	$(RM) -rf build_tests *.gcov tests/cpp/xgboost_test
 	if [ -d "R-package/src" ]; then \
 		cd R-package/src; \
@@ -231,7 +221,9 @@ pippack: clean_all
 	rm -rf python-package/xgboost/rabit
 	rm -rf python-package/xgboost/src
 	cp -r python-package xgboost-python
-	cp -r Makefile xgboost-python/xgboost/
+	cp -r CMakeLists.txt xgboost-python/xgboost/
+	cp -r cmake xgboost-python/xgboost/
+	cp -r plugin xgboost-python/xgboost/
 	cp -r make xgboost-python/xgboost/
 	cp -r src xgboost-python/xgboost/
 	cp -r tests xgboost-python/xgboost/
@@ -262,10 +254,17 @@ Rpack: clean_all
 	cp -r dmlc-core/include xgboost/src/dmlc-core/include
 	cp -r dmlc-core/src xgboost/src/dmlc-core/src
 	cp ./LICENSE xgboost
-	cat R-package/src/Makevars.in|sed '2s/.*/PKGROOT=./' | sed '3s/.*/ENABLE_STD_THREAD=0/' > xgboost/src/Makevars.in
+	# Modify PKGROOT in Makevars.in
+	cat R-package/src/Makevars.in|sed '2s/.*/PKGROOT=./' > xgboost/src/Makevars.in
+	# Configure Makevars.win (Windows-specific Makevars, likely using MinGW)
 	cp xgboost/src/Makevars.in xgboost/src/Makevars.win
+	cat xgboost/src/Makevars.in| sed '3s/.*/ENABLE_STD_THREAD=0/' > xgboost/src/Makevars.win
 	sed -i -e 's/@OPENMP_CXXFLAGS@/$$\(SHLIB_OPENMP_CXXFLAGS\)/g' xgboost/src/Makevars.win
 	sed -i -e 's/-pthread/$$\(SHLIB_PTHREAD_FLAGS\)/g' xgboost/src/Makevars.win
+	sed -i -e 's/@ENDIAN_FLAG@/-DDMLC_CMAKE_LITTLE_ENDIAN=1/g' xgboost/src/Makevars.win
+	sed -i -e 's/@BACKTRACE_LIB@//g' xgboost/src/Makevars.win
+	sed -i -e 's/@OPENMP_LIB@//g' xgboost/src/Makevars.win
+	rm -f xgboost/src/Makevars.win-e   # OSX sed create this extra file; remove it
 	bash R-package/remove_warning_suppression_pragma.sh
 	rm xgboost/remove_warning_suppression_pragma.sh
 
@@ -278,4 +277,3 @@ Rcheck: Rbuild
 
 -include build/*.d
 -include build/*/*.d
--include build_plugin/*/*.d

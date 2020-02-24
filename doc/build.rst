@@ -13,8 +13,9 @@ Installation Guide
     #   * xgboost-{version}-py2.py3-none-win_amd64.whl
     pip3 install xgboost
 
-  * The binary wheel will support GPU algorithms (`gpu_exact`, `gpu_hist`) on machines with NVIDIA GPUs. Please note that **training with multiple GPUs is only supported for Linux platform**. See :doc:`gpu/index`.
+  * The binary wheel will support GPU algorithms (`gpu_hist`) on machines with NVIDIA GPUs. Please note that **training with multiple GPUs is only supported for Linux platform**. See :doc:`gpu/index`.
   * Currently, we provide binary wheels for 64-bit Linux and Windows.
+  * Nightly builds are available. You can now run *pip install https://s3-us-west-2.amazonaws.com/xgboost-nightly-builds/xgboost-[version]+[commit hash]-py2.py3-none-manylinux1_x86_64.whl* to install the nightly build with the given commit hash. See `this page <https://s3-us-west-2.amazonaws.com/xgboost-nightly-builds/list.html>`_ to see the list of all nightly builds.
 
 ****************************
 Building XGBoost from source
@@ -57,6 +58,9 @@ to ask questions at `the user forum <https://discuss.xgboost.ai>`_.
 * `Python Package Installation`_
 * `R Package Installation`_
 * `Trouble Shooting`_
+* `Building the documentation`_
+
+.. _build_shared_lib:
 
 ***************************
 Building the Shared Library
@@ -69,8 +73,10 @@ Our goal is to build the shared library:
 
 The minimal building requirement is
 
-- A recent C++ compiler supporting C++11 (g++-4.8 or higher)
-- CMake 3.2 or higher
+- A recent C++ compiler supporting C++11 (g++-5.0 or higher)
+- CMake 3.3 or higher (3.12 for building with CUDA)
+
+For a list of CMake options, see ``#-- Options`` in CMakeLists.txt on top of source tree.
 
 Building on Ubuntu/Debian
 =========================
@@ -92,11 +98,11 @@ Building on OSX
 Install with pip: simple method
 --------------------------------
 
-First, obtain ``gcc-8`` with Homebrew (https://brew.sh/) to enable multi-threading (i.e. using multiple CPU threads for training). The default Apple Clang compiler does not support OpenMP, so using the default compiler would have disabled multi-threading.
+First, obtain the OpenMP library (``libomp``) with Homebrew (https://brew.sh/) to enable multi-threading (i.e. using multiple CPU threads for training):
 
 .. code-block:: bash
 
-  brew install gcc@8
+  brew install libomp
 
 Then install XGBoost with ``pip``:
 
@@ -109,11 +115,12 @@ You might need to run the command with ``--user`` flag if you run into permissio
 Build from the source code - advanced method
 --------------------------------------------
 
-Obtain ``gcc-8`` from Homebrew:
+Obtain ``libomp`` from Homebrew:
 
 .. code-block:: bash
 
-  brew install gcc@8
+  brew install libomp
+
 
 Now clone the repository:
 
@@ -121,13 +128,13 @@ Now clone the repository:
 
   git clone --recursive https://github.com/dmlc/xgboost
 
-Create the ``build/`` directory and invoke CMake. Make sure to add ``CC=gcc-8 CXX=g++-8`` so that Homebrew GCC is selected. After invoking CMake, you can build XGBoost with ``make``:
+Create the ``build/`` directory and invoke CMake. After invoking CMake, you can build XGBoost with ``make``:
 
 .. code-block:: bash
 
   mkdir build
   cd build
-  CC=gcc-8 CXX=g++-8 cmake ..
+  cmake ..
   make -j4
 
 You may now continue to `Python Package Installation`_.
@@ -185,9 +192,7 @@ Building with GPU support
 =========================
 XGBoost can be built with GPU support for both Linux and Windows using CMake. GPU support works with the Python package as well as the CLI version. See `Installing R package with GPU support`_ for special instructions for R.
 
-An up-to-date version of the CUDA toolkit is required.  Please note that we
-skipped the support for compiling XGBoost with NVCC 10.1 due a small bug in its
-spliter, see `#4264 <https://github.com/dmlc/xgboost/issues/4264>`_.
+An up-to-date version of the CUDA toolkit is required.
 
 From the command line on Linux starting from the XGBoost directory:
 
@@ -198,9 +203,9 @@ From the command line on Linux starting from the XGBoost directory:
   cmake .. -DUSE_CUDA=ON
   make -j4
 
-.. note:: Enabling multi-GPU training
+.. note:: Enabling distributed GPU training
 
-  By default, multi-GPU training is disabled and only a single GPU will be used. To enable multi-GPU training, set the option ``USE_NCCL=ON``. Multi-GPU training depends on NCCL2, available at `this link <https://developer.nvidia.com/nccl>`_. Since NCCL2 is only available for Linux machines, **multi-GPU training is available only for Linux**.
+  By default, distributed GPU training is disabled and only a single GPU will be used. To enable distributed GPU training, set the option ``USE_NCCL=ON``. Distributed GPU training depends on NCCL2, available at `this link <https://developer.nvidia.com/nccl>`_. Since NCCL2 is only available for Linux machines, **distributed GPU training is available only for Linux**.
 
   .. code-block:: bash
 
@@ -225,7 +230,7 @@ On Windows, run CMake as follows:
 
   .. code-block:: bash
 
-    make .. -G"Visual Studio 15 2017 Win64" -T v140,cuda=8.0 -DUSE_CUDA=ON
+    cmake .. -G"Visual Studio 15 2017 Win64" -T v140,cuda=8.0 -DUSE_CUDA=ON
 
 To speed up compilation, the compute version specific to your GPU could be passed to cmake as, e.g., ``-DGPU_COMPUTE_VER=50``.
 The above cmake configuration run will create an ``xgboost.sln`` solution file in the build directory. Build this solution in release mode as a x64 build, either from Visual studio or from command line:
@@ -311,13 +316,21 @@ R Package Installation
 Installing pre-packaged version
 -------------------------------
 
-You can install xgboost from CRAN just like any other R package:
+You can install XGBoost from CRAN just like any other R package:
 
 .. code-block:: R
 
-  install.packages("xgboost")
+   install.packages("xgboost")
 
-For OSX users, single-threaded version will be installed. So only one thread will be used for training. To enable use of multiple threads (and utilize capacity of multi-core CPUs), see the section :ref:`osx_multithread` to install XGBoost from source.
+.. note:: Using all CPU cores (threads) on Mac OSX
+
+   If you are using Mac OSX, you should first install OpenMP library (``libomp``) by running
+
+   .. code-block:: bash
+
+      brew install libomp
+
+   and then run ``install.packages("xgboost")``. Without OpenMP, XGBoost will only use a single CPU core, leading to suboptimal training speed.
 
 Installing the development version
 ----------------------------------
@@ -334,47 +347,13 @@ Thus, one has to run git to check out the code first:
   cd xgboost
   git submodule init
   git submodule update
-  cd R-package
-  R CMD INSTALL .
-
-If the last line fails because of the error ``R: command not found``, it means that R was not set up to run from command line.
-In this case, just start R as you would normally do and run the following:
-
-.. code-block:: R
-
-  setwd('wherever/you/cloned/it/xgboost/R-package/')
-  install.packages('.', repos = NULL, type="source")
-
-The package could also be built and installed with CMake (and Visual C++ 2015 on Windows) using instructions from :ref:`r_gpu_support`, but without GPU support (omit the ``-DUSE_CUDA=ON`` cmake parameter).
-
-If all fails, try `Building the shared library`_ to see whether a problem is specific to R package or not.
-
-.. _osx_multithread:
-
-Installing R package on Mac OSX with multi-threading
-----------------------------------------------------
-
-First, obtain ``gcc-8`` with Homebrew (https://brew.sh/) to enable multi-threading (i.e. using multiple CPU threads for training). The default Apple Clang compiler does not support OpenMP, so using the default compiler would have disabled multi-threading.
-
-.. code-block:: bash
-
-  brew install gcc@8
-
-Now, clone the repository:
-
-.. code-block:: bash
-
-  git clone --recursive https://github.com/dmlc/xgboost
-
-Create the ``build/`` directory and invoke CMake with option ``R_LIB=ON``. Make sure to add ``CC=gcc-8 CXX=g++-8`` so that Homebrew GCC is selected. After invoking CMake, you can install the R package by running ``make`` and ``make install``:
-
-.. code-block:: bash
-
   mkdir build
   cd build
-  CC=gcc-7 CXX=g++-7 cmake .. -DR_LIB=ON
+  cmake .. -DR_LIB=ON
   make -j4
   make install
+
+If all fails, try `Building the shared library`_ to see whether a problem is specific to R package or not.
 
 .. _r_gpu_support:
 
@@ -450,3 +429,23 @@ Trouble Shooting
    .. code-block:: bash
 
      git clone https://github.com/dmlc/xgboost --recursive
+
+
+Building the Documentation
+==========================
+XGBoost uses `Sphinx <https://www.sphinx-doc.org/en/stable/>`_ for documentation.  To build it locally, you need a installed XGBoost with all its dependencies along with:
+
+* System dependencies
+
+  - git
+  - graphviz
+
+* Python dependencies
+
+  - sphinx
+  - breathe
+  - guzzle_sphinx_theme
+  - recommonmark
+  - mock
+
+Under ``xgboost/doc`` directory, run ``make <format>`` with ``<format>`` replaced by the format you want.  For a list of supported formats, run ``make help`` under the same directory.

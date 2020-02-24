@@ -29,10 +29,16 @@ General Parameters
 
 * ``verbosity`` [default=1]
 
-  - Verbosity of printing messages.  Valid values are 0 (silent),
-    1 (warning), 2 (info), 3 (debug).  Sometimes XGBoost tries to change
-    configurations based on heuristics, which is displayed as warning message.
-    If there's unexpected behaviour, please try to increase value of verbosity.
+  - Verbosity of printing messages.  Valid values are 0 (silent), 1 (warning), 2 (info), 3
+    (debug).  Sometimes XGBoost tries to change configurations based on heuristics, which
+    is displayed as warning message.  If there's unexpected behaviour, please try to
+    increase value of verbosity.
+
+* ``validate_parameters`` [default to false, except for Python ``train`` function]
+
+  - When set to True, XGBoost will perform validation of input parameters to check whether
+    a parameter is used or not.  The feature is still experimental.  It's expected to have
+    some false positives, especially when used with Scikit-Learn interface.
 
 * ``nthread`` [default to maximum number of threads available if not set]
 
@@ -83,17 +89,12 @@ Parameters for Tree Booster
   - range: (0,1]
 
 * ``colsample_bytree``, ``colsample_bylevel``, ``colsample_bynode`` [default=1]
+
   - This is a family of parameters for subsampling of columns.
-  - All ``colsample_by*`` parameters have a range of (0, 1], the default value of 1, and
-    specify the fraction of columns to be subsampled.
-  - ``colsample_bytree`` is the subsample ratio of columns when constructing each
-    tree. Subsampling occurs once for every tree constructed.
-  - ``colsample_bylevel`` is the subsample ratio of columns for each level. Subsampling
-    occurs once for every new depth level reached in a tree. Columns are subsampled from
-    the set of columns chosen for the current tree.
-  - ``colsample_bynode`` is the subsample ratio of columns for each node
-    (split). Subsampling occurs once every time a new split is evaluated. Columns are
-    subsampled from the set of columns chosen for the current level.
+  - All ``colsample_by*`` parameters have a range of (0, 1], the default value of 1, and specify the fraction of columns to be subsampled.
+  - ``colsample_bytree`` is the subsample ratio of columns when constructing each tree. Subsampling occurs once for every tree constructed.
+  - ``colsample_bylevel`` is the subsample ratio of columns for each level. Subsampling occurs once for every new depth level reached in a tree. Columns are subsampled from the set of columns chosen for the current tree.
+  - ``colsample_bynode`` is the subsample ratio of columns for each node (split). Subsampling occurs once every time a new split is evaluated. Columns are subsampled from the set of columns chosen for the current level.
   - ``colsample_by*`` parameters work cumulatively. For instance,
     the combination ``{'colsample_bytree':0.5, 'colsample_bylevel':0.5,
     'colsample_bynode':0.5}`` with 64 features will leave 8 features to choose from at
@@ -110,20 +111,25 @@ Parameters for Tree Booster
 * ``tree_method`` string [default= ``auto``]
 
   - The tree construction algorithm used in XGBoost. See description in the `reference paper <http://arxiv.org/abs/1603.02754>`_.
-  - XGBoost supports ``hist`` and ``approx`` for distributed training and only support ``approx`` for external memory version.
-  - Choices: ``auto``, ``exact``, ``approx``, ``hist``, ``gpu_exact``, ``gpu_hist``
+  - XGBoost supports  ``approx``, ``hist`` and ``gpu_hist`` for distributed training.  Experimental support for external memory is available for ``approx`` and ``gpu_hist``.
+
+  - Choices: ``auto``, ``exact``, ``approx``, ``hist``, ``gpu_hist``, this is a
+    combination of commonly used updaters.  For other updaters like ``refresh``, set the
+    parameter ``updater`` directly.
 
     - ``auto``: Use heuristic to choose the fastest method.
 
-      - For small to medium dataset, exact greedy (``exact``) will be used.
-      - For very large dataset, approximate algorithm (``approx``) will be chosen.
-      - Because old behavior is always use exact greedy in single machine,
-        user will get a message when approximate algorithm is chosen to notify this choice.
+      - For small dataset, exact greedy (``exact``) will be used.
+      - For larger dataset, approximate algorithm (``approx``) will be chosen.  It's
+        recommended to try ``hist`` and ``gpu_hist`` for higher performance with large
+        dataset.
+        (``gpu_hist``)has support for ``external memory``.
 
-    - ``exact``: Exact greedy algorithm.
+      - Because old behavior is always use exact greedy in single machine, user will get a
+        message when approximate algorithm is chosen to notify this choice.
+    - ``exact``: Exact greedy algorithm.  Enumerates all split candidates.
     - ``approx``: Approximate greedy algorithm using quantile sketch and gradient histogram.
-    - ``hist``: Fast histogram optimized approximate greedy algorithm. It uses some performance improvements such as bins caching.
-    - ``gpu_exact``: GPU implementation of ``exact`` algorithm.
+    - ``hist``: Faster histogram optimized approximate greedy algorithm.
     - ``gpu_hist``: GPU implementation of ``hist`` algorithm.
 
 * ``sketch_eps`` [default=0.03]
@@ -141,22 +147,24 @@ Parameters for Tree Booster
 
 * ``updater`` [default= ``grow_colmaker,prune``]
 
-  - A comma separated string defining the sequence of tree updaters to run, providing a modular way to construct and to modify the trees. This is an advanced parameter that is usually set automatically, depending on some other parameters. However, it could be also set explicitly by a user. The following updater plugins exist:
+  - A comma separated string defining the sequence of tree updaters to run, providing a modular way to construct and to modify the trees. This is an advanced parameter that is usually set automatically, depending on some other parameters. However, it could be also set explicitly by a user. The following updaters exist:
 
     - ``grow_colmaker``: non-distributed column-based construction of trees.
     - ``distcol``: distributed tree construction with column-based data splitting mode.
     - ``grow_histmaker``: distributed tree construction with row-based data splitting based on global proposal of histogram counting.
     - ``grow_local_histmaker``: based on local histogram counting.
     - ``grow_skmaker``: uses the approximate sketching algorithm.
+    - ``grow_quantile_histmaker``: Grow tree using quantized histogram.
+    - ``grow_gpu_hist``: Grow tree with GPU.
     - ``sync``: synchronizes trees in all distributed nodes.
     - ``refresh``: refreshes tree's statistics and/or leaf values based on the current data. Note that no random subsampling of data rows is performed.
     - ``prune``: prunes the splits where loss < min_split_loss (or gamma).
 
-  - In a distributed setting, the implicit updater sequence value would be adjusted to ``grow_histmaker,prune`` by default, and you can set ``tree_method`` as ``hist`` to use ``grow_histmaker``. 
+  - In a distributed setting, the implicit updater sequence value would be adjusted to ``grow_histmaker,prune`` by default, and you can set ``tree_method`` as ``hist`` to use ``grow_histmaker``.
 
 * ``refresh_leaf`` [default=1]
 
-  - This is a parameter of the ``refresh`` updater plugin. When this flag is 1, tree leafs as well as tree nodes' stats are updated. When it is 0, only node stats are updated.
+  - This is a parameter of the ``refresh`` updater. When this flag is 1, tree leafs as well as tree nodes' stats are updated. When it is 0, only node stats are updated.
 
 * ``process_type`` [default= ``default``]
 
@@ -164,7 +172,7 @@ Parameters for Tree Booster
   - Choices: ``default``, ``update``
 
     - ``default``: The normal boosting process which creates new trees.
-    - ``update``: Starts from an existing model and only updates its trees. In each boosting iteration, a tree from the initial model is taken, a specified sequence of updater plugins is run for that tree, and a modified tree is added to the new model. The new model would have either the same or smaller number of trees, depending on the number of boosting iteratons performed. Currently, the following built-in updater plugins could be meaningfully used with this process type: ``refresh``, ``prune``. With ``process_type=update``, one cannot use updater plugins that create new trees.
+    - ``update``: Starts from an existing model and only updates its trees. In each boosting iteration, a tree from the initial model is taken, a specified sequence of updaters is run for that tree, and a modified tree is added to the new model. The new model would have either the same or smaller number of trees, depending on the number of boosting iteratons performed. Currently, the following built-in updaters could be meaningfully used with this process type: ``refresh``, ``prune``. With ``process_type=update``, one cannot use updaters that create new trees.
 
 * ``grow_policy`` [default= ``depthwise``]
 
@@ -185,15 +193,31 @@ Parameters for Tree Booster
   - Maximum number of discrete bins to bucket continuous features.
   - Increasing this number improves the optimality of splits at the cost of higher computation time.
 
-* ``predictor``, [default=``cpu_predictor``]
+* ``predictor``, [default=``auto``]
 
   - The type of predictor algorithm to use. Provides the same results but allows the use of GPU or CPU.
 
+    - ``auto``: Configure predictor based on heuristics.
     - ``cpu_predictor``: Multicore CPU prediction algorithm.
-    - ``gpu_predictor``: Prediction using GPU. Default when ``tree_method`` is ``gpu_exact`` or ``gpu_hist``.
+    - ``gpu_predictor``: Prediction using GPU.  Used when ``tree_method`` is ``gpu_hist``.
+      When ``predictor`` is set to default value ``auto``, the ``gpu_hist`` tree method is
+      able to provide GPU based prediction without copying training data to GPU memory.
+      If ``gpu_predictor`` is explicitly specified, then all data is copied into GPU, only
+      recommended for performing prediction tasks.
 
 * ``num_parallel_tree``, [default=1]
   - Number of parallel trees constructed during each iteration. This option is used to support boosted random forest.
+
+* ``monotone_constraints``
+
+  - Constraint of variable monotonicity.  See tutorial for more information.
+
+* ``interaction_constraints``
+
+  - Constraints for interaction representing permitted interactions.  The constraints must
+    be specified in the form of a nest list, e.g. ``[[0, 1], [2, 3, 4]]``, where each inner
+    list is a group of indices of features that are allowed to interact with each other.
+    See tutorial for more information
 
 Additional parameters for Dart Booster (``booster=dart``)
 =========================================================
@@ -295,7 +319,8 @@ Specify the learning task and the corresponding learning objective. The objectiv
 
 * ``objective`` [default=reg:squarederror]
 
-  - ``reg:squarederror``: regression with squared loss
+  - ``reg:squarederror``: regression with squared loss.
+  - ``reg:squaredlogerror``: regression with squared log loss :math:`\frac{1}{2}[log(pred + 1) - log(label + 1)]^2`.  All input labels are required to be greater than -1.  Also, see metric ``rmsle`` for possible issue  with this objective.
   - ``reg:logistic``: logistic regression
   - ``binary:logistic``: logistic regression for binary classification, output probability
   - ``binary:logitraw``: logistic regression for binary classification, output score before logistic transformation
@@ -326,6 +351,7 @@ Specify the learning task and the corresponding learning objective. The objectiv
   - The choices are listed below:
 
     - ``rmse``: `root mean square error <http://en.wikipedia.org/wiki/Root_mean_square_error>`_
+    - ``rmsle``: root mean square log error: :math:`\sqrt{\frac{1}{N}[log(pred + 1) - log(label + 1)]^2}`. Default metric of ``reg:squaredlogerror`` objective. This metric reduces errors generated by outliers in dataset.  But because ``log`` function is employed, ``rmsle`` might output ``nan`` when prediction value is less than -1.  See ``reg:squaredlogerror`` for other requirements.
     - ``mae``: `mean absolute error <https://en.wikipedia.org/wiki/Mean_absolute_error>`_
     - ``logloss``: `negative log-likelihood <http://en.wikipedia.org/wiki/Log-likelihood>`_
     - ``error``: Binary classification error rate. It is calculated as ``#(wrong cases)/#(all cases)``. For the predictions, the evaluation will regard the instances with prediction value larger than 0.5 as positive instances, and the others as negative instances.
@@ -346,7 +372,7 @@ Specify the learning task and the corresponding learning objective. The objectiv
 
 * ``seed`` [default=0]
 
-  - Random number seed.
+  - Random number seed.  This parameter is ignored in R package, use `set.seed()` instead.
 
 ***********************
 Command Line Parameters

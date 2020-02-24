@@ -36,13 +36,12 @@ int main(int argc, char** argv) {
   //   https://xgboost.readthedocs.io/en/latest/parameter.html
   safe_xgboost(XGBoosterSetParam(booster, "tree_method", use_gpu ? "gpu_hist" : "hist"));
   if (use_gpu) {
-    // set the number of GPUs and the first GPU to use;
+    // set the GPU to use;
     // this is not necessary, but provided here as an illustration
-    safe_xgboost(XGBoosterSetParam(booster, "n_gpus", "1"));
     safe_xgboost(XGBoosterSetParam(booster, "gpu_id", "0"));
   } else {
     // avoid evaluating objective and metric on a GPU
-    safe_xgboost(XGBoosterSetParam(booster, "n_gpus", "0"));
+    safe_xgboost(XGBoosterSetParam(booster, "gpu_id", "-1"));
   }
 
   safe_xgboost(XGBoosterSetParam(booster, "objective", "binary:logistic"));
@@ -66,7 +65,7 @@ int main(int argc, char** argv) {
   const float* out_result = NULL;
   int n_print = 10;
 
-  safe_xgboost(XGBoosterPredict(booster, dtest, 0, 0, &out_len, &out_result));
+  safe_xgboost(XGBoosterPredict(booster, dtest, 0, 0, 0, &out_len, &out_result));
   printf("y_pred: ");
   for (int i = 0; i < n_print; ++i) {
     printf("%1.4f ", out_result[i]);

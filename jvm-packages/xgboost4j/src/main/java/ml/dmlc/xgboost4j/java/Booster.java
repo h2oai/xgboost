@@ -54,8 +54,9 @@ public class Booster implements Serializable {
         logger.error("KryoBooster is not available", e);
         kryoBoosterClass = null;
       }
-    } else
+    } else {
       kryoBoosterClass = null;
+    }
 
     USE_KRYO_BOOSTER = kryoBoosterClass != null;
     KRYO_BOOSTER_CLASS = kryoBoosterClass;
@@ -74,13 +75,16 @@ public class Booster implements Serializable {
    * @throws XGBoostError native error
    */
   static Booster newBooster(Map<String, Object> params, DMatrix[] cacheMats) throws XGBoostError {
-    if (USE_KRYO_BOOSTER)
+    if (USE_KRYO_BOOSTER) {
       return newKryoBooster(params, cacheMats);
-    else
+    }
+    else {
       return new Booster(params, cacheMats, false);
+    }
   }
 
-  private static Booster newKryoBooster(Map<String, Object> params, DMatrix[] cacheMats) throws XGBoostError {
+  private static Booster newKryoBooster(Map<String, Object> params, DMatrix[] cacheMats)
+    throws XGBoostError {
     try {
       Constructor<?> constuctor = KRYO_BOOSTER_CLASS.getDeclaredConstructors()[0];
       return (Booster) constuctor.newInstance(params, cacheMats);
@@ -90,17 +94,23 @@ public class Booster implements Serializable {
     }
   }
 
-  protected Booster(Map<String, Object> params, DMatrix[] cacheMats, boolean isKryoBooster) throws XGBoostError {
+  protected Booster(Map<String, Object> params, DMatrix[] cacheMats, boolean isKryoBooster)
+    throws XGBoostError {
     this(isKryoBooster);
     init(cacheMats);
-    setParam("seed", "0");
+    setParam("validate_features", "0");
     setParams(params);
   }
 
-  // Booster is not actually initialized in this constructor; must be initialized later - used in deserialization
+  // Booster is not actually initialized in this constructor; must be
+  // initialized later - used in deserialization
   protected Booster(boolean isKryoBooster) {
-    if (USE_KRYO_BOOSTER != isKryoBooster)
-      throw new IllegalStateException("Attempt to instantiate a Booster without support for Kryo in an environment that supports Kryo.");
+    if (USE_KRYO_BOOSTER != isKryoBooster) {
+      throw new IllegalStateException(
+        "Attempt to instantiate a Booster without support for Kryo " +
+          "in an environment that supports Kryo."
+      );
+    }
   }
 
   /**
@@ -611,7 +621,7 @@ public class Booster implements Serializable {
     }
     Map<String, Double> importanceMap = new HashMap<>();
     Map<String, Double> weightMap = new HashMap<>();
-    if (importanceType == FeatureImportanceType.WEIGHT) {
+    if (importanceType.equals(FeatureImportanceType.WEIGHT)) {
       Map<String, Integer> importanceWeights = getFeatureWeightsFromModel(modelInfos);
       for (String feature: importanceWeights.keySet()) {
         importanceMap.put(feature, new Double(importanceWeights.get(feature)));
@@ -622,8 +632,8 @@ public class Booster implements Serializable {
     "0:[f28<-9.53674316e-07] yes=1,no=2,missing=1,gain=4000.53101,cover=1628.25"
     So the line has to be split according to whether cover or gain is desired */
     String splitter = "gain=";
-    if (importanceType == FeatureImportanceType.COVER
-        || importanceType == FeatureImportanceType.TOTAL_COVER) {
+    if (importanceType.equals(FeatureImportanceType.COVER)
+        || importanceType.equals(FeatureImportanceType.TOTAL_COVER)) {
       splitter = "cover=";
     }
     for (String tree: modelInfos) {
@@ -649,8 +659,8 @@ public class Booster implements Serializable {
     }
     /* By default we calculate total gain and total cover.
     Divide by the number of nodes per feature to get gain / cover */
-    if (importanceType == FeatureImportanceType.COVER
-        || importanceType == FeatureImportanceType.GAIN) {
+    if (importanceType.equals(FeatureImportanceType.COVER)
+        || importanceType.equals(FeatureImportanceType.GAIN)) {
       for (String fid: importanceMap.keySet()) {
         importanceMap.put(fid, importanceMap.get(fid)/weightMap.get(fid));
       }

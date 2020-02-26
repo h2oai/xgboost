@@ -245,7 +245,7 @@ class GBTree : public GradientBooster {
 
   std::vector<std::string> DumpModel(const FeatureMap& fmap,
                                      bool with_stats,
-                                     std::string format) const override {
+                                     std::string format) override {
     return model_.DumpModel(fmap, with_stats, format);
   }
 

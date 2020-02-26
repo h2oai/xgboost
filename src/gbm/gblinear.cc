@@ -223,7 +223,8 @@ class GBLinear : public GradientBooster {
 
   std::vector<std::string> DumpModel(const FeatureMap& fmap,
                                      bool with_stats,
-                                     std::string format) const override {
+                                     std::string format) override {
+    model_.LazyInitModel();
     return model_.DumpModel(fmap, with_stats, format);
   }
 
@@ -239,7 +240,7 @@ class GBLinear : public GradientBooster {
   void PredictBatchInternal(DMatrix *p_fmat,
                             std::vector<bst_float> *out_preds) {
     monitor_.Start("PredictBatchInternal");
-      model_.LazyInitModel();
+    model_.LazyInitModel();
     std::vector<bst_float> &preds = *out_preds;
     const auto& base_margin = p_fmat->Info().base_margin_.ConstHostVector();
     // start collecting the prediction

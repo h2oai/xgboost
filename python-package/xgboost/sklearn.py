@@ -434,8 +434,7 @@ class XGBModel(XGBModelBase):
                 self.classes_ = np.array(v)
                 continue
             if k == 'type' and type(self).__name__ != v:
-                msg = f'Current model type: {type(self).__name__}, ' + \
-                    f'type of model in file: {v}'
+                msg = 'Current model type: %s, type of model in file: %s' % (type(self).__name__, v)
                 raise TypeError(msg)
             if k == 'type':
                 continue

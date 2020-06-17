@@ -16,7 +16,7 @@
         <maven.version>3.3.9</maven.version>
         <spark.version>2.1.0</spark.version>
         <flink.suffix>_2.11</flink.suffix>
-        <scala.version>2.11.8</scala.version>
+        <scala.version>2.13.2</scala.version>
         <scala.binary.version>2.11</scala.binary.version>
     </properties>
     <repositories>

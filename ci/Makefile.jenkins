@@ -32,7 +32,7 @@ TIMESTAMP := $(shell date +%s)
 SHELL:=/bin/bash
 THIS_FILE := $(lastword $(MAKEFILE_LIST))
 
-XGB_VERSION ?= 1.0.0-SNAPSHOT
+XGB_VERSION ?= 1.2.0-SNAPSHOT
 
 TARGET_NEXUS ?= snapshot
 NEXUS_IP ?= 172.17.0.53
@@ -185,7 +185,7 @@ endif
 	cd python-package/xgboost && ln -sf ../../lib .
 	cd python-package/xgboost && ln -sf ../../dmlc-core .
 
-	cd python-package && python setup_pip.py bdist_wheel
+	cd python-package && python setup.py bdist_wheel
 
 	cp python-package/dist/xgboost_$(BACKEND)-$(shell echo $(XGB_VERSION) | tr '-' '_')-cp$(PY_VERSION)*-$(WHL_OS_NAME)_*.whl ci-build
 

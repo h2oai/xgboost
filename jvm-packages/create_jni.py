@@ -70,11 +70,6 @@ def normpath(path):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--log-capi-invocation', type=str, choices=['ON', 'OFF'], default='OFF')
-    parser.add_argument('--use-cuda', type=str, choices=['ON', 'OFF'], default='OFF')
-    cli_args = parser.parse_args()
-
     if sys.platform == "darwin":
         # Enable of your compiler supports OpenMP.
         CONFIG["USE_OPENMP"] = "OFF"
@@ -92,12 +87,16 @@ if __name__ == "__main__":
 
     if not os.path.exists(library_path):
         print("building Java wrapper")
+        parser = argparse.ArgumentParser()
+        parser.add_argument('--log-capi-invocation', type=str, choices=['ON', 'OFF'], default='OFF')
+        parser.add_argument('--use-cuda', type=str, choices=['ON', 'OFF'], default='OFF')
+        cli_args = parser.parse_args()
         with cd(".."):
             maybe_makedirs("build")
             with cd("build"):
                 if sys.platform == "win32":
                     # Force x64 build on Windows.
-                    maybe_generator = ' -G"Visual Studio 14 Win64"'
+                    maybe_generator = ' -A x64'
                 else:
                     maybe_generator = ""
                 if sys.platform == "linux":
@@ -113,6 +112,16 @@ if __name__ == "__main__":
                     CONFIG['USE_NCCL'] = 'ON'
 
                 args = ["-D{0}:BOOL={1}".format(k, v) for k, v in CONFIG.items()]
+
+                # if enviorment set rabit_mock
+                if os.getenv("RABIT_MOCK", None) is not None:
+                    args.append("-DRABIT_MOCK:BOOL=ON")
+
+                # if enviorment set GPU_ARCH_FLAG
+                gpu_arch_flag = os.getenv("GPU_ARCH_FLAG", None)
+                if gpu_arch_flag is not None:
+                    args.append("%s" % gpu_arch_flag)
+
                 run("cmake .. " + " ".join(args) + maybe_generator)
                 run("cmake --build . --config Release" + maybe_parallel_build)
 

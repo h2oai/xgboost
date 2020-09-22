@@ -277,7 +277,8 @@ if __name__ == '__main__':
     # - pip install . -e
     # - python setup.py develop   # same as above
     logging.basicConfig(level=logging.INFO)
-    setup(name='xgboost',
+    setup(name=open(os.path.join(
+              CURRENT_DIR, 'xgboost/NAME')).read().strip(),
           version=open(os.path.join(
               CURRENT_DIR, 'xgboost/VERSION')).read().strip(),
           description="XGBoost Python Package",
@@ -301,8 +302,8 @@ if __name__ == '__main__':
               'datatable': ['datatable'],
               'plotting': ['graphviz', 'matplotlib']
           },
-          maintainer='Hyunsu Cho',
-          maintainer_email='chohyu01@cs.washington.edu',
+          maintainer='H2O.ai',
+          maintainer_email='support@h2o.ai',
           zip_safe=False,
           packages=find_packages(),
           include_package_data=True,

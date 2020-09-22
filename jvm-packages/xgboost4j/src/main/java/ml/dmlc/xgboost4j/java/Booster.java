@@ -98,7 +98,6 @@ public class Booster implements Serializable {
     throws XGBoostError {
     this(isKryoBooster);
     init(cacheMats);
-    setParam("validate_features", "0");
     setParams(params);
   }
 
@@ -303,7 +302,14 @@ public class Booster implements Serializable {
     String stringFormat = evalSet(evalMatrixs, evalNames, iter);
     String[] metricPairs = stringFormat.split("\t");
     for (int i = 1; i < metricPairs.length; i++) {
-      metricsOut[i - 1] = Float.valueOf(metricPairs[i].split(":")[1]);
+      String value = metricPairs[i].split(":")[1];
+      if (value.equalsIgnoreCase("nan")) {
+        metricsOut[i - 1] = Float.NaN;
+      } else if (value.equalsIgnoreCase("-nan")) {
+        metricsOut[i - 1] = -Float.NaN;
+      } else {
+        metricsOut[i - 1] = Float.valueOf(value);
+      }
     }
     return stringFormat;
   }

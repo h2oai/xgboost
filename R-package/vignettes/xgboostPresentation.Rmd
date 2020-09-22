@@ -363,7 +363,7 @@ xgb.plot.importance(importance_matrix = importance_matrix)
 You can dump the tree you learned using `xgb.dump` into a text file.
 
 ```{r dump, message=T, warning=F}
-xgb.dump(bst, with_stats = T)
+xgb.dump(bst, with_stats = TRUE)
 ```
 
 You can plot the trees from your model using ```xgb.plot.tree``
@@ -410,7 +410,7 @@ In some very specific cases, like when you want to pilot **XGBoost** from `caret
 
 ```{r saveLoadRBinVectorModel, message=F, warning=F}
 # save model to R's raw vector
-rawVec <- xgb.save.raw(bst)
+rawVec <- xgb.serialize(bst)
 
 # print class
 print(class(rawVec))

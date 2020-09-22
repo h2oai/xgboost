@@ -210,7 +210,7 @@ class TestModels(unittest.TestCase):
 
         def evalerror(preds, dtrain):
             labels = dtrain.get_label()
-            return 'error', float(sum(labels != (preds > 0.0))) / len(labels)
+            return 'error', float(sum(labels != (preds > 0.5))) / len(labels)
 
         # test custom_objective in training
         bst = xgb.train(param, dtrain, num_round, watchlist, logregobj, evalerror)
@@ -300,6 +300,13 @@ class TestModels(unittest.TestCase):
         assert float(config['learner']['objective'][
             'reg_loss_param']['scale_pos_weight']) == 0.5
 
+        buf = bst.save_raw()
+        from_raw = xgb.Booster()
+        from_raw.load_model(buf)
+
+        buf_from_raw = from_raw.save_raw()
+        assert buf == buf_from_raw
+
     def test_model_json_io(self):
         loc = locale.getpreferredencoding(False)
         model_path = 'test_model_json_io.json'
@@ -318,7 +325,7 @@ class TestModels(unittest.TestCase):
         assert locale.getpreferredencoding(False) == loc
 
     @pytest.mark.skipif(**tm.no_json_schema())
-    def test_json_schema(self):
+    def test_json_io_schema(self):
         import jsonschema
         model_path = 'test_json_schema.json'
         path = os.path.dirname(
@@ -335,3 +342,35 @@ class TestModels(unittest.TestCase):
         jsonschema.validate(instance=json_model(model_path, parameters),
                             schema=schema)
         os.remove(model_path)
+
+    @pytest.mark.skipif(**tm.no_json_schema())
+    def test_json_dump_schema(self):
+        import jsonschema
+
+        def validate_model(parameters):
+            X = np.random.random((100, 30))
+            y = np.random.randint(0, 4, size=(100,))
+
+            parameters['num_class'] = 4
+            m = xgb.DMatrix(X, y)
+
+            booster = xgb.train(parameters, m)
+            dump = booster.get_dump(dump_format='json')
+
+            for i in range(len(dump)):
+                jsonschema.validate(instance=json.loads(dump[i]),
+                                    schema=schema)
+
+        path = os.path.dirname(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        doc = os.path.join(path, 'doc', 'dump.schema')
+        with open(doc, 'r') as fd:
+            schema = json.load(fd)
+
+        parameters = {'tree_method': 'hist', 'booster': 'gbtree',
+                      'objective': 'multi:softmax'}
+        validate_model(parameters)
+
+        parameters = {'tree_method': 'hist', 'booster': 'dart',
+                      'objective': 'multi:softmax'}
+        validate_model(parameters)

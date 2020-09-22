@@ -165,9 +165,25 @@ TEST(HostDeviceVector, Span) {
   auto const_span = vec.ConstDeviceSpan();
   ASSERT_EQ(vec.Size(), const_span.size());
   ASSERT_EQ(vec.ConstDevicePointer(), const_span.data());
+
+  auto h_span = vec.ConstHostSpan();
+  ASSERT_TRUE(vec.HostCanRead());
+  ASSERT_FALSE(vec.HostCanWrite());
+  ASSERT_EQ(h_span.size(), vec.Size());
+  ASSERT_EQ(h_span.data(), vec.ConstHostPointer());
+
+  h_span = vec.HostSpan();
+  ASSERT_TRUE(vec.HostCanWrite());
 }
 
-TEST(HostDeviceVector, MGPU_Basic) {
+TEST(HostDeviceVector, Empty) {
+  HostDeviceVector<float> vec {1.0f, 2.0f, 3.0f, 4.0f};
+  HostDeviceVector<float> another { std::move(vec) };
+  ASSERT_FALSE(another.Empty());
+  ASSERT_TRUE(vec.Empty());
+}
+
+TEST(HostDeviceVector, MGPU_Basic) {  // NOLINT
   if (AllVisibleGPUs() < 2) {
     LOG(WARNING) << "Not testing in multi-gpu environment.";
     return;

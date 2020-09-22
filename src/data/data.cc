@@ -7,17 +7,20 @@
 
 #include "dmlc/io.h"
 #include "xgboost/data.h"
+#include "xgboost/c_api.h"
 #include "xgboost/host_device_vector.h"
 #include "xgboost/logging.h"
 #include "xgboost/version_config.h"
+#include "xgboost/learner.h"
 #include "sparse_page_writer.h"
 #include "simple_dmatrix.h"
-#include "simple_csr_source.h"
 
 #include "../common/io.h"
+#include "../common/math.h"
 #include "../common/version.h"
 #include "../common/group_data.h"
 #include "../data/adapter.h"
+#include "../data/iterative_device_dmatrix.h"
 
 #if DMLC_ENABLE_STD_THREAD
 #include "./sparse_page_source.h"
@@ -37,7 +40,7 @@ template <typename T>
 void SaveScalarField(dmlc::Stream *strm, const std::string &name,
                      xgboost::DataType type, const T &field) {
   strm->Write(name);
-  strm->Write(type);
+  strm->Write(static_cast<uint8_t>(type));
   strm->Write(true);  // is_scalar=True
   strm->Write(field);
 }
@@ -47,7 +50,7 @@ void SaveVectorField(dmlc::Stream *strm, const std::string &name,
                      xgboost::DataType type, std::pair<uint64_t, uint64_t> shape,
                      const std::vector<T>& field) {
   strm->Write(name);
-  strm->Write(type);
+  strm->Write(static_cast<uint8_t>(type));
   strm->Write(false);  // is_scalar=False
   strm->Write(shape.first);
   strm->Write(shape.second);
@@ -71,7 +74,9 @@ void LoadScalarField(dmlc::Stream* strm, const std::string& expected_name,
   CHECK(strm->Read(&name)) << invalid;
   CHECK_EQ(name, expected_name)
       << invalid << " Expected field: " << expected_name << ", got: " << name;
-  CHECK(strm->Read(&type)) << invalid;
+  uint8_t type_val;
+  CHECK(strm->Read(&type_val)) << invalid;
+  type = static_cast<xgboost::DataType>(type_val);
   CHECK(type == expected_type)
       << invalid << "Expected field of type: " << static_cast<int>(expected_type) << ", "
       << "got field type: " << static_cast<int>(type);
@@ -91,7 +96,9 @@ void LoadVectorField(dmlc::Stream* strm, const std::string& expected_name,
   CHECK(strm->Read(&name)) << invalid;
   CHECK_EQ(name, expected_name)
     << invalid << " Expected field: " << expected_name << ", got: " << name;
-  CHECK(strm->Read(&type)) << invalid;
+  uint8_t type_val;
+  CHECK(strm->Read(&type_val)) << invalid;
+  type = static_cast<xgboost::DataType>(type_val);
   CHECK(type == expected_type)
     << invalid << "Expected field of type: " << static_cast<int>(expected_type) << ", "
     << "got field type: " << static_cast<int>(type);
@@ -133,15 +140,19 @@ void MetaInfo::Clear() {
 /*
  * Binary serialization format for MetaInfo:
  *
- * | name        | type     | is_scalar | num_row | num_col | value           |
- * |-------------+----------+-----------+---------+---------+-----------------|
- * | num_row     | kUInt64  | True      | NA      |      NA | ${num_row_}     |
- * | num_col     | kUInt64  | True      | NA      |      NA | ${num_col_}     |
- * | num_nonzero | kUInt64  | True      | NA      |      NA | ${num_nonzero_} |
- * | labels      | kFloat32 | False     | ${size} |       1 | ${labels_}      |
- * | group_ptr   | kUInt32  | False     | ${size} |       1 | ${group_ptr_}   |
- * | weights     | kFloat32 | False     | ${size} |       1 | ${weights_}     |
- * | base_margin | kFloat32 | False     | ${size} |       1 | ${base_margin_} |
+ * | name               | type     | is_scalar | num_row | num_col | value                   |
+ * |--------------------+----------+-----------+---------+---------+-------------------------|
+ * | num_row            | kUInt64  | True      | NA      |      NA | ${num_row_}             |
+ * | num_col            | kUInt64  | True      | NA      |      NA | ${num_col_}             |
+ * | num_nonzero        | kUInt64  | True      | NA      |      NA | ${num_nonzero_}         |
+ * | labels             | kFloat32 | False     | ${size} |       1 | ${labels_}              |
+ * | group_ptr          | kUInt32  | False     | ${size} |       1 | ${group_ptr_}           |
+ * | weights            | kFloat32 | False     | ${size} |       1 | ${weights_}             |
+ * | base_margin        | kFloat32 | False     | ${size} |       1 | ${base_margin_}         |
+ * | labels_lower_bound | kFloat32 | False     | ${size} |       1 | ${labels_lower_bound_}  |
+ * | labels_upper_bound | kFloat32 | False     | ${size} |       1 | ${labels_upper_bound_}  |
+ * | feature_names      | kStr     | False     | ${size} |       1 | ${feature_names}        |
+ * | feature_types      | kStr     | False     | ${size} |       1 | ${feature_types}        |
  *
  * Note that the scalar fields (is_scalar=True) will have num_row and num_col missing.
  * Also notice the difference between the saved name and the name used in `SetInfo':
@@ -164,8 +175,34 @@ void MetaInfo::SaveBinary(dmlc::Stream *fo) const {
                   {weights_.Size(), 1}, weights_); ++field_cnt;
   SaveVectorField(fo, u8"base_margin", DataType::kFloat32,
                   {base_margin_.Size(), 1}, base_margin_); ++field_cnt;
+  SaveVectorField(fo, u8"labels_lower_bound", DataType::kFloat32,
+                  {labels_lower_bound_.Size(), 1}, labels_lower_bound_); ++field_cnt;
+  SaveVectorField(fo, u8"labels_upper_bound", DataType::kFloat32,
+                  {labels_upper_bound_.Size(), 1}, labels_upper_bound_); ++field_cnt;
+
+  SaveVectorField(fo, u8"feature_names", DataType::kStr,
+                  {feature_names.size(), 1}, feature_names); ++field_cnt;
+  SaveVectorField(fo, u8"feature_types", DataType::kStr,
+                  {feature_type_names.size(), 1}, feature_type_names); ++field_cnt;
 
   CHECK_EQ(field_cnt, kNumField) << "Wrong number of fields";
+}
+
+void LoadFeatureType(std::vector<std::string>const& type_names, std::vector<FeatureType>* types) {
+  types->clear();
+  for (auto const &elem : type_names) {
+    if (elem == "int") {
+      types->emplace_back(FeatureType::kNumerical);
+    } else if (elem == "float") {
+      types->emplace_back(FeatureType::kNumerical);
+    } else if (elem == "i") {
+      types->emplace_back(FeatureType::kNumerical);
+    } else if (elem == "q") {
+      types->emplace_back(FeatureType::kNumerical);
+    } else {
+      LOG(FATAL) << "All feature_types must be {int, float, i, q}";
+    }
+  }
 }
 
 void MetaInfo::LoadBinary(dmlc::Stream *fi) {
@@ -181,11 +218,20 @@ void MetaInfo::LoadBinary(dmlc::Stream *fi) {
   const uint64_t expected_num_field = kNumField;
   uint64_t num_field { 0 };
   CHECK(fi->Read(&num_field)) << "MetaInfo: invalid format";
-  CHECK_GE(num_field, expected_num_field)
-    << "MetaInfo: insufficient number of fields (expected at least " << expected_num_field
-    << " fields, but the binary file only contains " << num_field << "fields.)";
+  size_t expected = 0;
+  if (major == 1 && std::get<1>(version) < 2) {
+    // feature names and types are added in 1.2
+    expected = expected_num_field - 2;
+  } else {
+    expected = expected_num_field;
+  }
+  CHECK_GE(num_field, expected)
+      << "MetaInfo: insufficient number of fields (expected at least "
+      << expected << " fields, but the binary file only contains " << num_field
+      << "fields.)";
   if (num_field > expected_num_field) {
-    LOG(WARNING) << "MetaInfo: the given binary file contains extra fields which will be ignored.";
+    LOG(WARNING) << "MetaInfo: the given binary file contains extra fields "
+                    "which will be ignored.";
   }
 
   LoadScalarField(fi, u8"num_row", DataType::kUInt64, &num_row_);
@@ -195,6 +241,59 @@ void MetaInfo::LoadBinary(dmlc::Stream *fi) {
   LoadVectorField(fi, u8"group_ptr", DataType::kUInt32, &group_ptr_);
   LoadVectorField(fi, u8"weights", DataType::kFloat32, &weights_);
   LoadVectorField(fi, u8"base_margin", DataType::kFloat32, &base_margin_);
+  LoadVectorField(fi, u8"labels_lower_bound", DataType::kFloat32, &labels_lower_bound_);
+  LoadVectorField(fi, u8"labels_upper_bound", DataType::kFloat32, &labels_upper_bound_);
+
+  LoadVectorField(fi, u8"feature_names", DataType::kStr, &feature_names);
+  LoadVectorField(fi, u8"feature_types", DataType::kStr, &feature_type_names);
+  LoadFeatureType(feature_type_names, &feature_types.HostVector());
+}
+
+template <typename T>
+std::vector<T> Gather(const std::vector<T> &in, common::Span<int const> ridxs, size_t stride = 1) {
+  if (in.empty()) {
+    return {};
+  }
+  auto size = ridxs.size();
+  std::vector<T> out(size * stride);
+  for (auto i = 0ull; i < size; i++) {
+    auto ridx = ridxs[i];
+    for (size_t j = 0; j < stride; ++j) {
+      out[i * stride +j] = in[ridx * stride + j];
+    }
+  }
+  return out;
+}
+
+MetaInfo MetaInfo::Slice(common::Span<int32_t const> ridxs) const {
+  MetaInfo out;
+  out.num_row_ = ridxs.size();
+  out.num_col_ = this->num_col_;
+  // Groups is maintained by a higher level Python function.  We should aim at deprecating
+  // the slice function.
+  out.labels_.HostVector() = Gather(this->labels_.HostVector(), ridxs);
+  out.labels_upper_bound_.HostVector() =
+      Gather(this->labels_upper_bound_.HostVector(), ridxs);
+  out.labels_lower_bound_.HostVector() =
+      Gather(this->labels_lower_bound_.HostVector(), ridxs);
+  // weights
+  if (this->weights_.Size() + 1 == this->group_ptr_.size()) {
+    auto& h_weights =  out.weights_.HostVector();
+    // Assuming all groups are available.
+    out.weights_.HostVector() = h_weights;
+  } else {
+    out.weights_.HostVector() = Gather(this->weights_.HostVector(), ridxs);
+  }
+
+  if (this->base_margin_.Size() != this->num_row_) {
+    CHECK_EQ(this->base_margin_.Size() % this->num_row_, 0)
+        << "Incorrect size of base margin vector.";
+    size_t stride = this->base_margin_.Size() / this->num_row_;
+    out.base_margin_.HostVector() = Gather(this->base_margin_.HostVector(), ridxs, stride);
+  } else {
+    out.base_margin_.HostVector() = Gather(this->base_margin_.HostVector(), ridxs);
+  }
+  return out;
 }
 
 // try to load group information from file, if exists
@@ -268,16 +367,210 @@ void MetaInfo::SetInfo(const char* key, const void* dptr, DataType dtype, size_t
     for (size_t i = 1; i < group_ptr_.size(); ++i) {
       group_ptr_[i] = group_ptr_[i - 1] + group_ptr_[i];
     }
+  } else if (!std::strcmp(key, "label_lower_bound")) {
+    auto& labels = labels_lower_bound_.HostVector();
+    labels.resize(num);
+    DISPATCH_CONST_PTR(dtype, dptr, cast_dptr,
+                       std::copy(cast_dptr, cast_dptr + num, labels.begin()));
+  } else if (!std::strcmp(key, "label_upper_bound")) {
+    auto& labels = labels_upper_bound_.HostVector();
+    labels.resize(num);
+    DISPATCH_CONST_PTR(dtype, dptr, cast_dptr,
+                       std::copy(cast_dptr, cast_dptr + num, labels.begin()));
   } else {
-    LOG(FATAL) << "Unknown metainfo: " << key;
+    LOG(FATAL) << "Unknown key for MetaInfo: " << key;
+  }
+}
+
+void MetaInfo::GetInfo(char const *key, bst_ulong *out_len, DataType dtype,
+                       const void **out_dptr) const {
+  if (dtype == DataType::kFloat32) {
+    const std::vector<bst_float>* vec = nullptr;
+    if (!std::strcmp(key, "label")) {
+      vec = &this->labels_.HostVector();
+    } else if (!std::strcmp(key, "weight")) {
+      vec = &this->weights_.HostVector();
+    } else if (!std::strcmp(key, "base_margin")) {
+      vec = &this->base_margin_.HostVector();
+    } else if (!std::strcmp(key, "label_lower_bound")) {
+      vec = &this->labels_lower_bound_.HostVector();
+    } else if (!std::strcmp(key, "label_upper_bound")) {
+      vec = &this->labels_upper_bound_.HostVector();
+    } else {
+      LOG(FATAL) << "Unknown float field name: " << key;
+    }
+    *out_len = static_cast<xgboost::bst_ulong>(vec->size()); // NOLINT
+    *reinterpret_cast<float const**>(out_dptr) = dmlc::BeginPtr(*vec);
+  } else if (dtype == DataType::kUInt32) {
+    const std::vector<unsigned> *vec = nullptr;
+    if (!std::strcmp(key, "group_ptr")) {
+      vec = &this->group_ptr_;
+    } else {
+      LOG(FATAL) << "Unknown uint32 field name: " << key;
+    }
+    *out_len = static_cast<xgboost::bst_ulong>(vec->size());
+    *reinterpret_cast<unsigned const**>(out_dptr) = dmlc::BeginPtr(*vec);
+  } else {
+    LOG(FATAL) << "Unknown data type for getting meta info.";
+  }
+}
+
+void MetaInfo::SetFeatureInfo(const char* key, const char **info, const bst_ulong size) {
+  if (size != 0) {
+    CHECK_EQ(size, this->num_col_)
+        << "Length of " << key << " must be equal to number of columns.";
+  }
+  if (!std::strcmp(key, "feature_type")) {
+    feature_type_names.clear();
+    auto& h_feature_types = feature_types.HostVector();
+    for (size_t i = 0; i < size; ++i) {
+      auto elem = info[i];
+      feature_type_names.emplace_back(elem);
+    }
+    LoadFeatureType(feature_type_names, &h_feature_types);
+  } else if (!std::strcmp(key, "feature_name")) {
+    feature_names.clear();
+    for (size_t i = 0; i < size; ++i) {
+      feature_names.emplace_back(info[i]);
+    }
+  } else {
+    LOG(FATAL) << "Unknown feature info name: " << key;
+  }
+}
+
+void MetaInfo::GetFeatureInfo(const char *field,
+                              std::vector<std::string> *out_str_vecs) const {
+  auto &str_vecs = *out_str_vecs;
+  if (!std::strcmp(field, "feature_type")) {
+    str_vecs.resize(feature_type_names.size());
+    std::copy(feature_type_names.cbegin(), feature_type_names.cend(), str_vecs.begin());
+  } else if (!strcmp(field, "feature_name")) {
+    str_vecs.resize(feature_names.size());
+    std::copy(feature_names.begin(), feature_names.end(), str_vecs.begin());
+  } else {
+    LOG(FATAL) << "Unknown feature info: " << field;
+  }
+}
+
+void MetaInfo::Extend(MetaInfo const& that, bool accumulate_rows) {
+  if (accumulate_rows) {
+    this->num_row_ += that.num_row_;
+  }
+  if (this->num_col_ != 0) {
+    CHECK_EQ(this->num_col_, that.num_col_)
+        << "Number of columns must be consistent across batches.";
+  }
+  this->num_col_ = that.num_col_;
+
+  this->labels_.SetDevice(that.labels_.DeviceIdx());
+  this->labels_.Extend(that.labels_);
+
+  this->weights_.SetDevice(that.weights_.DeviceIdx());
+  this->weights_.Extend(that.weights_);
+
+  this->labels_lower_bound_.SetDevice(that.labels_lower_bound_.DeviceIdx());
+  this->labels_lower_bound_.Extend(that.labels_lower_bound_);
+
+  this->labels_upper_bound_.SetDevice(that.labels_upper_bound_.DeviceIdx());
+  this->labels_upper_bound_.Extend(that.labels_upper_bound_);
+
+  this->base_margin_.SetDevice(that.base_margin_.DeviceIdx());
+  this->base_margin_.Extend(that.base_margin_);
+
+  if (this->group_ptr_.size() == 0) {
+    this->group_ptr_ = that.group_ptr_;
+  } else {
+    CHECK_NE(that.group_ptr_.size(), 0);
+    auto group_ptr = that.group_ptr_;
+    for (size_t i = 1; i < group_ptr.size(); ++i) {
+      group_ptr[i] += this->group_ptr_.back();
+    }
+    this->group_ptr_.insert(this->group_ptr_.end(), group_ptr.begin() + 1,
+                            group_ptr.end());
+  }
+
+  if (!that.feature_names.empty()) {
+    this->feature_names = that.feature_names;
+  }
+  if (!that.feature_type_names.empty()) {
+    this->feature_type_names = that.feature_type_names;
+    auto &h_feature_types = feature_types.HostVector();
+    LoadFeatureType(this->feature_type_names, &h_feature_types);
+  }
+}
+
+void MetaInfo::Validate(int32_t device) const {
+  if (group_ptr_.size() != 0 && weights_.Size() != 0) {
+    CHECK_EQ(group_ptr_.size(), weights_.Size() + 1)
+        << "Size of weights must equal to number of groups when ranking "
+           "group is used.";
+    return;
+  }
+  if (group_ptr_.size() != 0) {
+    CHECK_EQ(group_ptr_.back(), num_row_)
+        << "Invalid group structure.  Number of rows obtained from groups "
+           "doesn't equal to actual number of rows given by data.";
+  }
+  auto check_device = [device](HostDeviceVector<float> const &v) {
+    CHECK(v.DeviceIdx() == GenericParameter::kCpuId ||
+          device  == GenericParameter::kCpuId ||
+          v.DeviceIdx() == device)
+        << "Data is resided on a different device than `gpu_id`. "
+        << "Device that data is on: " << v.DeviceIdx() << ", "
+        << "`gpu_id` for XGBoost: " << device;
+  };
+
+  if (weights_.Size() != 0) {
+    CHECK_EQ(weights_.Size(), num_row_)
+        << "Size of weights must equal to number of rows.";
+    check_device(weights_);
+    return;
+  }
+  if (labels_.Size() != 0) {
+    CHECK_EQ(labels_.Size(), num_row_)
+        << "Size of labels must equal to number of rows.";
+    check_device(labels_);
+    return;
+  }
+  if (labels_lower_bound_.Size() != 0) {
+    CHECK_EQ(labels_lower_bound_.Size(), num_row_)
+        << "Size of label_lower_bound must equal to number of rows.";
+    check_device(labels_lower_bound_);
+    return;
+  }
+  if (labels_upper_bound_.Size() != 0) {
+    CHECK_EQ(labels_upper_bound_.Size(), num_row_)
+        << "Size of label_upper_bound must equal to number of rows.";
+    check_device(labels_upper_bound_);
+    return;
+  }
+  CHECK_LE(num_nonzero_, num_col_ * num_row_);
+  if (base_margin_.Size() != 0) {
+    CHECK_EQ(base_margin_.Size() % num_row_, 0)
+        << "Size of base margin must be a multiple of number of rows.";
+    check_device(base_margin_);
   }
 }
 
 #if !defined(XGBOOST_USE_CUDA)
 void MetaInfo::SetInfo(const char * c_key, std::string const& interface_str) {
-  LOG(FATAL) << "XGBoost version is not compiled with GPU support";
+  common::AssertGPUSupport();
 }
 #endif  // !defined(XGBOOST_USE_CUDA)
+
+using DMatrixThreadLocal =
+    dmlc::ThreadLocalStore<std::map<DMatrix const *, XGBAPIThreadLocalEntry>>;
+
+XGBAPIThreadLocalEntry& DMatrix::GetThreadLocal() const {
+  return (*DMatrixThreadLocal::Get())[this];
+}
+
+DMatrix::~DMatrix() {
+  auto local_map = DMatrixThreadLocal::Get();
+  if (local_map->find(this) != local_map->cend()) {
+    local_map->erase(this);
+  }
+}
 
 DMatrix* DMatrix::Load(const std::string& uri,
                        bool silent,
@@ -336,10 +629,8 @@ DMatrix* DMatrix::Load(const std::string& uri,
     if (fi != nullptr) {
       common::PeekableInStream is(fi.get());
       if (is.PeekRead(&magic, sizeof(magic)) == sizeof(magic) &&
-        magic == data::SimpleCSRSource::kMagic) {
-        std::unique_ptr<data::SimpleCSRSource> source(new data::SimpleCSRSource());
-        source->LoadBinary(&is);
-        DMatrix* dmat = DMatrix::Create(std::move(source), cache_file);
+        magic == data::SimpleDMatrix::kMagic) {
+        DMatrix* dmat = new data::SimpleDMatrix(&is);
         if (!silent) {
           LOG(CONSOLE) << dmat->Info().num_row_ << 'x' << dmat->Info().num_col_ << " matrix with "
             << dmat->Info().num_nonzero_ << " entries loaded from " << uri;
@@ -410,34 +701,30 @@ DMatrix* DMatrix::Load(const std::string& uri,
   }
   return dmat;
 }
-
-
-void DMatrix::SaveToLocalFile(const std::string& fname) {
-  data::SimpleCSRSource source;
-  source.CopyFrom(this);
-  std::unique_ptr<dmlc::Stream> fo(dmlc::Stream::Create(fname.c_str(), "w"));
-  source.SaveBinary(fo.get());
-}
-
-DMatrix* DMatrix::Create(std::unique_ptr<DataSource<SparsePage>>&& source,
-                         const std::string& cache_prefix) {
-  if (cache_prefix.length() == 0) {
-    // Data split mode is fixed to be row right now.
-    rabit::Allreduce<rabit::op::Max>(&source->info.num_col_, 1);
-    return new data::SimpleDMatrix(std::move(source));
-  } else {
-#if DMLC_ENABLE_STD_THREAD
-    return new data::SparsePageDMatrix(std::move(source), cache_prefix);
+template <typename DataIterHandle, typename DMatrixHandle,
+          typename DataIterResetCallback, typename XGDMatrixCallbackNext>
+DMatrix *DMatrix::Create(DataIterHandle iter, DMatrixHandle proxy,
+                         DataIterResetCallback *reset,
+                         XGDMatrixCallbackNext *next, float missing,
+                         int nthread,
+                         int max_bin) {
+#if defined(XGBOOST_USE_CUDA)
+  return new data::IterativeDeviceDMatrix(iter, proxy, reset, next, missing, nthread, max_bin);
 #else
-    LOG(FATAL) << "External memory is not enabled in mingw";
-    return nullptr;
-#endif  // DMLC_ENABLE_STD_THREAD
-  }
+  common::AssertGPUSupport();
+  return nullptr;
+#endif
 }
+
+template DMatrix *DMatrix::Create<DataIterHandle, DMatrixHandle,
+                                  DataIterResetCallback, XGDMatrixCallbackNext>(
+    DataIterHandle iter, DMatrixHandle proxy, DataIterResetCallback *reset,
+    XGDMatrixCallbackNext *next, float missing, int nthread,
+    int max_bin);
 
 template <typename AdapterT>
 DMatrix* DMatrix::Create(AdapterT* adapter, float missing, int nthread,
-                         const std::string& cache_prefix,  size_t page_size ) {
+                         const std::string& cache_prefix,  size_t page_size) {
   if (cache_prefix.length() == 0) {
     // Data split mode is fixed to be row right now.
     return new data::SimpleDMatrix(adapter, missing, nthread);
@@ -467,9 +754,11 @@ template DMatrix* DMatrix::Create<data::DataTableAdapter>(
 template DMatrix* DMatrix::Create<data::FileAdapter>(
     data::FileAdapter* adapter, float missing, int nthread,
     const std::string& cache_prefix, size_t page_size);
-template DMatrix* DMatrix::Create<data::DMatrixSliceAdapter>(
-    data::DMatrixSliceAdapter* adapter, float missing, int nthread,
-    const std::string& cache_prefix, size_t page_size);
+template DMatrix *
+DMatrix::Create(data::IteratorAdapter<DataIterHandle, XGBCallbackDataIterNext,
+                                      XGBoostBatchCSR> *adapter,
+                float missing, int nthread, const std::string &cache_prefix,
+                size_t page_size);
 
 SparsePage SparsePage::GetTranspose(int num_columns) const {
   SparsePage transpose;
@@ -544,22 +833,22 @@ uint64_t SparsePage::Push(const AdapterBatchT& batch, float missing, int nthread
   uint64_t max_columns = 0;
 
   // First-pass over the batch counting valid elements
-  size_t num_lines = batch.Size();
+  size_t batch_size = batch.Size();
 #pragma omp parallel for schedule(static)
-  for (omp_ulong i = 0; i < static_cast<omp_ulong>(num_lines);
+  for (omp_ulong i = 0; i < static_cast<omp_ulong>(batch_size);
        ++i) {  // NOLINT(*)
     int tid = omp_get_thread_num();
     auto line = batch.GetLine(i);
     for (auto j = 0ull; j < line.Size(); j++) {
-      auto element = line.GetElement(j);
+      data::COOTuple element = line.GetElement(j);
       max_columns =
           std::max(max_columns, static_cast<uint64_t>(element.column_idx + 1));
       if (!common::CheckNAN(element.value) && element.value != missing) {
-        size_t key = element.row_idx -
-                     base_rowid;  // Adapter row index is absolute, here we want
-                                  // it relative to current page
-        CHECK_GE(key,  builder_base_row_offset);
-        builder.AddBudget(element.row_idx - base_rowid, tid);
+        size_t key = element.row_idx - base_rowid;
+        // Adapter row index is absolute, here we want it relative to
+        // current page
+        CHECK_GE(key, builder_base_row_offset);
+        builder.AddBudget(key, tid);
       }
     }
   }
@@ -567,7 +856,7 @@ uint64_t SparsePage::Push(const AdapterBatchT& batch, float missing, int nthread
 
   // Second pass over batch, placing elements in correct position
 #pragma omp parallel for schedule(static)
-  for (omp_ulong i = 0; i < static_cast<omp_ulong>(num_lines);
+  for (omp_ulong i = 0; i < static_cast<omp_ulong>(batch_size);
        ++i) {  // NOLINT(*)
     int tid = omp_get_thread_num();
     auto line = batch.GetLine(i);
@@ -644,7 +933,19 @@ void SparsePage::PushCSC(const SparsePage &batch) {
   self_offset = std::move(offset);
 }
 
+template uint64_t
+SparsePage::Push(const data::DenseAdapterBatch& batch, float missing, int nthread);
+template uint64_t
+SparsePage::Push(const data::CSRAdapterBatch& batch, float missing, int nthread);
+template uint64_t
+SparsePage::Push(const data::CSCAdapterBatch& batch, float missing, int nthread);
+template uint64_t
+SparsePage::Push(const data::DataTableAdapterBatch& batch, float missing, int nthread);
+template uint64_t
+SparsePage::Push(const data::FileAdapterBatch& batch, float missing, int nthread);
+
 namespace data {
+
 // List of files that will be force linked in static links.
 DMLC_REGISTRY_LINK_TAG(sparse_page_raw_format);
 }  // namespace data

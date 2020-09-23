@@ -47,6 +47,7 @@ CENTOS_JAVA_HOME := /usr/lib/jvm/java-1.8.0
 CENTOS_PY_35_ENV_PATH := /opt/rh/rh-python35/enable
 CENTOS_PY_36_ENV_PATH := /opt/rh/rh-python36/enable
 CENTOS_PY_37_ENV_PATH := /envs/xgb-env-py3.7/bin/activate
+CENTOS_PY_38_ENV_PATH := /envs/xgb-env-py3.8/bin/activate
 CENTOS_PY_ENV_PATH := $(CENTOS_PY_$(PY_VERSION)_ENV_PATH)
 
 UBUNTU_JAVA_HOME ?= /usr/lib/jvm/java-8-oracle
@@ -54,6 +55,7 @@ UBUNTU_JAVA_HOME ?= /usr/lib/jvm/java-8-oracle
 OSX_PY_35_ENV_NAME := xgb-build-py3.5
 OSX_PY_36_ENV_NAME := xgb-build-py3.6
 OSX_PY_37_ENV_NAME := xgb-build-py3.7
+OSX_PY_38_ENV_NAME := xgb-build-py3.8
 OSX_PY_ENV_NAME := $(OSX_PY_$(PY_VERSION)_ENV_NAME)
 
 # Initial checks
@@ -367,6 +369,7 @@ whls_%:
 	$(MAKE) -f $(THIS_FILE) BACKEND=$* $(DISTRO)_whl35
 	$(MAKE) -f $(THIS_FILE) BACKEND=$* $(DISTRO)_whl36
 	$(MAKE) -f $(THIS_FILE) BACKEND=$* $(DISTRO)_whl37
+	$(MAKE) -f $(THIS_FILE) BACKEND=$* $(DISTRO)_whl38
 
 centos_%_in_docker_impl:
 ifeq ($(CI),1)

@@ -40,7 +40,7 @@ NEXUS_IP ?= 172.17.0.53
 PY_VERSION ?= $(shell python --version 2>&1 | egrep -o '[0-9]\.[0-9]' | tr -d '.')
 CHECK_LD_LIB_PATH := /usr/lib/jvm/java-8-oracle/jre/lib/amd64/server
 
-DOCKER_IMAGE_VERSION=3
+DOCKER_IMAGE_VERSION=4
 
 CENTOS_DOCKER_IMAGE := harbor.h2o.ai/opsh2oai/h2o-3-xgboost-build-centos:$(DOCKER_IMAGE_VERSION)
 CENTOS_JAVA_HOME := /usr/lib/jvm/java-1.8.0
@@ -89,12 +89,12 @@ endif
 ifeq ($(EXEC_PRECHECKS),1)
 # Check if gcc is of expected version
 ifneq (,$(findstring CentOS,$(shell cat /etc/os-release 2> /dev/null)))
-    ifneq ($(shell gcc --version | head -1), gcc (GCC) 5.3.1 20160406 (Red Hat 5.3.1-6))
+    ifneq ($(shell gcc --version | head -1), gcc (GCC) 7.3.1 20180303 (Red Hat 7.3.1-5))
         $(error Unexpected gcc version.)
     endif
 endif
 # Check if cmake is of expected version
-ifneq ($(shell cmake --version | head -1), cmake version 3.12.3)
+ifneq ($(shell cmake --version | head -1), cmake version 3.18.2)
     $(error Unexpected cmake version.)
 endif
 endif
@@ -228,7 +228,7 @@ jar_package_%_in_docker:
 		$(CENTOS_DOCKER_IMAGE) \
 		-c "export JAVA_HOME=$(CENTOS_JAVA_HOME) && \
 			source $(CENTOS_PY_ENV_PATH) && \
-			source /opt/rh/devtoolset-4/enable && \
+			source /opt/rh/devtoolset-7/enable && \
 			make -f $(THIS_FILE) jar_package_$*"
 
 jar_package_%:
@@ -392,7 +392,7 @@ endif
 		$(CENTOS_DOCKER_IMAGE) \
 		-c "export JAVA_HOME=$(CENTOS_JAVA_HOME) && \
 			source $(CENTOS_PY_ENV_PATH) && \
-			source /opt/rh/devtoolset-4/enable && \
+			source /opt/rh/devtoolset-7/enable && \
 			make -f $(THIS_FILE) $*"
 
 centos_whl%:

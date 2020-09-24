@@ -23,6 +23,7 @@
         <scala.version>2.12.8</scala.version>
         <scala.binary.version>2.12</scala.binary.version>
         <hadoop.version>2.7.3</hadoop.version>
+        <skip.create_jni>false</skip.create_jni>
     </properties>
 
     <description>H2O XGBoost Libraries</description>
@@ -127,6 +128,7 @@
             </activation>
             <properties>
                 <excludeLibs>lib/*</excludeLibs>
+                <skip.create_jni>true</skip.create_jni>
             </properties>
         </profile>
     </profiles>
@@ -243,6 +245,7 @@
                           <goal>exec</goal>
                       </goals>
                       <configuration>
+                          <skip>${skip.create_jni}</skip>
                           <executable>python</executable>
                           <arguments>
                             <argument>create_jni.py</argument>

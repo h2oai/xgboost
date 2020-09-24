@@ -105,7 +105,7 @@ ansiColor('xterm') {
                         buildSummary.stageWithSummary(stageNameFromConfig(config), config.stageDir) {
                             node(nodeLabel) {
                                 buildSummary.refreshStage(stageNameFromConfig(config))
-                                timeout(time: 60, unit: 'MINUTES') {
+                                timeout(time: 90, unit: 'MINUTES') {
                                     try {
                                         deleteDir()
                                         dir(config.stageDir) {

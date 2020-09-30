@@ -15,10 +15,6 @@
 #if !defined(XGBOOST_STRICT_R_MODE) || XGBOOST_STRICT_R_MODE == 0
 // Override logging mechanism for non-R interfaces
 void dmlc::CustomLogMessage::Log(const std::string& msg) {
-  const xgboost::LogCallbackRegistry* registry
-    = xgboost::LogCallbackRegistryStore::Get();
-  auto callback = registry->Get();
-  callback(msg.c_str());
 }
 
 namespace xgboost {

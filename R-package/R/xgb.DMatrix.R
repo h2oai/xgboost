@@ -188,9 +188,10 @@ getinfo <- function(object, ...) UseMethod("getinfo")
 getinfo.xgb.DMatrix <- function(object, name, ...) {
   if (typeof(name) != "character" ||
       length(name) != 1 ||
-      !name %in% c('label', 'weight', 'base_margin', 'nrow')) {
+      !name %in% c('label', 'weight', 'base_margin', 'nrow',
+                   'label_lower_bound', 'label_upper_bound')) {
     stop("getinfo: name must be one of the following\n",
-         "    'label', 'weight', 'base_margin', 'nrow'")
+         "    'label', 'weight', 'base_margin', 'nrow', 'label_lower_bound', 'label_upper_bound'")
   }
   if (name != "nrow"){
     ret <- .Call(XGDMatrixGetInfo_R, object, name)
@@ -243,9 +244,19 @@ setinfo.xgb.DMatrix <- function(object, name, info, ...) {
     .Call(XGDMatrixSetInfo_R, object, name, as.numeric(info))
     return(TRUE)
   }
-  if (name == "weight") {
+  if (name == "label_lower_bound") {
     if (length(info) != nrow(object))
-      stop("The length of weights must equal to the number of rows in the input data")
+      stop("The length of lower-bound labels must equal to the number of rows in the input data")
+    .Call(XGDMatrixSetInfo_R, object, name, as.numeric(info))
+    return(TRUE)
+  }
+  if (name == "label_upper_bound") {
+    if (length(info) != nrow(object))
+      stop("The length of upper-bound labels must equal to the number of rows in the input data")
+    .Call(XGDMatrixSetInfo_R, object, name, as.numeric(info))
+    return(TRUE)
+  }
+  if (name == "weight") {
     .Call(XGDMatrixSetInfo_R, object, name, as.numeric(info))
     return(TRUE)
   }
@@ -309,7 +320,7 @@ slice.xgb.DMatrix <- function(object, idxset, ...) {
     for (i in seq_along(ind)) {
       obj_attr <- attr(object, nms[i])
       if (NCOL(obj_attr) > 1) {
-        attr(ret, nms[i]) <- obj_attr[idxset,]
+        attr(ret, nms[i]) <- obj_attr[idxset, ]
       } else {
         attr(ret, nms[i]) <- obj_attr[idxset]
       }
@@ -347,9 +358,9 @@ slice.xgb.DMatrix <- function(object, idxset, ...) {
 print.xgb.DMatrix <- function(x, verbose = FALSE, ...) {
   cat('xgb.DMatrix  dim:', nrow(x), 'x', ncol(x), ' info: ')
   infos <- c()
-  if(length(getinfo(x, 'label')) > 0) infos <- 'label'
-  if(length(getinfo(x, 'weight')) > 0) infos <- c(infos, 'weight')
-  if(length(getinfo(x, 'base_margin')) > 0) infos <- c(infos, 'base_margin')
+  if (length(getinfo(x, 'label')) > 0) infos <- 'label'
+  if (length(getinfo(x, 'weight')) > 0) infos <- c(infos, 'weight')
+  if (length(getinfo(x, 'base_margin')) > 0) infos <- c(infos, 'base_margin')
   if (length(infos) == 0) infos <- 'NA'
   cat(infos)
   cnames <- colnames(x)

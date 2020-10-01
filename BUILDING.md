@@ -53,7 +53,7 @@ mvn \
 - **step 0/3** - clean
 	- `make -f ci/Makefile.jenkins mrproper`
 - **step 1/3** - build XGBoost lib:
-	-  `make -f ci/Makefile.jenkins build_minimal`
+	- `make -f ci/Makefile.jenkins build_minimal`
 	-  artifacts can be found in `lib/` dir
 - **step 2/3** - Python wheel (for current Python version):
 	- `make -f ci/Makefile.jenkins whl_minimal`

@@ -32,7 +32,7 @@ TIMESTAMP := $(shell date +%s)
 SHELL:=/bin/bash
 THIS_FILE := $(lastword $(MAKEFILE_LIST))
 
-XGB_VERSION ?= 1.0.0-SNAPSHOT
+XGB_VERSION ?= 1.2.0-SNAPSHOT
 
 TARGET_NEXUS ?= snapshot
 NEXUS_IP ?= 172.17.0.53
@@ -40,13 +40,14 @@ NEXUS_IP ?= 172.17.0.53
 PY_VERSION ?= $(shell python --version 2>&1 | egrep -o '[0-9]\.[0-9]' | tr -d '.')
 CHECK_LD_LIB_PATH := /usr/lib/jvm/java-8-oracle/jre/lib/amd64/server
 
-DOCKER_IMAGE_VERSION=3
+DOCKER_IMAGE_VERSION=4
 
 CENTOS_DOCKER_IMAGE := harbor.h2o.ai/opsh2oai/h2o-3-xgboost-build-centos:$(DOCKER_IMAGE_VERSION)
 CENTOS_JAVA_HOME := /usr/lib/jvm/java-1.8.0
 CENTOS_PY_35_ENV_PATH := /opt/rh/rh-python35/enable
 CENTOS_PY_36_ENV_PATH := /opt/rh/rh-python36/enable
 CENTOS_PY_37_ENV_PATH := /envs/xgb-env-py3.7/bin/activate
+CENTOS_PY_38_ENV_PATH := /envs/xgb-env-py3.8/bin/activate
 CENTOS_PY_ENV_PATH := $(CENTOS_PY_$(PY_VERSION)_ENV_PATH)
 
 UBUNTU_JAVA_HOME ?= /usr/lib/jvm/java-8-oracle
@@ -54,6 +55,7 @@ UBUNTU_JAVA_HOME ?= /usr/lib/jvm/java-8-oracle
 OSX_PY_35_ENV_NAME := xgb-build-py3.5
 OSX_PY_36_ENV_NAME := xgb-build-py3.6
 OSX_PY_37_ENV_NAME := xgb-build-py3.7
+OSX_PY_38_ENV_NAME := xgb-build-py3.8
 OSX_PY_ENV_NAME := $(OSX_PY_$(PY_VERSION)_ENV_NAME)
 
 # Initial checks
@@ -87,12 +89,12 @@ endif
 ifeq ($(EXEC_PRECHECKS),1)
 # Check if gcc is of expected version
 ifneq (,$(findstring CentOS,$(shell cat /etc/os-release 2> /dev/null)))
-    ifneq ($(shell gcc --version | head -1), gcc (GCC) 5.3.1 20160406 (Red Hat 5.3.1-6))
+    ifneq ($(shell gcc --version | head -1), gcc (GCC) 7.3.1 20180303 (Red Hat 7.3.1-5))
         $(error Unexpected gcc version.)
     endif
 endif
 # Check if cmake is of expected version
-ifneq ($(shell cmake --version | head -1), cmake version 3.12.3)
+ifneq ($(shell cmake --version | head -1), cmake version 3.18.2)
     $(error Unexpected cmake version.)
 endif
 endif
@@ -185,7 +187,7 @@ endif
 	cd python-package/xgboost && ln -sf ../../lib .
 	cd python-package/xgboost && ln -sf ../../dmlc-core .
 
-	cd python-package && python setup_pip.py bdist_wheel
+	cd python-package && python setup.py bdist_wheel
 
 	cp python-package/dist/xgboost_$(BACKEND)-$(shell echo $(XGB_VERSION) | tr '-' '_')-cp$(PY_VERSION)*-$(WHL_OS_NAME)_*.whl ci-build
 
@@ -226,7 +228,7 @@ jar_package_%_in_docker:
 		$(CENTOS_DOCKER_IMAGE) \
 		-c "export JAVA_HOME=$(CENTOS_JAVA_HOME) && \
 			source $(CENTOS_PY_ENV_PATH) && \
-			source /opt/rh/devtoolset-4/enable && \
+			source /opt/rh/devtoolset-7/enable && \
 			make -f $(THIS_FILE) jar_package_$*"
 
 jar_package_%:
@@ -367,6 +369,7 @@ whls_%:
 	$(MAKE) -f $(THIS_FILE) BACKEND=$* $(DISTRO)_whl35
 	$(MAKE) -f $(THIS_FILE) BACKEND=$* $(DISTRO)_whl36
 	$(MAKE) -f $(THIS_FILE) BACKEND=$* $(DISTRO)_whl37
+	$(MAKE) -f $(THIS_FILE) BACKEND=$* $(DISTRO)_whl38
 
 centos_%_in_docker_impl:
 ifeq ($(CI),1)
@@ -389,7 +392,7 @@ endif
 		$(CENTOS_DOCKER_IMAGE) \
 		-c "export JAVA_HOME=$(CENTOS_JAVA_HOME) && \
 			source $(CENTOS_PY_ENV_PATH) && \
-			source /opt/rh/devtoolset-4/enable && \
+			source /opt/rh/devtoolset-7/enable && \
 			make -f $(THIS_FILE) $*"
 
 centos_whl%:

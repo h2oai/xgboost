@@ -1,7 +1,7 @@
 #!/bin/bash
 
-#run make in rabit/test to generate librabit_mock
-#update config.mk and build xgboost using mock
+source activate cpu_test
+
 export DMLC_SUBMIT_CLUSTER=local
 
 submit="python3 dmlc-core/tracker/dmlc-submit"

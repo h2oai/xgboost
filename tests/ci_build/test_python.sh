@@ -7,6 +7,7 @@ suite=$1
 # Install XGBoost Python package
 function install_xgboost {
   wheel_found=0
+  pip install --upgrade pip --user
   for file in python-package/dist/*.whl
   do
     if [ -e "${file}" ]
@@ -28,26 +29,23 @@ function install_xgboost {
 # Run specified test suite
 case "$suite" in
   gpu)
+    source activate gpu_test
     install_xgboost
-    pytest -v -s --fulltrace -m "not mgpu" tests/python-gpu
+    pytest -v -s -rxXs --fulltrace -m "not mgpu" tests/python-gpu
     ;;
 
   mgpu)
+    source activate gpu_test
     install_xgboost
-    pytest -v -s --fulltrace -m "mgpu" tests/python-gpu
+    pytest -v -s -rxXs --fulltrace -m "mgpu" tests/python-gpu
+
     cd tests/distributed
     ./runtests-gpu.sh
     cd -
-    pytest -v -s --fulltrace -m "mgpu" tests/python-gpu/test_gpu_with_dask.py
-    ;;
-
-  cudf)
-    source activate cudf_test
-    install_xgboost
-    pytest -v -s --fulltrace -m "not mgpu" tests/python-gpu/test_from_columnar.py tests/python-gpu/test_from_cupy.py
     ;;
 
   cpu)
+    source activate cpu_test
     install_xgboost
     pytest -v -s --fulltrace tests/python
     cd tests/distributed
@@ -61,7 +59,7 @@ case "$suite" in
     ;;
 
   *)
-    echo "Usage: $0 {gpu|mgpu|cudf|cpu|cpu-py35}"
+    echo "Usage: $0 {gpu|mgpu|cpu}"
     exit 1
     ;;
 esac

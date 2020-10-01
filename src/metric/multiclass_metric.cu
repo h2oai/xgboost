@@ -73,13 +73,6 @@ class MultiClassMetricsReduction {
 
 #if defined(XGBOOST_USE_CUDA)
 
-  ~MultiClassMetricsReduction() {
-    if (device_ >= 0) {
-      dh::safe_cuda(cudaSetDevice(device_));
-      allocator_.Free();
-    }
-  }
-
   PackedReduceResult DeviceReduceMetrics(
       const HostDeviceVector<bst_float>& weights,
       const HostDeviceVector<bst_float>& labels,
@@ -98,8 +91,9 @@ class MultiClassMetricsReduction {
     auto s_label_error = label_error_.GetSpan<int32_t>(1);
     s_label_error[0] = 0;
 
+    dh::XGBCachingDeviceAllocator<char> alloc;
     PackedReduceResult result = thrust::transform_reduce(
-        thrust::cuda::par(allocator_),
+        thrust::cuda::par(alloc),
         begin, end,
         [=] XGBOOST_DEVICE(size_t idx) {
           bst_float weight = is_null_weight ? 1.0f : s_weights[idx];
@@ -152,7 +146,6 @@ class MultiClassMetricsReduction {
 #if defined(XGBOOST_USE_CUDA)
   dh::PinnedMemory label_error_;
   int device_{-1};
-  dh::CubMemory allocator_;
 #endif  // defined(XGBOOST_USE_CUDA)
 };
 
@@ -165,18 +158,22 @@ struct EvalMClassBase : public Metric {
   bst_float Eval(const HostDeviceVector<bst_float> &preds,
                  const MetaInfo &info,
                  bool distributed) override {
-    CHECK_NE(info.labels_.Size(), 0U) << "label set cannot be empty";
-    CHECK(preds.Size() % info.labels_.Size() == 0)
-        << "label and prediction size not match";
-    const size_t nclass = preds.Size() / info.labels_.Size();
-    CHECK_GE(nclass, 1U)
-        << "mlogloss and merror are only used for multi-class classification,"
-        << " use logloss for binary classification";
-
-    int device = tparam_->gpu_id;
-    auto result = reducer_.Reduce(*tparam_, device, nclass, info.weights_, info.labels_, preds);
-    double dat[2] { result.Residue(), result.Weights() };
-
+    if (info.labels_.Size() == 0) {
+      CHECK_EQ(preds.Size(), 0);
+    } else {
+      CHECK(preds.Size() % info.labels_.Size() == 0) << "label and prediction size not match";
+    }
+    double dat[2] { 0.0, 0.0 };
+    if (info.labels_.Size() != 0) {
+      const size_t nclass = preds.Size() / info.labels_.Size();
+      CHECK_GE(nclass, 1U)
+          << "mlogloss and merror are only used for multi-class classification,"
+          << " use logloss for binary classification";
+      int device = tparam_->gpu_id;
+      auto result = reducer_.Reduce(*tparam_, device, nclass, info.weights_, info.labels_, preds);
+      dat[0] = result.Residue();
+      dat[1] = result.Weights();
+    }
     if (distributed) {
       rabit::Allreduce<rabit::op::Sum>(dat, 2);
     }

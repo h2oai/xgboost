@@ -1,4 +1,6 @@
-// Copyright (c) 2019 by Contributors
+/*!
+ * Copyright 2019-2020 XGBoost contributors
+ */
 #include <gtest/gtest.h>
 #include <xgboost/version_config.h>
 #include <xgboost/c_api.h>
@@ -8,8 +10,7 @@
 #include "../helpers.h"
 #include "../../../src/common/io.h"
 
-
-TEST(c_api, XGDMatrixCreateFromMatDT) {
+TEST(CAPI, XGDMatrixCreateFromMatDT) {
   std::vector<int> col0 = {0, -1, 3};
   std::vector<float> col1 = {-4.0f, 2.0f, 0.0f};
   const char *col0_type = "int32";
@@ -36,7 +37,7 @@ TEST(c_api, XGDMatrixCreateFromMatDT) {
   delete dmat;
 }
 
-TEST(c_api, XGDMatrixCreateFromMat_omp) {
+TEST(CAPI, XGDMatrixCreateFromMatOmp) {
   std::vector<int> num_rows = {100, 11374, 15000};
   for (auto row : num_rows) {
     int num_cols = 50;
@@ -72,16 +73,15 @@ TEST(c_api, XGDMatrixCreateFromMat_omp) {
 
 namespace xgboost {
 
-TEST(c_api, Version) {
+TEST(CAPI, Version) {
   int patch {0};
   XGBoostVersion(NULL, NULL, &patch);  // NOLINT
   ASSERT_EQ(patch, XGBOOST_VER_PATCH);
 }
 
-TEST(c_api, ConfigIO) {
+TEST(CAPI, ConfigIO) {
   size_t constexpr kRows = 10;
-  auto pp_dmat = CreateDMatrix(kRows, 10, 0);
-  auto p_dmat = *pp_dmat;
+  auto p_dmat = RandomDataGenerator(kRows, 10, 0).GenerateDMatrix();
   std::vector<std::shared_ptr<DMatrix>> mat {p_dmat};
   std::vector<bst_float> labels(kRows);
   for (size_t i = 0; i < labels.size(); ++i) {
@@ -92,7 +92,7 @@ TEST(c_api, ConfigIO) {
   std::shared_ptr<Learner> learner { Learner::Create(mat) };
 
   BoosterHandle handle = learner.get();
-  learner->UpdateOneIter(0, p_dmat.get());
+  learner->UpdateOneIter(0, p_dmat);
 
   char const* out[1];
   bst_ulong len {0};
@@ -108,16 +108,14 @@ TEST(c_api, ConfigIO) {
   auto config_1 = Json::Load({config_str_1.c_str(), config_str_1.size()});
 
   ASSERT_EQ(config_0, config_1);
-
-  delete pp_dmat;
 }
 
-TEST(c_api, JsonModelIO) {
+TEST(CAPI, JsonModelIO) {
   size_t constexpr kRows = 10;
+  size_t constexpr kCols = 10;
   dmlc::TemporaryDirectory tempdir;
 
-  auto pp_dmat = CreateDMatrix(kRows, 10, 0);
-  auto p_dmat = *pp_dmat;
+  auto p_dmat = RandomDataGenerator(kRows, kCols, 0).GenerateDMatrix();
   std::vector<std::shared_ptr<DMatrix>> mat {p_dmat};
   std::vector<bst_float> labels(kRows);
   for (size_t i = 0; i < labels.size(); ++i) {
@@ -127,12 +125,16 @@ TEST(c_api, JsonModelIO) {
 
   std::shared_ptr<Learner> learner { Learner::Create(mat) };
 
-  learner->UpdateOneIter(0, p_dmat.get());
+  learner->UpdateOneIter(0, p_dmat);
   BoosterHandle handle = learner.get();
 
   std::string modelfile_0 = tempdir.path + "/model_0.json";
   XGBoosterSaveModel(handle, modelfile_0.c_str());
   XGBoosterLoadModel(handle, modelfile_0.c_str());
+
+  bst_ulong num_feature {0};
+  ASSERT_EQ(XGBoosterGetNumFeature(handle, &num_feature), 0);
+  ASSERT_EQ(num_feature, kCols);
 
   std::string modelfile_1 = tempdir.path + "/model_1.json";
   XGBoosterSaveModel(handle, modelfile_1.c_str());
@@ -142,6 +144,56 @@ TEST(c_api, JsonModelIO) {
 
   ASSERT_EQ(model_str_0.front(), '{');
   ASSERT_EQ(model_str_0, model_str_1);
-  delete pp_dmat;
+}
+
+TEST(CAPI, CatchDMLCError) {
+  DMatrixHandle out;
+  ASSERT_EQ(XGDMatrixCreateFromFile("foo", 0, &out), -1);
+  EXPECT_THROW({ dmlc::Stream::Create("foo", "r"); },  dmlc::Error);
+}
+
+TEST(CAPI, DMatrixSetFeatureName) {
+  size_t constexpr kRows = 10;
+  bst_feature_t constexpr kCols = 2;
+
+  DMatrixHandle handle;
+  std::vector<float> data(kCols * kRows, 1.5);
+
+  XGDMatrixCreateFromMat_omp(data.data(), kRows, kCols,
+                             std::numeric_limits<float>::quiet_NaN(), &handle,
+                             0);
+  std::vector<std::string> feature_names;
+  for (bst_feature_t i = 0; i < kCols; ++i) {
+    feature_names.emplace_back(std::to_string(i));
+  }
+  std::vector<char const*> c_feature_names;
+  c_feature_names.resize(feature_names.size());
+  std::transform(feature_names.cbegin(), feature_names.cend(),
+                 c_feature_names.begin(),
+                 [](auto const &str) { return str.c_str(); });
+  XGDMatrixSetStrFeatureInfo(handle, u8"feature_name", c_feature_names.data(),
+                             c_feature_names.size());
+  bst_ulong out_len = 0;
+  char const **c_out_features;
+  XGDMatrixGetStrFeatureInfo(handle, u8"feature_name", &out_len,
+                             &c_out_features);
+
+  CHECK_EQ(out_len, kCols);
+  std::vector<std::string> out_features;
+  for (bst_ulong i = 0; i < out_len; ++i) {
+    ASSERT_EQ(std::to_string(i), c_out_features[i]);
+  }
+
+  char const* feat_types [] {"i", "q"};
+  static_assert(sizeof(feat_types)/ sizeof(feat_types[0]) == kCols, "");
+  XGDMatrixSetStrFeatureInfo(handle, "feature_type", feat_types, kCols);
+  char const **c_out_types;
+  XGDMatrixGetStrFeatureInfo(handle, u8"feature_type", &out_len,
+                             &c_out_types);
+  for (bst_ulong i = 0; i < out_len; ++i) {
+    ASSERT_STREQ(feat_types[i], c_out_types[i]);
+  }
+
+  XGDMatrixFree(handle);
 }
 }  // namespace xgboost

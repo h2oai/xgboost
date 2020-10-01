@@ -22,7 +22,7 @@ DEFAULT_NODE_LABEL = 'docker && !mr-0xc8'
 PUBLISHABLE_BRANCH_NAME = 'h2o3'
 ARCHIVED_FILES = '**/ci-build/*.jar, **/ci-build/*.whl, **/ci-build/*.log, **/jvm-packages/xgboost4j/*.jar, **/jvm-packages/xgboost4j/*.log'
 
-XGB_MAJOR_VERSION = '1.0.0'
+XGB_MAJOR_VERSION = '1.2.0'
 XGB_VERSION = "${XGB_MAJOR_VERSION}.${currentBuild.number}"
 
 def targetNexus = params.targetNexus ?: TARGET_NEXUS_NONE
@@ -105,7 +105,7 @@ ansiColor('xterm') {
                         buildSummary.stageWithSummary(stageNameFromConfig(config), config.stageDir) {
                             node(nodeLabel) {
                                 buildSummary.refreshStage(stageNameFromConfig(config))
-                                timeout(time: 60, unit: 'MINUTES') {
+                                timeout(time: 90, unit: 'MINUTES') {
                                     try {
                                         deleteDir()
                                         dir(config.stageDir) {

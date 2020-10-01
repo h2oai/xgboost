@@ -178,7 +178,7 @@ ansiColor('xterm') {
                             docker.withRegistry("https://harbor.h2o.ai") {
                                 docker.image('harbor.h2o.ai/opsh2oai/hub').inside("--init -v /home/jenkins/.ssh:/home/jenkins/.ssh:ro -v /home/jenkins/.gitconfig:/home/jenkins/.gitconfig:ro") {
                                     buildSummary.stageWithSummary("GitHub Release") {
-                                        withCredentials([string(credentialsId: 'h2o-ops-personal-auth-token', variable: 'GITHUB_TOKEN')]) {
+                                        withCredentials([string(credentialsId: 'fafee86a-1f79-47ec-9b76-a3424223511a', variable: 'GITHUB_TOKEN')]) {
                                             checkout scm
                                             sh "hub release create h2o3-v${XGB_VERSION} -m \"h2o3_v${XGB_VERSION}\""
                                         }

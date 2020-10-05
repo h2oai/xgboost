@@ -151,6 +151,7 @@ generate_patch:
 	cd rabit && git diff | sed -Ee 's/([ab]\/)/\1rabit\//g' > ../patch/generated.patch
 
 build_impl:
+	cd jvm-packages/xgboost4j && python relocate_jni.py
 	mkdir -p build ci-build
 	cd build && cmake .. $(CMAKE_OPTS)
 	cd build && make
@@ -260,6 +261,13 @@ endif
 	cd ci-build/xgboost4j-$(TARGET_OS)-$(BACKEND) && \
 		mvn -q $(MVN_OPTS)-DnewVersion=$(XGB_VERSION) versions:set && \
 		mvn -q $(MVN_OPTS)-Dtarget.nexus=$(TARGET_NEXUS) deploy
+
+build_lib_jar:
+	cd jvm-packages/xgboost4j && \
+		mvn \
+			-Dmaven.test.skip=true -DskipTests \
+			-Dexclude.xgboost.lib=true \
+			clean package
 
 deploy_lib_jar_impl: deploy_prepare
 	cd jvm-packages/xgboost4j && \

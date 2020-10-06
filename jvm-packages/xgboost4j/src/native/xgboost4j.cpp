@@ -346,6 +346,33 @@ JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGDMatrixCreateFro
 
 /*
  * Class:     ml_dmlc_xgboost4j_java_XGBoostJNI
+ * Method:    XGDMatrixCreateFrom2DCSCEx
+ * Signature: ([J[J[F)J
+ */
+JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGDMatrixCreateFrom2DCSCEx
+        (JNIEnv *jenv, jclass jcls, jobjectArray jindptr, jobjectArray jindices, jobjectArray jdata, jint jrow, jint jcol, jlong total, jlongArray jout) {
+    DMatrixHandle result;
+
+    bst_ulong nindptr = (bst_ulong)jenv->GetArrayLength(jindptr);
+    bst_ulong nelem = (bst_ulong)jenv->GetArrayLength(jdata);
+
+    jlong* indptr = flatten_long(jenv, jindptr, jcol, NULL);
+
+    jint* indices = flatten_int(jenv, jindices, total, 0);
+
+    jfloat* data = flatten_float(jenv, jdata, total, NULL);
+
+    jint ret = (jint) XGDMatrixCreateFromCSCEx((size_t const *)indptr, (unsigned int const *)indices, (float const *)data, nindptr, nelem, jrow, &result);
+    setHandle(jenv, jout, result);
+    delete[] indptr;
+    delete[] indices;
+    delete[] data;
+
+    return ret;
+}
+
+/*
+ * Class:     ml_dmlc_xgboost4j_java_XGBoostJNI
  * Method:    XGDMatrixCreateFromMatRef
  * Signature: (JIIF)J
  */

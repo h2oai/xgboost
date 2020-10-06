@@ -1,7 +1,8 @@
 find_package(JNI REQUIRED)
 
 add_library(xgboost4j SHARED
-  ${PROJECT_SOURCE_DIR}/jvm-packages/xgboost4j/src/native/xgboost4j.cpp)
+  ${PROJECT_SOURCE_DIR}/jvm-packages/xgboost4j/src/native/xgboost4j.cpp
+  ${PROJECT_SOURCE_DIR}/jvm-packages/xgboost4j/src/native/xgboost4j_h2o.cpp)
 if (ENABLE_ALL_WARNINGS)
   target_compile_options(xgboost4j PUBLIC -Wall -Wextra)
 endif (ENABLE_ALL_WARNINGS)

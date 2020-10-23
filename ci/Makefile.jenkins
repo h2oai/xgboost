@@ -121,7 +121,7 @@ endif
 # Initialize CMake and JAR options
 CMAKE_OPTS := -DJVM_BINDINGS:BOOL=ON
 ifeq ($(USE_CUDA),1)
-	CMAKE_OPTS += -DUSE_CUDA:BOOL=ON
+	CMAKE_OPTS += -DUSE_CUDA:BOOL=ON -DUSE_NCCL=ON
 	JAR_OPTS += USE_GPU=TRUE
 endif
 ifeq ($(USE_OMP),1)

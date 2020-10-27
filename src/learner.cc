@@ -208,7 +208,7 @@ void GenericParameter::ConfigureGpuId(bool require_gpu) {
     }
     this->UpdateAllowUnknown(Args{{"gpu_id", std::to_string(kCpuId)}});
   } else {
-    CHECK(gpu_id != kCpuId && gpu_id >= n_gpus)
+    CHECK(gpu_id == kCpuId || gpu_id < n_gpus)
       << "Only " << n_gpus << " GPUs are visible, gpu_id " << gpu_id << " is invalid.";
   }
 #else

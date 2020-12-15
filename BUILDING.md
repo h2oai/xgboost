@@ -59,10 +59,10 @@ mvn \
 	- `make -f ci/Makefile.jenkins whl_minimal`
 	-  artifacts can be found in `ci-build/` dir
 - **step 3/3** - Java JAR:
-	- `make -f ci/Makefile.jenkins TARGET_OS=osx jar_minimal jar_package_minimal`
+	- `make -f ci/Makefile.jenkins TARGET_OS=osx write_version jar_minimal jar_package_minimal`
 	- artifacts can be found in `ci-build/xgboost4j-osx-minimal/target/`
 - building in one line:
-	- `make -f ci/Makefile.jenkins TARGET_OS=osx mrproper build_minimal whl_minimal jar_minimal jar_package_minimal`
+	- `make -f ci/Makefile.jenkins TARGET_OS=osx mrproper write_version build_minimal whl_minimal jar_minimal jar_package_minimal`
 
 ## Building for Linux ##
 - **prerequisities:**

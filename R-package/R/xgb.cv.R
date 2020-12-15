@@ -36,6 +36,8 @@
 #'   \item \code{error} binary classification error rate
 #'   \item \code{rmse} Rooted mean square error
 #'   \item \code{logloss} negative log-likelihood function
+#'   \item \code{mae} Mean absolute error
+#'   \item \code{mape} Mean absolute percentage error
 #'   \item \code{auc} Area under curve
 #'   \item \code{aucpr} Area under PR curve
 #'   \item \code{merror} Exact matching error, used to evaluate multi-class classification
@@ -79,7 +81,7 @@
 #'
 #' All observations are used for both training and validation.
 #'
-#' Adapted from \url{http://en.wikipedia.org/wiki/Cross-validation_\%28statistics\%29#k-fold_cross-validation}
+#' Adapted from \url{https://en.wikipedia.org/wiki/Cross-validation_\%28statistics\%29}
 #'
 #' @return
 #' An object of class \code{xgb.cv.synchronous} with the following elements:

@@ -70,6 +70,8 @@ from each CV model. This parameter engages the \code{\link{cb.cv.predict}} callb
   \item \code{error} binary classification error rate
   \item \code{rmse} Rooted mean square error
   \item \code{logloss} negative log-likelihood function
+  \item \code{mae} Mean absolute error
+  \item \code{mape} Mean absolute percentage error
   \item \code{auc} Area under curve
   \item \code{aucpr} Area under PR curve
   \item \code{merror} Exact matching error, used to evaluate multi-class classification
@@ -154,7 +156,7 @@ The cross-validation process is then repeated \code{nrounds} times, with each of
 
 All observations are used for both training and validation.
 
-Adapted from \url{http://en.wikipedia.org/wiki/Cross-validation_\%28statistics\%29#k-fold_cross-validation}
+Adapted from \url{https://en.wikipedia.org/wiki/Cross-validation_\%28statistics\%29}
 }
 \examples{
 data(agaricus.train, package='xgboost')

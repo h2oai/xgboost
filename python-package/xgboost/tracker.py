@@ -52,6 +52,28 @@ def get_some_ip(host):
     return socket.getaddrinfo(host, None)[0][4][0]
 
 
+def get_host_ip(hostIP=None):
+    if hostIP is None or hostIP == 'auto':
+        hostIP = 'ip'
+
+    if hostIP == 'dns':
+        hostIP = socket.getfqdn()
+    elif hostIP == 'ip':
+        from socket import gaierror
+        try:
+            hostIP = socket.gethostbyname(socket.getfqdn())
+        except gaierror:
+            logging.warning(
+                'gethostbyname(socket.getfqdn()) failed... trying on hostname()')
+            hostIP = socket.gethostbyname(socket.gethostname())
+        if hostIP.startswith("127."):
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            # doesn't have to be reachable
+            s.connect(('10.255.255.255', 1))
+            hostIP = s.getsockname()[0]
+    return hostIP
+
+
 def get_family(addr):
     return socket.getaddrinfo(addr, None)[0][0]
 
@@ -276,7 +298,7 @@ class RabitTracker(object):
                 assert s.rank >= 0 and s.rank not in shutdown
                 assert s.rank not in wait_conn
                 shutdown[s.rank] = s
-                logging.debug('Recieve %s signal from %d', s.cmd, s.rank)
+                logging.debug('Received %s signal from %d', s.cmd, s.rank)
                 continue
             assert s.cmd == 'start' or s.cmd == 'recover'
             # lazily initialize the slaves
@@ -306,14 +328,14 @@ class RabitTracker(object):
                         s.assign_rank(rank, wait_conn, tree_map, parent_map, ring_map)
                         if s.wait_accept > 0:
                             wait_conn[rank] = s
-                        logging.debug('Recieve %s signal from %s; assign rank %d',
+                        logging.debug('Received %s signal from %s; assign rank %d',
                                       s.cmd, s.host, s.rank)
                 if not todo_nodes:
                     logging.info('@tracker All of %d nodes getting started', nslave)
                     self.start_time = time.time()
             else:
                 s.assign_rank(rank, wait_conn, tree_map, parent_map, ring_map)
-                logging.debug('Recieve %s signal from %d', s.cmd, s.rank)
+                logging.debug('Received %s signal from %d', s.cmd, s.rank)
                 if s.wait_accept > 0:
                     wait_conn[rank] = s
         logging.info('@tracker All nodes finishes job')

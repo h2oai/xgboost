@@ -4,6 +4,7 @@
 import copy
 import warnings
 import json
+from typing import Optional
 import numpy as np
 from .core import Booster, DMatrix, XGBoostError, _deprecate_positional_args
 from .training import train
@@ -494,6 +495,13 @@ class XGBModel(XGBModelBase):
         # Delete the attribute after load
         self.get_booster().set_attr(scikit_learn=None)
 
+    def _set_evaluation_result(self, evals_result: Optional[dict]) -> None:
+        if evals_result:
+            for val in evals_result.items():
+                evals_result_key = list(val[1].keys())[0]
+                evals_result[val[0]][evals_result_key] = val[1][evals_result_key]
+            self.evals_result_ = evals_result
+
     @_deprecate_positional_args
     def fit(self, X, y, *, sample_weight=None, base_margin=None,
             eval_set=None, eval_metric=None, early_stopping_rounds=None,
@@ -565,13 +573,6 @@ class XGBModel(XGBModelBase):
 
         """
         self.n_features_in_ = X.shape[1]
-
-        train_dmatrix = DMatrix(data=X, label=y, weight=sample_weight,
-                                base_margin=base_margin,
-                                missing=self.missing,
-                                nthread=self.n_jobs)
-        train_dmatrix.set_info(feature_weights=feature_weights)
-
         evals_result = {}
 
         train_dmatrix, evals = self._wrap_evaluation_matrices(
@@ -601,12 +602,7 @@ class XGBModel(XGBModelBase):
                               verbose_eval=verbose, xgb_model=xgb_model,
                               callbacks=callbacks)
 
-        if evals_result:
-            for val in evals_result.items():
-                evals_result_key = list(val[1].keys())[0]
-                evals_result[val[0]][evals_result_key] = val[1][
-                    evals_result_key]
-            self.evals_result_ = evals_result
+        self._set_evaluation_result(evals_result)
 
         if early_stopping_rounds is not None:
             self.best_score = self._Booster.best_score
@@ -841,14 +837,18 @@ class XGBClassifier(XGBModel, XGBClassifierBase):
             self.classes_ = cp.unique(y.values)
             self.n_classes_ = len(self.classes_)
             can_use_label_encoder = False
-            if not cp.array_equal(self.classes_, cp.arange(self.n_classes_)):
+            expected_classes = cp.arange(self.n_classes_)
+            if (self.classes_.shape != expected_classes.shape or
+                    not (self.classes_ == expected_classes).all()):
                 raise ValueError(label_encoding_check_error)
         elif _is_cupy_array(y):
             import cupy as cp  # pylint: disable=E0401
             self.classes_ = cp.unique(y)
             self.n_classes_ = len(self.classes_)
             can_use_label_encoder = False
-            if not cp.array_equal(self.classes_, cp.arange(self.n_classes_)):
+            expected_classes = cp.arange(self.n_classes_)
+            if (self.classes_.shape != expected_classes.shape or
+                    not (self.classes_ == expected_classes).all()):
                 raise ValueError(label_encoding_check_error)
         else:
             self.classes_ = np.unique(y)
@@ -915,12 +915,7 @@ class XGBClassifier(XGBModel, XGBClassifierBase):
                               callbacks=callbacks)
 
         self.objective = xgb_options["objective"]
-        if evals_result:
-            for val in evals_result.items():
-                evals_result_key = list(val[1].keys())[0]
-                evals_result[val[0]][
-                    evals_result_key] = val[1][evals_result_key]
-            self.evals_result_ = evals_result
+        self._set_evaluation_result(evals_result)
 
         if early_stopping_rounds is not None:
             self.best_score = self._Booster.best_score
@@ -991,10 +986,9 @@ class XGBClassifier(XGBModel, XGBClassifierBase):
             return self._le.inverse_transform(column_indexes)
         return column_indexes
 
-    def predict_proba(self, data, ntree_limit=None, validate_features=False,
+    def predict_proba(self, X, ntree_limit=None, validate_features=False,
                       base_margin=None):
-        """
-        Predict the probability of each `data` example being of a given class.
+        """ Predict the probability of each `X` example being of a given class.
 
         .. note:: This function is not thread safe
 
@@ -1004,21 +998,22 @@ class XGBClassifier(XGBModel, XGBClassifierBase):
 
         Parameters
         ----------
-        data : array_like
+        X : array_like
             Feature matrix.
         ntree_limit : int
-            Limit number of trees in the prediction; defaults to best_ntree_limit if defined
-            (i.e. it has been trained with early stopping), otherwise 0 (use all trees).
+            Limit number of trees in the prediction; defaults to best_ntree_limit if
+            defined (i.e. it has been trained with early stopping), otherwise 0 (use all
+            trees).
         validate_features : bool
-            When this is True, validate that the Booster's and data's feature_names are identical.
-            Otherwise, it is assumed that the feature_names are the same.
+            When this is True, validate that the Booster's and data's feature_names are
+            identical.  Otherwise, it is assumed that the feature_names are the same.
 
         Returns
         -------
         prediction : numpy array
             a numpy array with the probability of each data example being of a given class.
         """
-        test_dmatrix = DMatrix(data, base_margin=base_margin,
+        test_dmatrix = DMatrix(X, base_margin=base_margin,
                                missing=self.missing, nthread=self.n_jobs)
         if ntree_limit is None:
             ntree_limit = getattr(self, "best_ntree_limit", 0)
@@ -1324,12 +1319,7 @@ class XGBRanker(XGBModel):
 
         self.objective = params["objective"]
 
-        if evals_result:
-            for val in evals_result.items():
-                evals_result_key = list(val[1].keys())[0]
-                evals_result[val[0]][evals_result_key] = val[1][evals_result_key]
-            self.evals_result = evals_result
-
+        self._set_evaluation_result(evals_result)
         if early_stopping_rounds is not None:
             self.best_score = self._Booster.best_score
             self.best_iteration = self._Booster.best_iteration

@@ -8,6 +8,7 @@
         <artifactId>xgboost-jvm_2.12</artifactId>
         <version>1.3.2</version>
     </parent-->
+    <groupId>ai.h2o</groupId>
     <artifactId>xgboost4j-gpu_2.12</artifactId>
     <version>1.3.2</version>
     <packaging>jar</packaging>

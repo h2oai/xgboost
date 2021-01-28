@@ -10,7 +10,7 @@
     </parent-->
     <groupId>ai.h2o</groupId>
     <artifactId>xgboost4j_2.12</artifactId>
-    <version>1.3.2</version>
+    <version>1.3.3</version>
     <packaging>jar</packaging>
     <name>xgboost4j</name>
 

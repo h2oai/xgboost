@@ -133,7 +133,7 @@ public class Booster implements Serializable {
    * This can be used to load existing booster models saved by other xgboost bindings.
    *
    * @param in The input stream of the file.
-   * @return The create boosted
+   * @return The created boosted
    * @throws XGBoostError
    * @throws IOException
    */
@@ -147,6 +147,21 @@ public class Booster implements Serializable {
     in.close();
     Booster ret = newBooster(new HashMap<String, Object>(), new DMatrix[0]);
     XGBoostJNI.checkCall(XGBoostJNI.XGBoosterLoadModelFromBuffer(ret.handle,os.toByteArray()));
+    return ret;
+  }
+
+  /**
+   * Load a new Booster model from a byte array buffer.
+   * The assumption is the array only contains one XGBoost Model.
+   * This can be used to load existing booster models saved by other xgboost bindings.
+   *
+   * @param buffer The byte contents of the booster.
+   * @return The created boosted
+   * @throws XGBoostError
+   */
+  static Booster loadModel(byte[] buffer) throws XGBoostError {
+    Booster ret = newBooster(new HashMap<>(), new DMatrix[0]);
+    XGBoostJNI.checkCall(XGBoostJNI.XGBoosterLoadModelFromBuffer(ret.handle, buffer));
     return ret;
   }
 
@@ -735,6 +750,17 @@ public class Booster implements Serializable {
   void saveRabitCheckpoint() throws XGBoostError {
     XGBoostJNI.checkCall(XGBoostJNI.XGBoosterSaveRabitCheckpoint(this.handle));
     version += 1;
+  }
+
+  /**
+   * Get number of model features.
+   * @return the number of features.
+   * @throws XGBoostError
+   */
+  public long getNumFeature() throws XGBoostError {
+    long[] numFeature = new long[1];
+    XGBoostJNI.checkCall(XGBoostJNI.XGBoosterGetNumFeature(this.handle, numFeature));
+    return numFeature[0];
   }
 
   /**

@@ -6,7 +6,7 @@
 
     <groupId>ai.h2o</groupId>
     <artifactId>xgboost-jvm_2.12</artifactId>
-    <version>1.2.0</version>
+    <version>1.3.3</version>
     <packaging>pom</packaging>
     <name>XGBoost JVM Package</name>
     <properties>
@@ -19,6 +19,7 @@
         <scala.version>2.12.8</scala.version>
         <scala.binary.version>2.12</scala.binary.version>
         <hadoop.version>2.7.3</hadoop.version>
+        <maven.wagon.http.retryHandler.count>5</maven.wagon.http.retryHandler.count>
         <log.capi.invocation>OFF</log.capi.invocation>
         <use.cuda>OFF</use.cuda>
     </properties>
@@ -30,10 +31,6 @@
         </repository>
     </repositories>
     <modules>
-        <module>xgboost4j</module>
-        <module>xgboost4j-example</module>
-        <module>xgboost4j-spark</module>
-        <module>xgboost4j-flink</module>
     </modules>
 
     <description>H2O XGBoost Libraries</description>
@@ -140,6 +137,12 @@
             <activation>
                 <activeByDefault>true</activeByDefault>
             </activation>
+            <modules>
+                <module>xgboost4j</module>
+                <module>xgboost4j-example</module>
+                <module>xgboost4j-spark</module>
+                <module>xgboost4j-flink</module>
+            </modules>
             <build>
                 <plugins>
                     <plugin>
@@ -162,6 +165,10 @@
                     <value>ON</value>
                 </property>
             </activation>
+            <modules>
+                <module>xgboost4j-gpu</module>
+                <module>xgboost4j-spark-gpu</module>
+            </modules>
             <build>
                 <plugins>
                     <plugin>
@@ -178,6 +185,10 @@
             <properties>
                 <use.cuda>ON</use.cuda>
             </properties>
+            <modules>
+                <module>xgboost4j-gpu</module>
+                <module>xgboost4j-spark-gpu</module>
+            </modules>
             <build>
                 <plugins>
                     <plugin>
@@ -193,6 +204,14 @@
 
         <profile>
             <id>release</id>
+            <modules>
+                <module>xgboost4j</module>
+                <module>xgboost4j-example</module>
+                <module>xgboost4j-spark</module>
+                <module>xgboost4j-flink</module>
+                <module>xgboost4j-gpu</module>
+                <module>xgboost4j-spark-gpu</module>
+            </modules>
             <build>
                 <plugins>
                     <plugin>
@@ -262,6 +281,13 @@
                             <autoReleaseAfterClose>false</autoReleaseAfterClose>
                         </configuration>
                     </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-surefire-plugin</artifactId>
+                        <configuration>
+                            <skipTests>true</skipTests>
+                        </configuration>
+                    </plugin>
                 </plugins>
             </build>
         </profile>
@@ -304,6 +330,14 @@
             <properties>
                 <github.global.server>github</github.global.server>
             </properties>
+            <modules>
+                <module>xgboost4j</module>
+                <module>xgboost4j-example</module>
+                <module>xgboost4j-spark</module>
+                <module>xgboost4j-flink</module>
+                <module>xgboost4j-gpu</module>
+                <module>xgboost4j-spark-gpu</module>
+            </modules>
             <build>
                 <plugins>
                     <plugin>
@@ -340,6 +374,13 @@
                             <altDeploymentRepository>internal.repo::default::file://${project.build.directory}/mvn-repo</altDeploymentRepository>
                         </configuration>
                     </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-surefire-plugin</artifactId>
+                        <configuration>
+                            <skipTests>true</skipTests>
+                        </configuration>
+                    </plugin>
                 </plugins>
             </build>
         </profile>
@@ -365,6 +406,25 @@
                     <url>https://s3.amazonaws.com/xgboost-maven-repo/release</url>
                 </repository>
             </repositories>
+            <modules>
+                <module>xgboost4j</module>
+                <module>xgboost4j-example</module>
+                <module>xgboost4j-spark</module>
+                <module>xgboost4j-flink</module>
+                <module>xgboost4j-gpu</module>
+                <module>xgboost4j-spark-gpu</module>
+            </modules>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-surefire-plugin</artifactId>
+                        <configuration>
+                            <skipTests>true</skipTests>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
         </profile>
     </profiles>
     <distributionManagement>

@@ -15,10 +15,11 @@ namespace xgboost {
 struct GenericParameter : public XGBoostParameter<GenericParameter> {
   // Constant representing the device ID of CPU.
   static int32_t constexpr kCpuId = -1;
+  static int64_t constexpr kDefaultSeed = 0;
 
  public:
   // stored random seed
-  int64_t seed;
+  int64_t seed { kDefaultSeed };
   // whether seed the PRNG each iteration
   bool seed_per_iteration;
   // number of threads to use if OpenMP is enabled
@@ -30,7 +31,7 @@ struct GenericParameter : public XGBoostParameter<GenericParameter> {
   bool fail_on_invalid_gpu_id {false};
   // gpu page size in external memory mode, 0 means using the default.
   size_t gpu_page_size;
-  bool enable_experimental_json_serialization {false};
+  bool enable_experimental_json_serialization {true};
   bool validate_parameters {false};
 
   void CheckDeprecated() {
@@ -49,7 +50,7 @@ struct GenericParameter : public XGBoostParameter<GenericParameter> {
 
   // declare parameters
   DMLC_DECLARE_PARAMETER(GenericParameter) {
-    DMLC_DECLARE_FIELD(seed).set_default(0).describe(
+    DMLC_DECLARE_FIELD(seed).set_default(kDefaultSeed).describe(
         "Random number seed during training.");
     DMLC_DECLARE_ALIAS(seed, random_state);
     DMLC_DECLARE_FIELD(seed_per_iteration)
@@ -74,7 +75,7 @@ struct GenericParameter : public XGBoostParameter<GenericParameter> {
         .set_lower_bound(0)
         .describe("GPU page size when running in external memory mode.");
     DMLC_DECLARE_FIELD(enable_experimental_json_serialization)
-        .set_default(false)
+        .set_default(true)
         .describe("Enable using JSON for memory serialization (Python Pickle, "
                   "rabit checkpoints etc.).");
     DMLC_DECLARE_FIELD(validate_parameters)

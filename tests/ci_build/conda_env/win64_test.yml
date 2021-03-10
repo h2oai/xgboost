@@ -9,10 +9,11 @@ dependencies:
 - scikit-learn
 - pandas
 - pytest
-- python-graphviz
 - boto3
 - hypothesis
 - jsonschema
 - pip
 - pip:
   - cupy-cuda101
+  - modin[all]
+  - graphviz

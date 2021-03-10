@@ -55,7 +55,7 @@
 #endif  // defined(__GNUC__) && ((__GNUC__ == 4 && __GNUC_MINOR__ >= 8) || __GNUC__ > 4)
 
 #if defined(__GNUC__) && ((__GNUC__ == 4 && __GNUC_MINOR__ >= 8) || __GNUC__ > 4) && \
-    !defined(__CUDACC__)
+    !defined(__CUDACC__) && !defined(__sun) && !defined(sun)
 #include <parallel/algorithm>
 #define XGBOOST_PARALLEL_SORT(X, Y, Z) __gnu_parallel::sort((X), (Y), (Z))
 #define XGBOOST_PARALLEL_STABLE_SORT(X, Y, Z) \
@@ -84,6 +84,14 @@
 #define XGBOOST_DEVICE
 #endif  // defined (__CUDA__) || defined(__NVCC__)
 
+#if defined(__CUDA__) || defined(__CUDACC__)
+#define XGBOOST_HOST_DEV_INLINE XGBOOST_DEVICE __forceinline__
+#define XGBOOST_DEV_INLINE __device__ __forceinline__
+#else
+#define XGBOOST_HOST_DEV_INLINE
+#define XGBOOST_DEV_INLINE
+#endif  // defined(__CUDA__) || defined(__CUDACC__)
+
 // These check are for Makefile.
 #if !defined(XGBOOST_MM_PREFETCH_PRESENT) && !defined(XGBOOST_BUILTIN_PREFETCH_PRESENT)
 /* default logic for software pre-fetching */
@@ -109,7 +117,8 @@ using bst_int = int32_t;    // NOLINT
 using bst_ulong = uint64_t;  // NOLINT
 /*! \brief float type, used for storing statistics */
 using bst_float = float;  // NOLINT
-
+/*! \brief Categorical value type. */
+using bst_cat_t = int32_t;  // NOLINT
 /*! \brief Type for data column (feature) index. */
 using bst_feature_t = uint32_t;  // NOLINT
 /*! \brief Type for data row index.
@@ -233,7 +242,7 @@ class GradientPairInternal {
 
   XGBOOST_DEVICE explicit GradientPairInternal(int value) {
     *this = GradientPairInternal<T>(static_cast<float>(value),
-                                  static_cast<float>(value));
+                                    static_cast<float>(value));
   }
 
   friend std::ostream &operator<<(std::ostream &os,

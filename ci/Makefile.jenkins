@@ -32,7 +32,7 @@ TIMESTAMP := $(shell date +%s)
 SHELL:=/bin/bash
 THIS_FILE := $(lastword $(MAKEFILE_LIST))
 
-XGB_VERSION ?= 1.2.0-SNAPSHOT
+XGB_VERSION ?= 1.3.3-SNAPSHOT
 
 TARGET_NEXUS ?= snapshot
 NEXUS_IP ?= 172.17.0.53
@@ -145,7 +145,7 @@ write_version:
 	cd jvm-packages/xgboost4j && mvn -q $(MVN_OPTS) -DnewVersion=$(XGB_VERSION) versions:set
 
 apply_patches:
-	patch -p1 < patch/000_rabit_shutdown.patch
+	echo "No patches to apply"
 
 generate_patch:
 	cd rabit && git diff | sed -Ee 's/([ab]\/)/\1rabit\//g' > ../patch/generated.patch

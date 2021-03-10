@@ -22,7 +22,7 @@ DEFAULT_NODE_LABEL = 'docker && !mr-0xc8'
 PUBLISHABLE_BRANCH_NAME = 'h2o3'
 ARCHIVED_FILES = '**/ci-build/*.jar, **/ci-build/*.whl, **/ci-build/*.log, **/jvm-packages/xgboost4j/*.jar, **/jvm-packages/xgboost4j/*.log'
 
-XGB_MAJOR_VERSION = '1.2.0'
+XGB_MAJOR_VERSION = '1.3.3'
 XGB_VERSION = "${XGB_MAJOR_VERSION}.${currentBuild.number}"
 
 def targetNexus = params.targetNexus ?: TARGET_NEXUS_NONE

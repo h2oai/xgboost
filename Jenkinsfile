@@ -299,6 +299,7 @@ def TestPythonCPU() {
     def docker_binary = "docker"
     sh """
     ${dockerRun} ${container_type} ${docker_binary} tests/ci_build/test_python.sh cpu
+    ${dockerRun} ${container_type} ${docker_binary} tests/ci_build/test_python.sh cpu-py35
     """
     deleteDir()
   }

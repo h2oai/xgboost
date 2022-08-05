@@ -325,6 +325,15 @@ JNIEXPORT jint JNICALL Java_ai_h2o_xgboost4j_java_XGBoostJNI_XGBoosterSaveRabitC
 
 /*
  * Class:     ml_dmlc_xgboost4j_java_XGBoostJNI
+ * Method:    XGBoosterGetNumFeature
+ * Signature: (J[J)I
+ */
+JNIEXPORT jint JNICALL Java_ai_h2o_xgboost4j_java_XGBoostJNI_XGBoosterGetNumFeature
+(JNIEnv * a0, jclass a1, jlong a2, jlongArray a3)
+{ return Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGBoosterGetNumFeature(a0, a1, a2, a3); }
+
+/*
+ * Class:     ml_dmlc_xgboost4j_java_XGBoostJNI
  * Method:    RabitInit
  * Signature: ([Ljava/lang/String;)I
  */

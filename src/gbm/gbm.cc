@@ -23,8 +23,10 @@ GradientBooster* GradientBooster::Create(
     LearnerModelParam const* learner_model_param) {
   auto *e = ::dmlc::Registry< ::xgboost::GradientBoosterReg>::Get()->Find(name);
   if (e == nullptr) {
+
     LOG(FATAL) << "Unknown gbm type " << name;
   }
+
   auto p_bst =  (e->body)(learner_model_param);
   p_bst->generic_param_ = generic_param;
   return p_bst;

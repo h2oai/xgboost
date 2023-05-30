@@ -24,7 +24,7 @@ GradientBooster* GradientBooster::Create(
   auto *e = ::dmlc::Registry< ::xgboost::GradientBoosterReg>::Get()->Find(name);
   if (e == nullptr) {
 
-    LOG(FATAL) << "Unknown gbm type " << name;
+    LOG(FATAL) << "Unknown gbm type is bad type" << name;
   }
 
   auto p_bst =  (e->body)(learner_model_param);

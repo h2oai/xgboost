@@ -38,8 +38,8 @@
     </developers>
 
     <issueManagement>
-        <system>Jira</system>
-        <url>http://jira.h2o.ai</url>
+        <system>GitHub issues</system>
+        <url>https://github.com/h2oai/h2o-3/issues</url>
     </issueManagement>
 
     <profiles>

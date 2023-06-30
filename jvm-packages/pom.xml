@@ -36,8 +36,8 @@
         <url>https://github.com/dmlc/xgboost</url>
     </scm>
     <issueManagement>
-      <system>Jira</system>
-      <url>http://jira.h2o.ai</url>
+      <system>GitHub issues</system>
+      <url>https://github.com/h2oai/h2o-3/issues</url>
     </issueManagement>
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>

@@ -2577,7 +2577,7 @@ class Booster(object):
                 'avg_w_fscore', 'avg_gain', 'expected_gain']
         df = DataFrame([x.split(',') for x in res], columns=cols)
         for c in df.columns[1:]:
-            df[c] = df[c].astype(np.float)
+            df[c] = df[c].astype(float)
         df.sort_values(by=['fi_depth', 'gain'],
                        inplace=True, ascending=[True, False])
         df.reset_index(drop=True, inplace=True)

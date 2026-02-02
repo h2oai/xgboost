@@ -42,6 +42,7 @@ MAKE_OPTS = "CI=1 XGB_VERSION=${XGB_VERSION} TARGET_NEXUS=${targetNexus} PY_VERS
 
 CONFIGURATIONS = [
     [backend: 'minimal', os: 'osx', node: 'osx'],
+    [backend: 'ompv4', os: 'osx', node: 'osx'],
 
     [backend: 'minimal', os: 'linux', hasImage: true],
     [backend: 'ompv4', os: 'linux', hasImage: true],
@@ -56,6 +57,9 @@ Map CHECK_IMAGES = [
     ],
     osx_minimal: [
         [name: 'Check MINIMAL with OS X', node: 'osx', os: 'osx'],
+    ],
+    osx_minimal: [
+        [name: 'Check OMP with OS X', node: 'osx', os: 'osx'],
     ],
     linux_ompv4: [
         [name: 'Check OMP with CentOS 7.3', os: 'centos7.3', hasImage: true],

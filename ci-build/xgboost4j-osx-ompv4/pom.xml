@@ -1,0 +1,158 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <groupId>ai.h2o</groupId>
+    <artifactId>xgboost4j-osx-ompv4</artifactId>
+    <packaging>jar</packaging>
+    <version>1.0.0-SNAPSHOT</version>
+    <name>xgboost4j-osx-minimal</name>
+
+    <description>H2O XGBoost Libraries</description>
+    <url>https://github.com/h2oai/xgboost</url>
+    <inceptionYear>2013</inceptionYear>
+    <organization>
+        <name>H2O.ai</name>
+        <url>http://h2o.ai/</url>
+    </organization>
+
+    <licenses>
+        <license>
+            <name>The Apache Software License, Version 2.0</name>
+            <url>http://www.apache.org/licenses/LICENSE-2.0.txt</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
+
+    <scm>
+        <url>https://github.com/h2oai/xgboost</url>
+        <connection>scm:git:https://github.com/h2oai/xgboost.git</connection>
+        <developerConnection>scm:git:git@github.com:h2oai/xgboost.git</developerConnection>
+    </scm>
+
+    <developers>
+        <developer>
+            <id>oss</id>
+            <name>Open Source Google Group</name>
+            <email>https://groups.google.com/forum/#!forum/h2ostream</email>
+        </developer>
+    </developers>
+
+    <issueManagement>
+        <system>Jira</system>
+        <url>http://jira.h2o.ai</url>
+    </issueManagement>
+
+    <profiles>
+        <profile>
+            <id>local-nexus-snapshot</id>
+            <activation>
+                <property>
+                    <name>target.nexus</name>
+                    <value>snapshot</value>
+                </property>
+            </activation>
+            <properties/>
+            <distributionManagement>
+                <repository>
+                    <id>LocalNexus</id>
+                    <name>Local Nexus</name>
+                    <url>http://nexus:8081/nexus/repository/snapshots</url>
+                </repository>
+            </distributionManagement>
+        </profile>
+        <profile>
+            <id>local-nexus</id>
+            <activation>
+                <property>
+                    <name>target.nexus</name>
+                    <value>local</value>
+                </property>
+            </activation>
+            <properties/>
+            <distributionManagement>
+                <repository>
+                    <id>LocalNexus</id>
+                    <name>Local Nexus</name>
+                    <url>http://nexus:8081/nexus/repository/releases</url>
+                </repository>
+            </distributionManagement>
+        </profile>
+        <profile>
+            <id>public-nexus</id>
+            <activation>
+                <property>
+                    <name>target.nexus</name>
+                    <value>public</value>
+                </property>
+            </activation>
+            <properties/>
+            <distributionManagement>
+                <repository>
+                    <id>PublicNexus</id>
+                    <name>Central Maven</name>
+                    <url>https://oss.sonatype.org/service/local/staging/deploy/maven2/</url>
+                </repository>
+            </distributionManagement>
+        </profile>
+    </profiles>
+
+    <build>
+        <plugins>
+            <plugin>
+                <!-- Build an executable JAR -->
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <version>3.0.2</version>
+                <configuration>
+                    <archive>
+                        <manifest>
+                            <addClasspath>true</addClasspath>
+                            <classpathPrefix>lib/</classpathPrefix>
+                            <mainClass>ai.h2o.App</mainClass>
+                        </manifest>
+                    </archive>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-javadoc-plugin</artifactId>
+                <version>2.9.1</version>
+                <executions>
+                    <execution>
+                        <id>attach-javadocs</id>
+                        <goals>
+                            <goal>jar</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-source-plugin</artifactId>
+                <version>3.0.1</version>
+                <executions>
+                    <execution>
+                        <id>attach-sources</id>
+                        <goals>
+                            <goal>jar-no-fork</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-gpg-plugin</artifactId>
+                <version>1.5</version>
+                <executions>
+                    <execution>
+                        <id>sign-artifacts</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>sign</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>

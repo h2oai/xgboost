@@ -51,6 +51,11 @@ printf '3.30\n%s\n' "${CMAKE_VER}" | sort -V -C \
 
 # ---------------------------------------------------------------------------
 log "1. Fetch submodules (dmlc-core, gputreeshap — note: NO vendored cub in 2.1.4)"
+# In a container git runs as root while the bind-mounted repo is owned by the
+# host user, which trips git's "dubious ownership" guard. Mark it safe (the
+# container is ephemeral, so a global config here is harmless).
+git config --global --add safe.directory "${REPO_ROOT}" 2>/dev/null || true
+git config --global --add safe.directory '*' 2>/dev/null || true
 git -C "${REPO_ROOT}" submodule update --init --recursive
 
 # ---------------------------------------------------------------------------

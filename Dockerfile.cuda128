@@ -39,8 +39,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # CMake >= 3.30 is required to emit sm_100/sm_120 (Blackwell) device code.
 # Ubuntu 22.04's apt cmake is 3.22 (too old), so install a current one via pip.
+# hatchling/packaging are the wheel build-backend deps (packager.pep517 wraps
+# hatchling); they must be present because the wheel is built with
+# --no-isolation. numpy/pandas/scipy are for the smoke test.
 RUN python3 -m pip install --no-cache-dir --upgrade pip \
-    && python3 -m pip install --no-cache-dir "cmake>=3.30" ninja build numpy pandas scipy
+    && python3 -m pip install --no-cache-dir \
+        "cmake>=3.30" ninja build "hatchling>=1.12.1" "packaging>=21.3" \
+        numpy pandas scipy
 
 # Sanity: fail the image build early if the toolchain is wrong.
 RUN nvcc --version && cmake --version

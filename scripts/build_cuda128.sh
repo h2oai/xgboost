@@ -82,7 +82,10 @@ log "   built $(ls -lh "${REPO_ROOT}/lib/libxgboost.so" | awk '{print $5}') libx
 log "3. Build the Python wheel (PEP517 / hatchling — reuses the lib just built)"
 # 2.1.4 uses the packager backend; with lib/libxgboost.so present it is detected
 # via locate_local_libxgboost() and NOT recompiled.
-python3 -m pip install --upgrade pip build >/dev/null
+# --no-isolation means the build frontend will NOT install the backend's own
+# build deps, so they must be present: the packager.pep517 backend wraps
+# hatchling (plus packaging). Install them here so the import succeeds.
+python3 -m pip install --upgrade pip build "hatchling>=1.12.1" "packaging>=21.3" >/dev/null
 ( cd "${REPO_ROOT}/python-package" && python3 -m build --wheel --no-isolation )
 WHEEL="$(ls -t "${REPO_ROOT}"/python-package/dist/xgboost-*.whl | head -1)"
 [ -n "${WHEEL}" ] || fail "no wheel produced"

@@ -72,17 +72,40 @@ def main() -> None:
         _fail("trained booster produced an empty dump")
     print("[b3] hist training + dump OK (between-bin cut points active)")
 
+    # (b4) legacy GPU-param back-compat shim (CPU-safe part) ----------------
+    # xgboost 2.x would reject the removed `predictor` parameter; the fork shim
+    # translates predictor='cpu_predictor' to device='cpu'. Train on CPU so this
+    # runs without a GPU. (The GPU mapping is exercised in section c.)
+    try:
+        bst_legacy = xgb.train(
+            {"tree_method": "hist", "predictor": "cpu_predictor", "max_depth": 3},
+            dm,
+            num_boost_round=3,
+        )
+        if not bst_legacy.get_dump():
+            _fail("legacy-param booster produced an empty dump")
+    except xgb.core.XGBoostError as exc:
+        _fail(f"legacy GPU-param shim did not accept predictor='cpu_predictor': {exc}")
+    print("[b4] legacy GPU-param shim (predictor->device) OK")
+
     # (c) GPU / Blackwell ---------------------------------------------------
     if args.skip_gpu:
         print("[c] GPU check skipped (--skip-gpu)")
     else:
+        # Use the *legacy* GPU params (tree_method='gpu_hist', gpu_id=0,
+        # predictor='gpu_predictor') so this also validates the back-compat
+        # shim maps them onto the 2.x device API on a real (Blackwell) GPU.
         try:
             gpu_clf = xgb.XGBClassifier(
-                n_estimators=10, max_depth=3, tree_method="hist", device="cuda"
+                n_estimators=10,
+                max_depth=3,
+                tree_method="gpu_hist",
+                gpu_id=0,
+                predictor="gpu_predictor",
             )
             gpu_clf.fit(X, y)
             _ = gpu_clf.predict(X)
-            print("[c] device='cuda' train + predict OK")
+            print("[c] legacy gpu_hist/gpu_id train + predict on device='cuda' OK")
         except Exception as exc:  # pylint: disable=broad-except
             _fail(
                 "device='cuda' run failed — check GPU visibility / arch "

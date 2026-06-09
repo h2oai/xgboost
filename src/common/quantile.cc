@@ -374,7 +374,10 @@ void AddCutPoint(typename SketchType::SummaryContainer const &summary, int max_b
   auto &cut_values = cuts->cut_values_.HostVector();
   // we use the min_value as the first (0th) element, hence starting from 1.
   for (size_t i = 1; i < required_cuts; ++i) {
-    bst_float cpt = summary.data[i].value;
+    // h2oai fork (PR #94): place cut points *between* adjacent bin boundaries
+    // rather than at the upper bin value, to avoid noise/reproducibility
+    // problems. Diverges from upstream by half a bin width at each cut.
+    bst_float cpt = summary.data[i].value + (summary.data[i - 1].value - summary.data[i].value) / 2.;
     if (i == 1 || cpt > cut_values.back()) {
       cut_values.push_back(cpt);
     }

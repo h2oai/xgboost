@@ -733,7 +733,9 @@ void SketchContainer::MakeCuts(Context const* ctx, HistogramCuts* p_cuts, bool i
       return;
     }
     assert(idx+1 < in_column.size());
-    out_column[idx] = in_column[idx+1].value;
+    // h2oai fork (PR #94): place numeric cut points *between* adjacent bin
+    // boundaries (mirrors the CPU sketch in quantile.cc::AddCutPoint).
+    out_column[idx] = in_column[idx+1].value + (in_column[idx].value - in_column[idx+1].value)/2.;
   });
 
   p_cuts->SetCategorical(this->has_categorical_, max_cat);

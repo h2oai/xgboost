@@ -1209,6 +1209,9 @@ class XGBModel(XGBModelBase):
         validate_features: bool = True,
         base_margin: Optional[ArrayLike] = None,
         iteration_range: Optional[IterationRange] = None,
+        pred_leaf: bool = False,
+        pred_contribs: bool = False,
+        approx_contribs: bool = False,
     ) -> ArrayLike:
         """Predict with `X`.  If the model is trained with early stopping, then
         :py:attr:`best_iteration` is used automatically. The estimator uses
@@ -1243,7 +1246,13 @@ class XGBModel(XGBModelBase):
         """
         with config_context(verbosity=self.verbosity):
             iteration_range = self._get_iteration_range(iteration_range)
-            if self._can_use_inplace_predict():
+            # h2oai fork: pred_leaf / pred_contribs / approx_contribs are not
+            # supported by inplace_predict, so fall through to Booster.predict
+            # whenever any of them are requested (DAI uses these in
+            # models_xgboost.py).
+            if self._can_use_inplace_predict() and not (
+                pred_leaf or pred_contribs or approx_contribs
+            ):
                 try:
                     predts = self.get_booster().inplace_predict(
                         data=X,
@@ -1275,6 +1284,9 @@ class XGBModel(XGBModelBase):
                 iteration_range=iteration_range,
                 output_margin=output_margin,
                 validate_features=validate_features,
+                pred_leaf=pred_leaf,
+                pred_contribs=pred_contribs,
+                approx_contribs=approx_contribs,
             )
 
     def apply(
@@ -1628,6 +1640,9 @@ class XGBClassifier(XGBClassifierBase, XGBModel):
         validate_features: bool = True,
         base_margin: Optional[ArrayLike] = None,
         iteration_range: Optional[IterationRange] = None,
+        pred_leaf: bool = False,
+        pred_contribs: bool = False,
+        approx_contribs: bool = False,
     ) -> ArrayLike:
         with config_context(verbosity=self.verbosity):
             class_probs = super().predict(
@@ -1636,9 +1651,14 @@ class XGBClassifier(XGBClassifierBase, XGBModel):
                 validate_features=validate_features,
                 base_margin=base_margin,
                 iteration_range=iteration_range,
+                pred_leaf=pred_leaf,
+                pred_contribs=pred_contribs,
+                approx_contribs=approx_contribs,
             )
-            if output_margin:
-                # If output_margin is active, simply return the scores
+            if output_margin or pred_leaf or pred_contribs or approx_contribs:
+                # h2oai fork: raw outputs (margin / leaf indices / SHAP
+                # contributions) are not class probabilities, so skip the
+                # argmax/label post-processing and return them as-is.
                 return class_probs
 
             if len(class_probs.shape) > 1 and self.n_classes_ != 2:
@@ -1663,6 +1683,9 @@ class XGBClassifier(XGBClassifierBase, XGBModel):
         validate_features: bool = True,
         base_margin: Optional[ArrayLike] = None,
         iteration_range: Optional[IterationRange] = None,
+        pred_leaf: bool = False,
+        pred_contribs: bool = False,
+        approx_contribs: bool = False,
     ) -> np.ndarray:
         """Predict the probability of each `X` example being of a given class. If the
         model is trained with early stopping, then :py:attr:`best_iteration` is used
@@ -1699,7 +1722,9 @@ class XGBClassifier(XGBClassifierBase, XGBModel):
         # softmax:         Use softmax from scipy
         # binary:logistic: Expand the prob vector into 2-class matrix after predict.
         # binary:logitraw: Unsupported by predict_proba()
-        if self.objective == "multi:softmax":
+        if self.objective == "multi:softmax" and not (
+            pred_leaf or pred_contribs or approx_contribs
+        ):
             raw_predt = super().predict(
                 X=X,
                 validate_features=validate_features,
@@ -1714,7 +1739,14 @@ class XGBClassifier(XGBClassifierBase, XGBModel):
             validate_features=validate_features,
             base_margin=base_margin,
             iteration_range=iteration_range,
+            pred_leaf=pred_leaf,
+            pred_contribs=pred_contribs,
+            approx_contribs=approx_contribs,
         )
+        # h2oai fork: when raw leaf/contrib outputs are requested, return them
+        # directly instead of reshaping into a class-probability matrix.
+        if pred_leaf or pred_contribs or approx_contribs:
+            return class_probs
         return _cls_predict_proba(self.n_classes_, class_probs, np.vstack)
 
     @property

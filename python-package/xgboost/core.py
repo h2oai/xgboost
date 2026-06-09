@@ -238,8 +238,12 @@ Error message(s): {os_error_list}
 
     def parse(ver: str) -> Tuple[int, int, int]:
         """Avoid dependency on packaging (PEP 440)."""
-        # 2.0.0-dev, 2.0.0, or 2.0.0rc1
-        major, minor, patch = ver.split("-")[0].split(".")
+        # 2.0.0-dev, 2.0.0, 2.0.0rc1, or 2.1.4.dev0 (h2oai fork custom-build tag).
+        # Take only major.minor.patch and ignore any trailing component such as
+        # the PEP 440 ".dev0" suffix, so this still matches the compiled lib's
+        # numeric version (2.1.4).
+        parts = ver.split("-")[0].split(".")
+        major, minor, patch = parts[0], parts[1], parts[2]
         rc = patch.find("rc")
         if rc != -1:
             patch = patch[:rc]

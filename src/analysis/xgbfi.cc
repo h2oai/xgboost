@@ -6,6 +6,7 @@
 */
 #include "xgbfi.h"
 #include <dmlc/omp.h>
+#include <xgboost/feature_map.h>  // FeatureMap (2.1.x split it out of learner.h)
 #include <xgboost/logging.h>
 #include <iostream>
 #include <cstdio>

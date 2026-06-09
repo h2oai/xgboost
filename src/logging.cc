@@ -6,6 +6,8 @@
  */
 #include "xgboost/logging.h"
 
+#include <cstdio>   // for printf, fflush  (h2oai fork)
+#include <cstdlib>  // for getenv          (h2oai fork)
 #include <string>  // for string
 
 #include "collective/communicator-inl.h"
@@ -13,6 +15,14 @@
 #if !defined(XGBOOST_STRICT_R_MODE) || XGBOOST_STRICT_R_MODE == 0
 // Override logging mechanism for non-R interfaces
 void dmlc::CustomLogMessage::Log(const std::string& msg) {
+  // h2oai fork: when DAI_XGBOOST_AVOID_LOGGER is set, bypass the registered log
+  // callback and print directly. Works around a DAI logger-hook deadlock
+  // (env var set in h2oaicore/systemutils_basic.py).
+  if (getenv("DAI_XGBOOST_AVOID_LOGGER")) {
+    printf("[XGBoost] [%s]\n", msg.c_str());
+    fflush(stdout);
+    return;
+  }
   const xgboost::LogCallbackRegistry *registry =
       xgboost::LogCallbackRegistryStore::Get();
   auto callback = registry->Get();

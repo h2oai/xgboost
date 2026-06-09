@@ -41,11 +41,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Ubuntu 22.04's apt cmake is 3.22 (too old), so install a current one via pip.
 # hatchling/packaging are the wheel build-backend deps (packager.pep517 wraps
 # hatchling); they must be present because the wheel is built with
-# --no-isolation. numpy/pandas/scipy are for the smoke test.
+# --no-isolation. numpy/pandas/scikit-learn/scipy are for the smoke test and
+# are pinned to DAI's req_constraints_deps.txt for a DAI-faithful environment.
 RUN python3 -m pip install --no-cache-dir --upgrade pip \
     && python3 -m pip install --no-cache-dir \
         "cmake>=3.30" ninja build "hatchling>=1.12.1" "packaging>=21.3" \
-        numpy pandas scipy
+        "numpy==1.24.4" "pandas==1.5.3" "scikit-learn==1.5.2" "scipy==1.12.0"
 
 # Sanity: fail the image build early if the toolchain is wrong.
 RUN nvcc --version && cmake --version

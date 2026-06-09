@@ -93,7 +93,12 @@ log "   wheel: ${WHEEL}"
 
 # ---------------------------------------------------------------------------
 log "4. Smoke check: install + import + verify fork customizations present"
-python3 -m pip install --force-reinstall "${WHEEL}" >/dev/null
+# Runtime deps for the smoke test, pinned to DAI's req_constraints_deps.txt so
+# the check runs against a DAI-faithful environment. scikit-learn is required
+# by xgboost's sklearn estimators (XGBClassifier).
+python3 -m pip install \
+  "numpy==1.24.4" "pandas==1.5.3" "scikit-learn==1.5.2" "scipy==1.12.0" >/dev/null
+python3 -m pip install --force-reinstall --no-deps "${WHEEL}" >/dev/null
 python3 "${REPO_ROOT}/scripts/smoke_cuda128.py" \
   ${SKIP_GPU_TEST:+--skip-gpu} || fail "smoke checks failed"
 

@@ -1,0 +1,46 @@
+# Build environment for the h2oai xgboost 2.1.4 fork against CUDA 12.8 / Blackwell.
+#
+# This image only provides the toolchain; the actual build is driven by
+# scripts/build_cuda128.sh so you can iterate without rebuilding the image.
+#
+# Build the image:
+#   docker build -f Dockerfile.cuda128 -t xgb-cuda128-build .
+#
+# Then build the wheel (CPU-only build/compile; no GPU needed for steps 1-4):
+#   docker run --rm -v "$PWD":/src -w /src xgb-cuda128-build \
+#     bash scripts/build_cuda128.sh
+#
+# To also run the device='cuda' / Blackwell smoke test, add the GPU:
+#   docker run --rm --gpus all -v "$PWD":/src -w /src xgb-cuda128-build \
+#     bash scripts/build_cuda128.sh
+#
+# The produced wheel lands in python-package/dist/ on the host (volume mount).
+FROM nvidia/cuda:12.8.0-devel-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Toolchain: compiler, git, python, and NCCL (for USE_NCCL=ON multi-GPU).
+# libnccl-dev comes from the CUDA apt repo already configured in the base image.
+# The base image holds libnccl2 at a CUDA-matched version; installing the -dev
+# headers upgrades it, so --allow-change-held-packages is required (the repo's
+# NCCL matches CUDA 12.8, so the upgrade is safe).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        --allow-change-held-packages \
+        build-essential \
+        ca-certificates \
+        git \
+        ninja-build \
+        python3 \
+        python3-pip \
+        python3-dev \
+        libnccl2 \
+        libnccl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# CMake >= 3.30 is required to emit sm_100/sm_120 (Blackwell) device code.
+# Ubuntu 22.04's apt cmake is 3.22 (too old), so install a current one via pip.
+RUN python3 -m pip install --no-cache-dir --upgrade pip \
+    && python3 -m pip install --no-cache-dir "cmake>=3.30" ninja build numpy pandas scipy
+
+# Sanity: fail the image build early if the toolchain is wrong.
+RUN nvcc --version && cmake --version

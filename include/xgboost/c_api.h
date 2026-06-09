@@ -1330,6 +1330,29 @@ XGB_DLL int XGBoosterLoadJsonConfig(BoosterHandle handle, char const *config);
 /**@}*/  // End of Serialization
 
 /*!
+ * \brief (h2oai fork) compute feature interactions (xgbfi) from the model dump
+ * \param handle handle to Booster object
+ * \param max_fi_depth upper bound for depth of interactions
+ * \param max_tree_depth upper bound for tree depth to be traversed
+ * \param max_deepening upper bound for tree deepening
+ * \param ntrees number of trees to be traversed
+ * \param fmap path to fmap file, feature names "F1|F2|.." or empty string
+ * \param out_len length of output array
+ * \param out_fi_array pointer to hold the array of interaction strings
+ * \param nthread number of threads to use
+ * \return 0 when success, -1 when failure happens
+ */
+XGB_DLL int XGBoosterGetFeatureInteractions(BoosterHandle handle,
+                                            int max_fi_depth,
+                                            int max_tree_depth,
+                                            int max_deepening,
+                                            int ntrees,
+                                            const char *fmap,
+                                            bst_ulong *out_len,
+                                            const char ***out_fi_array,
+                                            int nthread);
+
+/*!
  * \brief dump model, return array of strings representing model dump
  * \param handle handle
  * \param fmap  name to fmap can be empty string

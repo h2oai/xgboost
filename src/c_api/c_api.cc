@@ -15,6 +15,7 @@
 #include <utility>                           // for pair
 #include <vector>                            // for vector
 
+#include "../analysis/xgbfi.h"                // for GetFeatureInteractions (h2oai fork)
 #include "../common/api_entry.h"             // for XGBAPIThreadLocalEntry
 #include "../common/charconv.h"              // for from_chars, to_chars, NumericLimits, from_ch...
 #include "../common/error_msg.h"             // for NoFederated
@@ -1506,6 +1507,40 @@ inline void XGBoostDumpModelImpl(BoosterHandle handle, FeatureMap* fmap,
 
   *out_models = dmlc::BeginPtr(charp_vecs);
   *len = static_cast<xgboost::bst_ulong>(charp_vecs.size());
+}
+
+// h2oai fork: feature interactions (xgbfi). Parses the text model dump and
+// returns one formatted string per interaction. Consumed in Python via
+// Booster.get_feature_interactions(); gated in DAI by use_xgboost_xgbfi.
+XGB_DLL int XGBoosterGetFeatureInteractions(BoosterHandle handle,
+                                            int max_fi_depth,
+                                            int max_tree_depth,
+                                            int max_deepening,
+                                            int ntrees,
+                                            const char *fmap,
+                                            xgboost::bst_ulong *out_len,
+                                            const char ***out_fi_array,
+                                            int nthread) {
+  API_BEGIN();
+  CHECK_HANDLE();
+  auto *bst = static_cast<Learner*>(handle);
+  bst->Configure();
+  std::vector<std::string>& str_vecs = bst->GetThreadLocal().ret_vec_str;
+  std::vector<const char*>& charp_vecs = bst->GetThreadLocal().ret_vec_charp;
+  str_vecs = xgbfi::GetFeatureInteractions(*bst,
+                                           max_fi_depth,
+                                           max_tree_depth,
+                                           max_deepening,
+                                           ntrees, fmap, nthread);
+  charp_vecs.resize(str_vecs.size());
+  for (size_t i = 0; i < str_vecs.size(); ++i) {
+    charp_vecs[i] = str_vecs[i].c_str();
+  }
+  xgboost_CHECK_C_ARG_PTR(out_fi_array);
+  xgboost_CHECK_C_ARG_PTR(out_len);
+  *out_fi_array = dmlc::BeginPtr(charp_vecs);
+  *out_len = static_cast<xgboost::bst_ulong>(charp_vecs.size());
+  API_END();
 }
 
 XGB_DLL int XGBoosterDumpModel(BoosterHandle handle,

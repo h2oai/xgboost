@@ -1670,8 +1670,14 @@ class DaskScikitLearnBase(XGBModel):
         validate_features: bool = True,
         base_margin: Optional[_DaskCollection] = None,
         iteration_range: Optional[IterationRange] = None,
+        ntree_limit: Optional[int] = None,
     ) -> Any:
         _assert_dask_support()
+        # h2oai fork: upstream 2.x removed ntree_limit from the dask path; DAI
+        # still passes ntree_limit (typically 0 == all trees) in its multi-GPU
+        # predict kwargs. Map it onto iteration_range to keep that path working.
+        if ntree_limit is not None and iteration_range is None:
+            iteration_range = (0, ntree_limit)
         return self.client.sync(
             self._predict_async,
             X,
@@ -1706,8 +1712,12 @@ class DaskScikitLearnBase(XGBModel):
         self,
         X: _DataT,
         iteration_range: Optional[IterationRange] = None,
+        ntree_limit: Optional[int] = None,
     ) -> Any:
         _assert_dask_support()
+        # h2oai fork: see predict() above re: ntree_limit reinstatement.
+        if ntree_limit is not None and iteration_range is None:
+            iteration_range = (0, ntree_limit)
         return self.client.sync(self._apply_async, X, iteration_range=iteration_range)
 
     def __await__(self) -> Awaitable[Any]:

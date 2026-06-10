@@ -1,0 +1,66 @@
+# Makefile2 — build entry point used by h2o4gpu's submodule build
+# (h2o4gpu Makefile: `make -f Makefile2 PYTHON=.. CXX=.. CC=.. <target>`).
+#
+# Ported to the xgboost 2.1.4 fork (CUDA 12.8 / Blackwell). Changes vs the
+# 2020-era Makefile2:
+#   * builds with CMake + `python -m build` (PEP517); not setup.py bdist_wheel
+#   * GPU archs incl. Blackwell via -DGPU_COMPUTE_VER (90;100;120)
+#   * no `cub` / `rabit` submodules (gone in 2.x; CCCL ships with the toolkit,
+#     rabit was merged into the tree)
+#   * dropped the updater_gpu_hist2 (int64-sum) clone: it relied on 2020 symbol
+#     names that no longer exist in 2.1.4 and is not referenced by h2o4gpu
+# Requires CMake >= 3.30 (for sm_100/sm_120) and `build` + `hatchling` in the
+# build env. CC/CXX are honoured from the environment (h2o4gpu passes them).
+
+SHELL := /bin/bash
+PYTHON ?= python3
+
+# GPU architectures: Volta -> Blackwell. Top arch also gets PTX (forward-compat).
+GPU_COMPUTE_VER ?= 70;75;80;86;90;100;120
+
+# Standard CMake flags shared by the GPU builds.
+CMAKE_COMMON := -DCMAKE_BUILD_TYPE=RELWITHDEBINFO -DHIDE_CXX_SYMBOLS=ON
+
+# https://xgboost.readthedocs.io/en/latest/build.html
+default: libxgboost
+libxgboost: libxgboostgpu libxgboostp2nccl libxgboostp3
+libxgboost2: libxgboostgpu libxgboostp2nonccl libxgboostp3
+libxgboost-cpu: libxgboostcpu libxgboostp2cpu-only libxgboostp3
+
+# Submodule init for GPU/CPU builds (2.1.4 only has dmlc-core + gputreeshap).
+libxgboostgpu:
+	git submodule init && git submodule update dmlc-core && git submodule update gputreeshap
+
+libxgboostcpu:
+	git submodule init && git submodule update dmlc-core && git submodule update gputreeshap
+
+# GPU build with NCCL (multi-GPU). Set NCCL_ROOT in the env if NCCL is in a
+# non-standard location.
+libxgboostp2nccl:
+	mkdir -p build && cd build && \
+	cmake .. -DUSE_CUDA=ON -DUSE_NCCL=ON -DGPU_COMPUTE_VER="$(GPU_COMPUTE_VER)" $(CMAKE_COMMON) && \
+	cmake --build . -j`nproc`
+
+# GPU build without NCCL.
+libxgboostp2nonccl:
+	mkdir -p build && cd build && \
+	cmake .. -DUSE_CUDA=ON -DGPU_COMPUTE_VER="$(GPU_COMPUTE_VER)" $(CMAKE_COMMON) && \
+	cmake --build . -j`nproc`
+
+# CPU-only build.
+libxgboostp2cpu-only:
+	mkdir -p build && cd build && \
+	cmake .. -DUSE_CUDA=OFF $(CMAKE_COMMON) && \
+	cmake --build . -j`nproc`
+
+# Build the Python wheel (PEP517 / hatchling); reuses the libxgboost.so just
+# built (packager detects ../lib/libxgboost.so and does not recompile).
+libxgboostp3:
+	cd python-package && rm -rf dist && $(PYTHON) -m build --wheel --no-isolation
+
+
+.PHONY: build/VERSION.txt
+
+build/VERSION.txt:
+	@mkdir -p build
+	cp python-package/xgboost/VERSION build/VERSION.txt

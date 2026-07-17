@@ -1672,100 +1672,6 @@ def _configure_metrics(params: BoosterParam) -> BoosterParam:
     return params
 
 
-# h2oai fork: keys removed by the 2.0 GPU device-API change that DAI (and other
-# pre-2.0 callers) may still pass. Mapped to the new `device` + `tree_method`
-# API so existing code keeps working. See _remap_legacy_gpu_params.
-_LEGACY_GPU_PARAM_KEYS = frozenset(
-    {
-        "gpu_id",
-        "n_gpus",
-        "predictor",
-        "gpu_hist",  # only as a tree_method/updater *value*, handled below
-        "single_precision_histogram",
-    }
-)
-
-
-def _remap_legacy_gpu_params(
-    items: List[Tuple[str, Any]]
-) -> List[Tuple[str, Any]]:
-    """Translate pre-2.0 GPU parameters to the xgboost 2.x device API.
-
-    h2oai fork shim. xgboost 2.0 removed ``gpu_id``, ``n_gpus``,
-    ``predictor`` (``gpu_predictor``/``cpu_predictor``), the ``gpu_hist``
-    tree method, ``gpu_coord_descent`` and ``single_precision_histogram`` in
-    favour of ``device='cuda[:N]'`` / ``'cpu'`` plus ``tree_method='hist'``.
-    DAI's models_xgboost.py still sets the old parameters in ~25 places; this
-    shim accepts them so that code does not need rewriting.
-
-    Transformations (an explicit ``device=`` is never overridden):
-      * ``tree_method='gpu_hist'``            -> ``tree_method='hist'`` + cuda
-      * ``updater='gpu_coord_descent'``       -> ``updater='coord_descent'`` + cuda
-      * ``predictor='gpu_predictor'``         -> cuda (key dropped)
-      * ``predictor='cpu_predictor'``         -> cpu  (key dropped)
-      * ``gpu_id=N``                          -> device ordinal N (key dropped)
-      * ``n_gpus``, ``single_precision_histogram`` -> dropped with a warning
-    """
-    has_legacy = any(
-        k == "gpu_id"
-        or k == "n_gpus"
-        or k == "predictor"
-        or k == "single_precision_histogram"
-        or (k in ("tree_method", "updater") and str(v) in ("gpu_hist", "gpu_coord_descent"))
-        for k, v in items
-    )
-    if not has_legacy:
-        return items
-
-    explicit_device = any(k == "device" for k, v in items)
-    gpu_ordinal: Optional[str] = None
-    want_cuda = False
-    want_cpu = False
-    out: List[Tuple[str, Any]] = []
-
-    for key, val in items:
-        sval = str(val)
-        if key == "gpu_id":
-            if val is not None and sval not in ("", "-1"):
-                gpu_ordinal = sval
-            continue  # drop; folded into device
-        if key == "n_gpus":
-            warnings.warn(
-                "xgboost>=2.0 removed `n_gpus`; multi-GPU is now driven by Dask. "
-                "Ignoring it.",
-                UserWarning,
-            )
-            continue
-        if key == "single_precision_histogram":
-            warnings.warn(
-                "xgboost>=2.0 removed `single_precision_histogram`; ignoring it.",
-                UserWarning,
-            )
-            continue
-        if key == "predictor":
-            if sval == "gpu_predictor":
-                want_cuda = True
-            elif sval == "cpu_predictor":
-                want_cpu = True
-            continue  # `predictor` no longer exists; folded into device
-        if key == "tree_method" and sval == "gpu_hist":
-            want_cuda = True
-            out.append(("tree_method", "hist"))
-            continue
-        if key == "updater" and sval == "gpu_coord_descent":
-            want_cuda = True
-            out.append(("updater", "coord_descent"))
-            continue
-        out.append((key, val))
-
-    if not explicit_device and (want_cuda or gpu_ordinal is not None):
-        device = "cuda" if gpu_ordinal is None else f"cuda:{gpu_ordinal}"
-        out.append(("device", device))
-    elif not explicit_device and want_cpu:
-        out.append(("device", "cpu"))
-    return out
-
-
 class Booster:
     # pylint: disable=too-many-public-methods
     """A Booster of XGBoost.
@@ -2166,11 +2072,6 @@ class Booster:
             params = params.items()
         elif isinstance(params, str) and value is not None:
             params = [(params, value)]
-        # h2oai fork: accept pre-2.0 GPU parameters (gpu_hist, gpu_id,
-        # predictor, ...) by translating them to the 2.x device API. This is
-        # the single chokepoint for Booster construction, train() and direct
-        # set_param() calls, so it covers every path DAI uses.
-        params = _remap_legacy_gpu_params(list(params))
         for key, val in cast(Iterable[Tuple[str, str]], params):
             if isinstance(val, np.ndarray):
                 val = val.tolist()

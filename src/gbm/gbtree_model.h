@@ -1,21 +1,21 @@
-/*!
- * Copyright 2017-2020 by Contributors
+/**
+ * Copyright 2017-2023, XGBoost Contributors
  * \file gbtree_model.h
  */
 #ifndef XGBOOST_GBM_GBTREE_MODEL_H_
 #define XGBOOST_GBM_GBTREE_MODEL_H_
 
-#include <dmlc/parameter.h>
 #include <dmlc/io.h>
-#include <xgboost/model.h>
-#include <xgboost/tree_model.h>
-#include <xgboost/model_visitor.h>
-#include <xgboost/parameter.h>
+#include <dmlc/parameter.h>
+#include <xgboost/context.h>
 #include <xgboost/learner.h>
+#include <xgboost/model.h>
+#include <xgboost/parameter.h>
+#include <xgboost/tree_model.h>
 
 #include <memory>
-#include <utility>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "../common/threading_utils.h"
@@ -25,33 +25,35 @@ namespace xgboost {
 class Json;
 
 namespace gbm {
+/**
+ * \brief Container for all trees built (not update) for one group.
+ */
+using TreesOneGroup = std::vector<std::unique_ptr<RegTree>>;
+/**
+ * \brief Container for all trees built (not update) for one iteration.
+ */
+using TreesOneIter = std::vector<TreesOneGroup>;
 
 /*! \brief model parameters */
 struct GBTreeModelParam : public dmlc::Parameter<GBTreeModelParam> {
  public:
-  /*! \brief number of trees */
-  int32_t num_trees;
-  /*! \brief (Deprecated) number of roots */
-  int32_t deprecated_num_roots;
-  /*! \brief number of features to be used by trees */
-  int32_t deprecated_num_feature;
-  /*! \brief pad this space, for backward compatibility reason.*/
-  int32_t pad_32bit;
-  /*! \brief deprecated padding space. */
-  int64_t deprecated_num_pbuffer;
-  // deprecated. use learner_model_param_->num_output_group.
-  int32_t deprecated_num_output_group;
-  /*! \brief size of leaf vector needed in tree */
-  int32_t size_leaf_vector;
+  /**
+   * \brief number of trees
+   */
+  std::int32_t num_trees;
+  /**
+   * \brief Number of trees for a forest.
+   */
+  std::int32_t num_parallel_tree;
   /*! \brief reserved parameters */
-  int32_t reserved[32];
+  int32_t reserved[38];
 
   /*! \brief constructor */
   GBTreeModelParam() {
     std::memset(this, 0, sizeof(GBTreeModelParam));  // FIXME(trivialfis): Why?
     static_assert(sizeof(GBTreeModelParam) == (4 + 2 + 2 + 32) * sizeof(int32_t),
                   "64/32 bit compatibility issue");
-    deprecated_num_roots = 1;
+    num_parallel_tree = 1;
   }
 
   // declare parameters, only declare those that need to be set.
@@ -60,23 +62,20 @@ struct GBTreeModelParam : public dmlc::Parameter<GBTreeModelParam> {
         .set_lower_bound(0)
         .set_default(0)
         .describe("Number of features used for training and prediction.");
-    DMLC_DECLARE_FIELD(size_leaf_vector)
-        .set_lower_bound(0)
-        .set_default(0)
-        .describe("Reserved option for vector tree.");
+    DMLC_DECLARE_FIELD(num_parallel_tree)
+        .set_default(1)
+        .set_lower_bound(1)
+        .describe(
+            "Number of parallel trees constructed during each iteration."
+            " This option is used to support boosted random forest.");
   }
 
   // Swap byte order for all fields. Useful for transporting models between machines with different
   // endianness (big endian vs little endian)
-  inline GBTreeModelParam ByteSwap() const {
+  GBTreeModelParam ByteSwap() const {
     GBTreeModelParam x = *this;
     dmlc::ByteSwap(&x.num_trees, sizeof(x.num_trees), 1);
-    dmlc::ByteSwap(&x.deprecated_num_roots, sizeof(x.deprecated_num_roots), 1);
-    dmlc::ByteSwap(&x.deprecated_num_feature, sizeof(x.deprecated_num_feature), 1);
-    dmlc::ByteSwap(&x.pad_32bit, sizeof(x.pad_32bit), 1);
-    dmlc::ByteSwap(&x.deprecated_num_pbuffer, sizeof(x.deprecated_num_pbuffer), 1);
-    dmlc::ByteSwap(&x.deprecated_num_output_group, sizeof(x.deprecated_num_output_group), 1);
-    dmlc::ByteSwap(&x.size_leaf_vector, sizeof(x.size_leaf_vector), 1);
+    dmlc::ByteSwap(&x.num_parallel_tree, sizeof(x.num_parallel_tree), 1);
     dmlc::ByteSwap(x.reserved, sizeof(x.reserved[0]), sizeof(x.reserved) / sizeof(x.reserved[0]));
     return x;
   }
@@ -84,8 +83,8 @@ struct GBTreeModelParam : public dmlc::Parameter<GBTreeModelParam> {
 
 struct GBTreeModel : public Model {
  public:
-  explicit GBTreeModel(LearnerModelParam const* learner_model) :
-      learner_model_param{learner_model} {}
+  explicit GBTreeModel(LearnerModelParam const* learner_model, Context const* ctx)
+      : learner_model_param{learner_model}, ctx_{ctx} {}
   void Configure(const Args& cfg) {
     // initialize model parameters if not yet been initialized.
     if (trees.size() == 0) {
@@ -101,6 +100,9 @@ struct GBTreeModel : public Model {
       trees.clear();
       param.num_trees = 0;
       tree_info.clear();
+
+      iteration_indptr.clear();
+      iteration_indptr.push_back(0);
     }
   }
 
@@ -110,42 +112,33 @@ struct GBTreeModel : public Model {
   void SaveModel(Json* p_out) const override;
   void LoadModel(Json const& p_out) override;
 
-  std::vector<std::string> DumpModel(const FeatureMap &fmap, bool with_stats,
-                                     std::string format) const {
-    std::vector<std::string> dump;
-    if (format == "mojo") {
-      std::stringstream fo("");
-      fo.precision(20);
-      fo << "Version 0.1.0\n"
-         << "num_output_group: " << learner_model_param->num_output_group << "\n"
-         << "base_margin: " << learner_model_param->base_score << "\n";
-      if (learner_model_param->num_output_group > 1) {
-        fo << "tree_info: [";
-        for (size_t i = 0; i < tree_info.size(); ++i) {
-          if (i != 0) fo << ",";
-          fo << tree_info[i];
-        }
-        fo << "]\n";
-      }
-      fo << "\n";
-      dump.push_back(fo.str());
-    }
-    for (const auto & tree : trees) {
-      dump.push_back(tree->DumpModel(fmap, with_stats, format));
-    }
+  [[nodiscard]] std::vector<std::string> DumpModel(const FeatureMap& fmap, bool with_stats,
+                                                   int32_t n_threads, std::string format) const {
+    std::vector<std::string> dump(trees.size());
+    common::ParallelFor(trees.size(), n_threads,
+                        [&](size_t i) { dump[i] = trees[i]->DumpModel(fmap, with_stats, format); });
     return dump;
   }
-  void CommitModel(std::vector<std::unique_ptr<RegTree> >&& new_trees,
-                   int bst_group) {
-    for (auto & new_tree : new_trees) {
+  /**
+   * \brief Add trees to the model.
+   *
+   * \return The number of new trees.
+   */
+  bst_tree_t CommitModel(TreesOneIter&& new_trees);
+
+  void CommitModelGroup(std::vector<std::unique_ptr<RegTree>>&& new_trees, bst_target_t group_idx) {
+    for (auto& new_tree : new_trees) {
       trees.push_back(std::move(new_tree));
-      tree_info.push_back(bst_group);
+      tree_info.push_back(group_idx);
     }
     param.num_trees += static_cast<int>(new_trees.size());
   }
 
-  void Accept(ModelVisitor &v) {
-      v.Visit(*this);
+  [[nodiscard]] std::int32_t BoostedRounds() const {
+    if (trees.empty()) {
+      CHECK_EQ(iteration_indptr.size(), 1);
+    }
+    return static_cast<std::int32_t>(iteration_indptr.size() - 1);
   }
 
   // base margin
@@ -156,8 +149,20 @@ struct GBTreeModel : public Model {
   std::vector<std::unique_ptr<RegTree> > trees;
   /*! \brief for the update process, a place to keep the initial trees */
   std::vector<std::unique_ptr<RegTree> > trees_to_update;
-  /*! \brief some information indicator of the tree, reserved */
+  /**
+   * \brief Group index for trees.
+   */
   std::vector<int> tree_info;
+  /**
+   * \brief Number of trees accumulated for each iteration.
+   */
+  std::vector<bst_tree_t> iteration_indptr{0};
+
+ private:
+  /**
+   * \brief Whether the stack contains multi-target tree.
+   */
+  Context const* ctx_;
 };
 }  // namespace gbm
 }  // namespace xgboost

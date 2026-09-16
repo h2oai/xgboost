@@ -1,22 +1,21 @@
-/*!
- * Copyright 2020-2021 XGBoost contributors
+/**
+ * Copyright 2020-2024, XGBoost contributors
  */
 #ifndef XGBOOST_DATA_PROXY_DMATRIX_H_
 #define XGBOOST_DATA_PROXY_DMATRIX_H_
 
-#include <dmlc/any.h>
-
+#include <any>  // for any, any_cast
 #include <memory>
 #include <string>
+#include <type_traits>  // for invoke_result_t
 #include <utility>
 
-#include "xgboost/data.h"
-#include "xgboost/generic_parameters.h"
-#include "xgboost/c_api.h"
 #include "adapter.h"
+#include "xgboost/c_api.h"
+#include "xgboost/context.h"
+#include "xgboost/data.h"
 
-namespace xgboost {
-namespace data {
+namespace xgboost::data {
 /*
  * \brief A proxy to external iterator.
  */
@@ -27,16 +26,11 @@ class DataIterProxy {
   NextFn* next_;
 
  public:
-  DataIterProxy(DataIterHandle iter, ResetFn* reset, NextFn* next) :
-      iter_{iter},
-      reset_{reset}, next_{next} {}
+  DataIterProxy(DataIterHandle iter, ResetFn* reset, NextFn* next)
+      : iter_{iter}, reset_{reset}, next_{next} {}
 
-  bool Next() {
-    return next_(iter_);
-  }
-  void Reset() {
-    reset_(iter_);
-  }
+  bool Next() { return next_(iter_); }
+  void Reset() { reset_(iter_); }
 };
 
 /*
@@ -44,107 +38,153 @@ class DataIterProxy {
  */
 class DMatrixProxy : public DMatrix {
   MetaInfo info_;
-  dmlc::any batch_;
-  int32_t device_ { xgboost::GenericParameter::kCpuId };
+  std::any batch_;
+  Context ctx_;
 
 #if defined(XGBOOST_USE_CUDA)
-  void FromCudaColumnar(std::string interface_str);
-  void FromCudaArray(std::string interface_str);
+  void FromCudaColumnar(StringView interface_str);
+  void FromCudaArray(StringView interface_str);
 #endif  // defined(XGBOOST_USE_CUDA)
 
  public:
-  int DeviceIdx() const { return device_; }
+  DeviceOrd Device() const { return ctx_.Device(); }
 
-  void SetData(char const* c_interface) {
+  void SetCUDAArray(char const* c_interface) {
     common::AssertGPUSupport();
+    CHECK(c_interface);
 #if defined(XGBOOST_USE_CUDA)
-    std::string interface_str = c_interface;
-    Json json_array_interface =
-        Json::Load({interface_str.c_str(), interface_str.size()});
+    StringView interface_str{c_interface};
+    Json json_array_interface = Json::Load(interface_str);
     if (IsA<Array>(json_array_interface)) {
       this->FromCudaColumnar(interface_str);
     } else {
       this->FromCudaArray(interface_str);
     }
-    if (this->info_.num_row_ == 0) {
-      this->device_ = GenericParameter::kCpuId;
-    }
 #endif  // defined(XGBOOST_USE_CUDA)
   }
 
-  void SetArrayData(char const* c_interface);
-  void SetCSRData(char const *c_indptr, char const *c_indices,
-                  char const *c_values, bst_feature_t n_features,
-                  bool on_host);
+  void SetColumnarData(StringView interface_str);
+
+  void SetArrayData(StringView interface_str);
+  void SetCSRData(char const* c_indptr, char const* c_indices, char const* c_values,
+                  bst_feature_t n_features, bool on_host);
 
   MetaInfo& Info() override { return info_; }
   MetaInfo const& Info() const override { return info_; }
-  bool SingleColBlock() const override { return true; }
-  bool EllpackExists() const override { return true; }
+  Context const* Ctx() const override { return &ctx_; }
+
+  bool SingleColBlock() const override { return false; }
+  bool EllpackExists() const override { return false; }
+  bool GHistIndexExists() const override { return false; }
   bool SparsePageExists() const override { return false; }
-  DMatrix *Slice(common::Span<int32_t const> ridxs) override {
+
+  template <typename Page>
+  BatchSet<Page> NoBatch() {
+    LOG(FATAL) << "Proxy DMatrix cannot return data batch.";
+    return BatchSet<Page>(BatchIterator<Page>(nullptr));
+  }
+
+  DMatrix* Slice(common::Span<int32_t const> /*ridxs*/) override {
     LOG(FATAL) << "Slicing DMatrix is not supported for Proxy DMatrix.";
     return nullptr;
   }
-  BatchSet<SparsePage> GetRowBatches() override {
-    LOG(FATAL) << "Not implemented.";
-    return BatchSet<SparsePage>(BatchIterator<SparsePage>(nullptr));
+  DMatrix* SliceCol(int, int) override {
+    LOG(FATAL) << "Slicing DMatrix columns is not supported for Proxy DMatrix.";
+    return nullptr;
   }
-  BatchSet<CSCPage> GetColumnBatches() override {
-    LOG(FATAL) << "Not implemented.";
-    return BatchSet<CSCPage>(BatchIterator<CSCPage>(nullptr));
+  BatchSet<SparsePage> GetRowBatches() override { return NoBatch<SparsePage>(); }
+  BatchSet<CSCPage> GetColumnBatches(Context const*) override { return NoBatch<CSCPage>(); }
+  BatchSet<SortedCSCPage> GetSortedColumnBatches(Context const*) override {
+    return NoBatch<SortedCSCPage>();
   }
-  BatchSet<SortedCSCPage> GetSortedColumnBatches() override {
-    LOG(FATAL) << "Not implemented.";
-    return BatchSet<SortedCSCPage>(BatchIterator<SortedCSCPage>(nullptr));
+  BatchSet<EllpackPage> GetEllpackBatches(Context const*, BatchParam const&) override {
+    return NoBatch<EllpackPage>();
   }
-  BatchSet<EllpackPage> GetEllpackBatches(const BatchParam& param) override {
-    LOG(FATAL) << "Not implemented.";
-    return BatchSet<EllpackPage>(BatchIterator<EllpackPage>(nullptr));
+  BatchSet<GHistIndexMatrix> GetGradientIndex(Context const*, BatchParam const&) override {
+    return NoBatch<GHistIndexMatrix>();
   }
-  BatchSet<GHistIndexMatrix> GetGradientIndex(const BatchParam&) override {
-    LOG(FATAL) << "Not implemented.";
-    return BatchSet<GHistIndexMatrix>(BatchIterator<GHistIndexMatrix>(nullptr));
+  BatchSet<ExtSparsePage> GetExtBatches(Context const*, BatchParam const&) override {
+    return NoBatch<ExtSparsePage>();
   }
-
-  dmlc::any Adapter() const {
-    return batch_;
-  }
+  std::any Adapter() const { return batch_; }
 };
 
-inline DMatrixProxy *MakeProxy(DMatrixHandle proxy) {
-  auto proxy_handle = static_cast<std::shared_ptr<DMatrix> *>(proxy);
+inline DMatrixProxy* MakeProxy(DMatrixHandle proxy) {
+  auto proxy_handle = static_cast<std::shared_ptr<DMatrix>*>(proxy);
   CHECK(proxy_handle) << "Invalid proxy handle.";
-  DMatrixProxy *typed = static_cast<DMatrixProxy *>(proxy_handle->get());
+  DMatrixProxy* typed = static_cast<DMatrixProxy*>(proxy_handle->get());
+  CHECK(typed) << "Invalid proxy handle.";
   return typed;
 }
 
-template <typename Fn>
+/**
+ * @brief Dispatch function call based on input type.
+ *
+ * @tparam get_value Whether the funciton Fn accept an adapter batch or the adapter itself.
+ * @tparam Fn        The type of the function to be dispatched.
+ *
+ * @param proxy The proxy object holding the reference to the input.
+ * @param fn    The function to be dispatched.
+ * @param type_error[out] Set to ture if it's not null and the input data is not recognized by
+ *                        the host.
+ *
+ * @return The return value of the function being dispatched.
+ */
+template <bool get_value = true, typename Fn>
 decltype(auto) HostAdapterDispatch(DMatrixProxy const* proxy, Fn fn, bool* type_error = nullptr) {
   if (proxy->Adapter().type() == typeid(std::shared_ptr<CSRArrayAdapter>)) {
-    auto value =
-        dmlc::get<std::shared_ptr<CSRArrayAdapter>>(proxy->Adapter())->Value();
+    if constexpr (get_value) {
+      auto value = std::any_cast<std::shared_ptr<CSRArrayAdapter>>(proxy->Adapter())->Value();
+      return fn(value);
+    } else {
+      auto value = std::any_cast<std::shared_ptr<CSRArrayAdapter>>(proxy->Adapter());
+      return fn(value);
+    }
     if (type_error) {
       *type_error = false;
     }
-    return fn(value);
   } else if (proxy->Adapter().type() == typeid(std::shared_ptr<ArrayAdapter>)) {
-    auto value = dmlc::get<std::shared_ptr<ArrayAdapter>>(
-        proxy->Adapter())->Value();
+    if constexpr (get_value) {
+      auto value = std::any_cast<std::shared_ptr<ArrayAdapter>>(proxy->Adapter())->Value();
+      return fn(value);
+    } else {
+      auto value = std::any_cast<std::shared_ptr<ArrayAdapter>>(proxy->Adapter());
+      return fn(value);
+    }
     if (type_error) {
       *type_error = false;
     }
-    return fn(value);
+  } else if (proxy->Adapter().type() == typeid(std::shared_ptr<ColumnarAdapter>)) {
+    if constexpr (get_value) {
+      auto value = std::any_cast<std::shared_ptr<ColumnarAdapter>>(proxy->Adapter())->Value();
+      return fn(value);
+    } else {
+      auto value = std::any_cast<std::shared_ptr<ColumnarAdapter>>(proxy->Adapter());
+      return fn(value);
+    }
+    if (type_error) {
+      *type_error = false;
+    }
   } else {
     if (type_error) {
       *type_error = true;
     } else {
       LOG(FATAL) << "Unknown type: " << proxy->Adapter().type().name();
     }
-    return std::result_of_t<Fn(
-        decltype(std::declval<std::shared_ptr<ArrayAdapter>>()->Value()))>();
+  }
+
+  if constexpr (get_value) {
+    return std::invoke_result_t<Fn,
+                                decltype(std::declval<std::shared_ptr<ArrayAdapter>>()->Value())>();
+  } else {
+    return std::invoke_result_t<Fn, decltype(std::declval<std::shared_ptr<ArrayAdapter>>())>();
   }
 }
-}  // namespace data
-}  // namespace xgboost
+
+/**
+ * @brief Create a `SimpleDMatrix` instance from a `DMatrixProxy`.
+ */
+std::shared_ptr<DMatrix> CreateDMatrixFromProxy(Context const* ctx,
+                                                std::shared_ptr<DMatrixProxy> proxy, float missing);
+}  // namespace xgboost::data
 #endif  // XGBOOST_DATA_PROXY_DMATRIX_H_

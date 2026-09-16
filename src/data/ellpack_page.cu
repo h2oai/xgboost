@@ -1,21 +1,29 @@
-/*!
- * Copyright 2019-2020 XGBoost contributors
+/**
+ * Copyright 2019-2024, XGBoost contributors
  */
-#include <xgboost/data.h>
 #include <thrust/iterator/discard_iterator.h>
 #include <thrust/iterator/transform_output_iterator.h>
+
+#include <algorithm>  // for copy
+#include <utility>    // for move
+#include <vector>     // for vector
+
 #include "../common/categorical.h"
+#include "../common/cuda_context.cuh"
 #include "../common/hist_util.cuh"
-#include "../common/random.h"
+#include "../common/transform_iterator.h"  // MakeIndexTransformIter
 #include "./ellpack_page.cuh"
-#include "device_adapter.cuh"
+#include "device_adapter.cuh"  // for NoInfInData
+#include "ellpack_page.h"
+#include "gradient_index.h"
+#include "xgboost/data.h"
 
 namespace xgboost {
 
 EllpackPage::EllpackPage() : impl_{new EllpackPageImpl()} {}
 
-EllpackPage::EllpackPage(DMatrix* dmat, const BatchParam& param)
-    : impl_{new EllpackPageImpl(dmat, param)} {}
+EllpackPage::EllpackPage(Context const* ctx, DMatrix* dmat, const BatchParam& param)
+    : impl_{new EllpackPageImpl{ctx, dmat, param}} {}
 
 EllpackPage::~EllpackPage() = default;
 
@@ -23,7 +31,17 @@ EllpackPage::EllpackPage(EllpackPage&& that) { std::swap(impl_, that.impl_); }
 
 size_t EllpackPage::Size() const { return impl_->Size(); }
 
-void EllpackPage::SetBaseRowId(size_t row_id) { impl_->SetBaseRowId(row_id); }
+void EllpackPage::SetBaseRowId(std::size_t row_id) { impl_->SetBaseRowId(row_id); }
+
+[[nodiscard]] common::HistogramCuts& EllpackPage::Cuts() {
+  CHECK(impl_);
+  return impl_->Cuts();
+}
+
+[[nodiscard]] common::HistogramCuts const& EllpackPage::Cuts() const {
+  CHECK(impl_);
+  return impl_->Cuts();
+}
 
 // Bin each input data entry, store the bin indices in compressed form.
 __global__ void CompressBinEllpackKernel(
@@ -32,7 +50,7 @@ __global__ void CompressBinEllpackKernel(
     const size_t* __restrict__ row_ptrs,           // row offset of input data
     const Entry* __restrict__ entries,      // One batch of input data
     const float* __restrict__ cuts,         // HistogramCuts::cut_values_
-    const uint32_t* __restrict__ cut_rows,  // HistogramCuts::cut_ptrs_
+    const uint32_t* __restrict__ cut_ptrs,  // HistogramCuts::cut_ptrs_
     common::Span<FeatureType const> feature_types,
     size_t base_row,                        // batch_row_begin
     size_t n_rows,
@@ -50,9 +68,9 @@ __global__ void CompressBinEllpackKernel(
     int feature = entry.index;
     float fvalue = entry.fvalue;
     // {feature_cuts, ncuts} forms the array of cuts of `feature'.
-    const float* feature_cuts = &cuts[cut_rows[feature]];
-    int ncuts = cut_rows[feature + 1] - cut_rows[feature];
-    bool is_cat = common::IsCat(feature_types, ifeature);
+    const float* feature_cuts = &cuts[cut_ptrs[feature]];
+    int ncuts = cut_ptrs[feature + 1] - cut_ptrs[feature];
+    bool is_cat = common::IsCat(feature_types, feature);
     // Assigning the bin in current entry.
     // S.t.: fvalue < feature_cuts[bin]
     if (is_cat) {
@@ -69,29 +87,25 @@ __global__ void CompressBinEllpackKernel(
       bin = ncuts - 1;
     }
     // Add the number of bins in previous features.
-    bin += cut_rows[feature];
+    bin += cut_ptrs[feature];
   }
   // Write to gidx buffer.
   wr.AtomicWriteSymbol(buffer, bin, (irow + base_row) * row_stride + ifeature);
 }
 
 // Construct an ELLPACK matrix with the given number of empty rows.
-EllpackPageImpl::EllpackPageImpl(int device, common::HistogramCuts cuts,
-                                 bool is_dense, size_t row_stride,
-                                 size_t n_rows)
-    : is_dense(is_dense),
-      cuts_(std::move(cuts)),
-      row_stride(row_stride),
-      n_rows(n_rows) {
+EllpackPageImpl::EllpackPageImpl(DeviceOrd device, common::HistogramCuts cuts, bool is_dense,
+                                 size_t row_stride, size_t n_rows)
+    : is_dense(is_dense), cuts_(std::move(cuts)), row_stride(row_stride), n_rows(n_rows) {
   monitor_.Init("ellpack_page");
-  dh::safe_cuda(cudaSetDevice(device));
+  dh::safe_cuda(cudaSetDevice(device.ordinal));
 
   monitor_.Start("InitCompressedData");
   InitCompressedData(device);
   monitor_.Stop("InitCompressedData");
 }
 
-EllpackPageImpl::EllpackPageImpl(int device, common::HistogramCuts cuts,
+EllpackPageImpl::EllpackPageImpl(DeviceOrd device, common::HistogramCuts cuts,
                                  const SparsePage &page, bool is_dense,
                                  size_t row_stride,
                                  common::Span<FeatureType const> feature_types)
@@ -102,29 +116,33 @@ EllpackPageImpl::EllpackPageImpl(int device, common::HistogramCuts cuts,
 }
 
 // Construct an ELLPACK matrix in memory.
-EllpackPageImpl::EllpackPageImpl(DMatrix* dmat, const BatchParam& param)
+EllpackPageImpl::EllpackPageImpl(Context const* ctx, DMatrix* dmat, const BatchParam& param)
     : is_dense(dmat->IsDense()) {
   monitor_.Init("ellpack_page");
-  dh::safe_cuda(cudaSetDevice(param.gpu_id));
+  dh::safe_cuda(cudaSetDevice(ctx->Ordinal()));
 
   n_rows = dmat->Info().num_row_;
 
   monitor_.Start("Quantiles");
   // Create the quantile sketches for the dmatrix and initialize HistogramCuts.
   row_stride = GetRowStride(dmat);
-  cuts_ = common::DeviceSketch(param.gpu_id, dmat, param.max_bin);
+  if (!param.hess.empty()) {
+    cuts_ = common::DeviceSketchWithHessian(ctx, dmat, param.max_bin, param.hess);
+  } else {
+    cuts_ = common::DeviceSketch(ctx, dmat, param.max_bin);
+  }
   monitor_.Stop("Quantiles");
 
   monitor_.Start("InitCompressedData");
-  this->InitCompressedData(param.gpu_id);
+  this->InitCompressedData(ctx->Device());
   monitor_.Stop("InitCompressedData");
 
-  dmat->Info().feature_types.SetDevice(param.gpu_id);
+  dmat->Info().feature_types.SetDevice(ctx->Device());
   auto ft = dmat->Info().feature_types.ConstDeviceSpan();
   monitor_.Start("BinningCompression");
   CHECK(dmat->SingleColBlock());
   for (const auto& batch : dmat->GetBatches<SparsePage>()) {
-    CreateHistIndices(param.gpu_id, batch, ft);
+    CreateHistIndices(ctx->Device(), batch, ft);
   }
   monitor_.Stop("BinningCompression");
 }
@@ -153,11 +171,10 @@ struct WriteCompressedEllpackFunctor {
 
   using Tuple = thrust::tuple<size_t, size_t, size_t>;
   __device__ size_t operator()(Tuple out) {
-    auto e = batch.GetElement(out.get<2>());
+    auto e = batch.GetElement(thrust::get<2>(out));
     if (is_valid(e)) {
       // -1 because the scan is inclusive
-      size_t output_position =
-          accessor.row_stride * e.row_idx + out.get<1>() - 1;
+      size_t output_position = accessor.row_stride * e.row_idx + thrust::get<1>(out) - 1;
       uint32_t bin_idx = 0;
       if (common::IsCat(feature_types, e.column_idx)) {
         bin_idx = accessor.SearchBin<true>(e.value, e.column_idx);
@@ -174,8 +191,8 @@ template <typename Tuple>
 struct TupleScanOp {
   __device__ Tuple operator()(Tuple a, Tuple b) {
     // Key equal
-    if (a.template get<0>() == b.template get<0>()) {
-      b.template get<1>() += a.template get<1>();
+    if (thrust::get<0>(a) == thrust::get<0>(b)) {
+      thrust::get<1>(b) += thrust::get<1>(a);
       return b;
     }
     // Not equal
@@ -183,16 +200,11 @@ struct TupleScanOp {
   }
 };
 
-// Change the value type of thrust discard iterator so we can use it with cub
-template <typename T>
-using TypedDiscard = thrust::discard_iterator<T>;
-
 // Here the data is already correctly ordered and simply needs to be compacted
 // to remove missing data
 template <typename AdapterBatchT>
-void CopyDataToEllpack(const AdapterBatchT &batch,
-                       common::Span<FeatureType const> feature_types,
-                       EllpackPageImpl *dst, int device_idx, float missing) {
+void CopyDataToEllpack(const AdapterBatchT& batch, common::Span<FeatureType const> feature_types,
+                       EllpackPageImpl* dst, DeviceOrd device, float missing) {
   // Some witchcraft happens here
   // The goal is to copy valid elements out of the input to an ELLPACK matrix
   // with a given row stride, using no extra working memory Standard stream
@@ -202,6 +214,9 @@ void CopyDataToEllpack(const AdapterBatchT &batch,
   // correct output position
   auto counting = thrust::make_counting_iterator(0llu);
   data::IsValidFunctor is_valid(missing);
+  bool valid = data::NoInfInData(batch, is_valid);
+  CHECK(valid) << error::InfInData();
+
   auto key_iter = dh::MakeTransformIterator<size_t>(
       counting,
       [=] __device__(size_t idx) {
@@ -221,7 +236,7 @@ void CopyDataToEllpack(const AdapterBatchT &batch,
   // Tuple[2] = The index in the input data
   using Tuple = thrust::tuple<size_t, size_t, size_t>;
 
-  auto device_accessor = dst->GetDeviceAccessor(device_idx);
+  auto device_accessor = dst->GetDeviceAccessor(device);
   common::CompressedBufferWriter writer(device_accessor.NumSymbols());
   auto d_compressed_buffer = dst->gidx_buffer.DevicePointer();
 
@@ -229,7 +244,7 @@ void CopyDataToEllpack(const AdapterBatchT &batch,
   WriteCompressedEllpackFunctor<AdapterBatchT> functor(
       d_compressed_buffer, writer, batch, device_accessor, feature_types,
       is_valid);
-  TypedDiscard<Tuple> discard;
+  dh::TypedDiscard<Tuple> discard;
   thrust::transform_output_iterator<
     WriteCompressedEllpackFunctor<AdapterBatchT>, decltype(discard)>
       out(discard, functor);
@@ -239,19 +254,30 @@ void CopyDataToEllpack(const AdapterBatchT &batch,
   using DispatchScan =
       cub::DispatchScan<decltype(key_value_index_iter), decltype(out),
                         TupleScanOp<Tuple>, cub::NullType, int64_t>;
+#if THRUST_MAJOR_VERSION >= 2
+  dh::safe_cuda(DispatchScan::Dispatch(nullptr, temp_storage_bytes, key_value_index_iter, out,
+                                       TupleScanOp<Tuple>(), cub::NullType(), batch.Size(),
+                                       nullptr));
+#else
   DispatchScan::Dispatch(nullptr, temp_storage_bytes, key_value_index_iter, out,
                          TupleScanOp<Tuple>(), cub::NullType(), batch.Size(),
                          nullptr, false);
+#endif
   dh::TemporaryArray<char> temp_storage(temp_storage_bytes);
+#if THRUST_MAJOR_VERSION >= 2
+  dh::safe_cuda(DispatchScan::Dispatch(temp_storage.data().get(), temp_storage_bytes,
+                                       key_value_index_iter, out, TupleScanOp<Tuple>(),
+                                       cub::NullType(), batch.Size(), nullptr));
+#else
   DispatchScan::Dispatch(temp_storage.data().get(), temp_storage_bytes,
                          key_value_index_iter, out, TupleScanOp<Tuple>(),
                          cub::NullType(), batch.Size(), nullptr, false);
+#endif
 }
 
-void WriteNullValues(EllpackPageImpl* dst, int device_idx,
-                     common::Span<size_t> row_counts) {
+void WriteNullValues(EllpackPageImpl* dst, DeviceOrd device, common::Span<size_t> row_counts) {
   // Write the null values
-  auto device_accessor = dst->GetDeviceAccessor(device_idx);
+  auto device_accessor = dst->GetDeviceAccessor(device);
   common::CompressedBufferWriter writer(device_accessor.NumSymbols());
   auto d_compressed_buffer = dst->gidx_buffer.DevicePointer();
   auto row_stride = dst->row_stride;
@@ -268,28 +294,92 @@ void WriteNullValues(EllpackPageImpl* dst, int device_idx,
 }
 
 template <typename AdapterBatch>
-EllpackPageImpl::EllpackPageImpl(AdapterBatch batch, float missing, int device,
-                                 bool is_dense, int nthread,
+EllpackPageImpl::EllpackPageImpl(AdapterBatch batch, float missing, DeviceOrd device, bool is_dense,
                                  common::Span<size_t> row_counts_span,
-                                 common::Span<FeatureType const> feature_types,
-                                 size_t row_stride, size_t n_rows, size_t n_cols,
-                                 common::HistogramCuts const& cuts) {
-  dh::safe_cuda(cudaSetDevice(device));
+                                 common::Span<FeatureType const> feature_types, size_t row_stride,
+                                 size_t n_rows, common::HistogramCuts const& cuts) {
+  dh::safe_cuda(cudaSetDevice(device.ordinal));
 
   *this = EllpackPageImpl(device, cuts, is_dense, row_stride, n_rows);
   CopyDataToEllpack(batch, feature_types, this, device, missing);
   WriteNullValues(this, device, row_counts_span);
 }
 
-#define ELLPACK_BATCH_SPECIALIZE(__BATCH_T)                                    \
-  template EllpackPageImpl::EllpackPageImpl(                                   \
-      __BATCH_T batch, float missing, int device, bool is_dense, int nthread,  \
-      common::Span<size_t> row_counts_span,                                    \
-      common::Span<FeatureType const> feature_types, size_t row_stride,        \
-      size_t n_rows, size_t n_cols, common::HistogramCuts const &cuts);
+#define ELLPACK_BATCH_SPECIALIZE(__BATCH_T)                                                \
+  template EllpackPageImpl::EllpackPageImpl(                                               \
+      __BATCH_T batch, float missing, DeviceOrd device, bool is_dense,                     \
+      common::Span<size_t> row_counts_span, common::Span<FeatureType const> feature_types, \
+      size_t row_stride, size_t n_rows, common::HistogramCuts const& cuts);
 
 ELLPACK_BATCH_SPECIALIZE(data::CudfAdapterBatch)
 ELLPACK_BATCH_SPECIALIZE(data::CupyAdapterBatch)
+
+namespace {
+void CopyGHistToEllpack(GHistIndexMatrix const& page, common::Span<size_t const> d_row_ptr,
+                        size_t row_stride, common::CompressedByteT* d_compressed_buffer,
+                        size_t null) {
+  dh::device_vector<uint8_t> data(page.index.begin(), page.index.end());
+  auto d_data = dh::ToSpan(data);
+
+  dh::device_vector<size_t> csc_indptr(page.index.Offset(),
+                                       page.index.Offset() + page.index.OffsetSize());
+  auto d_csc_indptr = dh::ToSpan(csc_indptr);
+
+  auto bin_type = page.index.GetBinTypeSize();
+  common::CompressedBufferWriter writer{page.cut.TotalBins() +
+                                        static_cast<std::size_t>(1)};  // +1 for null value
+
+  dh::LaunchN(row_stride * page.Size(), [=] __device__(size_t idx) mutable {
+    auto ridx = idx / row_stride;
+    auto ifeature = idx % row_stride;
+
+    auto r_begin = d_row_ptr[ridx];
+    auto r_end = d_row_ptr[ridx + 1];
+    size_t r_size = r_end - r_begin;
+
+    if (ifeature >= r_size) {
+      writer.AtomicWriteSymbol(d_compressed_buffer, null, idx);
+      return;
+    }
+
+    size_t offset = 0;
+    if (!d_csc_indptr.empty()) {
+      // is dense, ifeature is the actual feature index.
+      offset = d_csc_indptr[ifeature];
+    }
+    common::cuda::DispatchBinType(bin_type, [&](auto t) {
+      using T = decltype(t);
+      auto ptr = reinterpret_cast<T const*>(d_data.data());
+      auto bin_idx = ptr[r_begin + ifeature] + offset;
+      writer.AtomicWriteSymbol(d_compressed_buffer, bin_idx, idx);
+    });
+  });
+}
+}  // anonymous namespace
+
+EllpackPageImpl::EllpackPageImpl(Context const* ctx, GHistIndexMatrix const& page,
+                                 common::Span<FeatureType const> ft)
+    : is_dense{page.IsDense()}, base_rowid{page.base_rowid}, n_rows{page.Size()}, cuts_{page.cut} {
+  auto it = common::MakeIndexTransformIter(
+      [&](size_t i) { return page.row_ptr[i + 1] - page.row_ptr[i]; });
+  row_stride = *std::max_element(it, it + page.Size());
+
+  CHECK(ctx->IsCUDA());
+  monitor_.Start("InitCompressedData");
+  InitCompressedData(ctx->Device());
+  monitor_.Stop("InitCompressedData");
+
+  // copy gidx
+  common::CompressedByteT* d_compressed_buffer = gidx_buffer.DevicePointer();
+  dh::device_vector<size_t> row_ptr(page.row_ptr.size());
+  auto d_row_ptr = dh::ToSpan(row_ptr);
+  dh::safe_cuda(cudaMemcpyAsync(d_row_ptr.data(), page.row_ptr.data(), d_row_ptr.size_bytes(),
+                                cudaMemcpyHostToDevice, ctx->CUDACtx()->Stream()));
+
+  auto accessor = this->GetDeviceAccessor(ctx->Device(), ft);
+  auto null = accessor.NullValue();
+  CopyGHistToEllpack(page, d_row_ptr, row_stride, d_compressed_buffer, null);
+}
 
 // A functor that copies the data from one EllpackPage to another.
 struct CopyPage {
@@ -311,8 +401,7 @@ struct CopyPage {
 };
 
 // Copy the data from the given EllpackPage to the current page.
-size_t EllpackPageImpl::Copy(int device, EllpackPageImpl const *page,
-                             size_t offset) {
+size_t EllpackPageImpl::Copy(DeviceOrd device, EllpackPageImpl const* page, size_t offset) {
   monitor_.Start("Copy");
   size_t num_elements = page->n_rows * page->row_stride;
   CHECK_EQ(row_stride, page->row_stride);
@@ -372,7 +461,7 @@ struct CompactPage {
 };
 
 // Compacts the data from the given EllpackPage into the current page.
-void EllpackPageImpl::Compact(int device, EllpackPageImpl const* page,
+void EllpackPageImpl::Compact(DeviceOrd device, EllpackPageImpl const* page,
                               common::Span<size_t> row_indexes) {
   monitor_.Start("Compact");
   CHECK_EQ(row_stride, page->row_stride);
@@ -385,13 +474,12 @@ void EllpackPageImpl::Compact(int device, EllpackPageImpl const* page,
 }
 
 // Initialize the buffer to stored compressed features.
-void EllpackPageImpl::InitCompressedData(int device) {
+void EllpackPageImpl::InitCompressedData(DeviceOrd device) {
   size_t num_symbols = NumSymbols();
 
   // Required buffer size for storing data matrix in ELLPack format.
   size_t compressed_size_bytes =
-    common::CompressedBufferWriter::CalculateBufferSize(row_stride * n_rows,
-      num_symbols);
+      common::CompressedBufferWriter::CalculateBufferSize(row_stride * n_rows, num_symbols);
   gidx_buffer.SetDevice(device);
   // Don't call fill unnecessarily
   if (gidx_buffer.Size() == 0) {
@@ -403,7 +491,7 @@ void EllpackPageImpl::InitCompressedData(int device) {
 }
 
 // Compress a CSR page into ELLPACK.
-void EllpackPageImpl::CreateHistIndices(int device,
+void EllpackPageImpl::CreateHistIndices(DeviceOrd device,
                                         const SparsePage& row_batch,
                                         common::Span<FeatureType const> feature_types) {
   if (row_batch.Size() == 0) return;
@@ -413,7 +501,7 @@ void EllpackPageImpl::CreateHistIndices(int device,
 
   // bin and compress entries in batches of rows
   size_t gpu_batch_nrows =
-      std::min(dh::TotalMemory(device) / (16 * row_stride * sizeof(Entry)),
+      std::min(dh::TotalMemory(device.ordinal) / (16 * row_stride * sizeof(Entry)),
                static_cast<size_t>(row_batch.Size()));
 
   size_t gpu_nbatches = common::DivRoundUp(row_batch.Size(), gpu_batch_nrows);
@@ -476,7 +564,7 @@ size_t EllpackPageImpl::MemCostBytes(size_t num_rows, size_t row_stride,
 }
 
 EllpackDeviceAccessor EllpackPageImpl::GetDeviceAccessor(
-    int device, common::Span<FeatureType const> feature_types) const {
+    DeviceOrd device, common::Span<FeatureType const> feature_types) const {
   gidx_buffer.SetDevice(device);
   return {device,
           cuts_,
@@ -486,6 +574,17 @@ EllpackDeviceAccessor EllpackPageImpl::GetDeviceAccessor(
           n_rows,
           common::CompressedIterator<uint32_t>(gidx_buffer.ConstDevicePointer(),
                                                NumSymbols()),
+          feature_types};
+}
+EllpackDeviceAccessor EllpackPageImpl::GetHostAccessor(
+    common::Span<FeatureType const> feature_types) const {
+  return {DeviceOrd::CPU(),
+          cuts_,
+          is_dense,
+          row_stride,
+          base_rowid,
+          n_rows,
+          common::CompressedIterator<uint32_t>(gidx_buffer.ConstHostPointer(), NumSymbols()),
           feature_types};
 }
 }  // namespace xgboost

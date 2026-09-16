@@ -1,5 +1,5 @@
 /*
- Copyright (c) 2014 by Contributors
+ Copyright (c) 2014-2022 by Contributors
 
  Licensed under the Apache License, Version 2.0 (the "License");
  you may not use this file except in compliance with the License.
@@ -16,16 +16,14 @@
 
 package ml.dmlc.xgboost4j.scala.spark
 
-import ml.dmlc.xgboost4j.java.XGBoostError
 import org.apache.spark.Partitioner
 import org.apache.spark.ml.feature.VectorAssembler
-import org.apache.spark.sql.SparkSession
-import org.scalatest.FunSuite
+import org.scalatest.funsuite.AnyFunSuite
 import org.apache.spark.sql.functions._
 
 import scala.util.Random
 
-class FeatureSizeValidatingSuite extends FunSuite with PerTest {
+class FeatureSizeValidatingSuite extends AnyFunSuite with PerTest {
 
   test("transform throwing exception if feature size of dataset is greater than model's") {
     val modelPath = getClass.getResource("/model/0.82/model").getPath
@@ -52,8 +50,8 @@ class FeatureSizeValidatingSuite extends FunSuite with PerTest {
     val paramMap = Map("eta" -> "1", "max_depth" -> "6", "silent" -> "1",
       "objective" -> "binary:logistic",
       "num_round" -> 5, "num_workers" -> 2, "use_external_memory" -> true, "missing" -> 0)
-    import DataUtils._
-    val sparkSession = SparkSession.builder().getOrCreate()
+    import ml.dmlc.xgboost4j.scala.spark.util.DataUtils._
+    val sparkSession = ss
     import sparkSession.implicits._
     val repartitioned = sc.parallelize(Synthetic.trainWithDiffFeatureSize, 2)
       .map(lp => (lp.label, lp)).partitionBy(
@@ -67,8 +65,6 @@ class FeatureSizeValidatingSuite extends FunSuite with PerTest {
         (id, lp.label, lp.features)
     }.toDF("id", "label", "features")
     val xgb = new XGBoostClassifier(paramMap)
-    intercept[Exception] {
-      xgb.fit(repartitioned)
-    }
+    xgb.fit(repartitioned)
   }
 }

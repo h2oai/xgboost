@@ -12,6 +12,9 @@ systems.  If the instructions do not work for you, please feel free to ask quest
   Consider installing XGBoost from a pre-built binary, to avoid the trouble of building XGBoost from the source.  Checkout :doc:`Installation Guide </install>`.
 
 .. contents:: Contents
+  :local:
+
+.. _get_source:
 
 *************************
 Obtaining the Source Code
@@ -52,7 +55,7 @@ This shared library is used by different language bindings (with some additions 
 on the binding you choose).  The minimal building requirement is
 
 - A recent C++ compiler supporting C++11 (g++-5.0 or higher)
-- CMake 3.13 or higher.
+- CMake 3.14 or higher.
 
 For a list of CMake options like GPU support, see ``#-- Options`` in CMakeLists.txt on top
 level of source tree.
@@ -79,33 +82,11 @@ Obtain ``libomp`` from `Homebrew <https://brew.sh/>`_:
 
   brew install libomp
 
+Rest is the same as building on Linux.
 
-Now clone the repository:
-
-.. code-block:: bash
-
-  git clone --recursive https://github.com/dmlc/xgboost
-
-Create the ``build/`` directory and invoke CMake. After invoking CMake, you can build XGBoost with ``make``:
-
-.. code-block:: bash
-
-  mkdir build
-  cd build
-  cmake ..
-  make -j4
-
-You may now continue to :ref:`build_python`.
 
 Building on Windows
 ===================
-You need to first clone the XGBoost repo with ``--recursive`` option, to clone the submodules.
-We recommend you use `Git for Windows <https://git-for-windows.github.io/>`_, as it comes with a standard Bash shell. This will highly ease the installation process.
-
-.. code-block:: bash
-
-  git submodule init
-  git submodule update
 
 XGBoost support compilation with Microsoft Visual Studio and MinGW.  To build with Visual
 Studio, we will need CMake. Make sure to install a recent version of CMake. Then run the
@@ -138,7 +119,7 @@ An up-to-date version of the CUDA toolkit is required.
 
 .. note:: Checking your compiler version
 
-  CUDA is really picky about supported compilers, a table for the compatible compilers for the latests CUDA version on Linux can be seen `here <https://docs.nvidia.com/cuda/cuda-installation-guide-linux/index.html>`_.
+  CUDA is really picky about supported compilers, a table for the compatible compilers for the latest CUDA version on Linux can be seen `here <https://docs.nvidia.com/cuda/cuda-installation-guide-linux/index.html>`_.
 
   Some distros package a compatible ``gcc`` version with CUDA. If you run into compiler errors with ``nvcc``, try specifying the correct compiler with ``-DCMAKE_CXX_COMPILER=/path/to/correct/g++ -DCMAKE_C_COMPILER=/path/to/correct/gcc``. On Arch Linux, for example, both binaries can be found under ``/opt/cuda/bin/``.
 
@@ -153,11 +134,11 @@ From the command line on Linux starting from the XGBoost directory:
 
 .. note:: Specifying compute capability
 
-  To speed up compilation, the compute version specific to your GPU could be passed to cmake as, e.g., ``-DGPU_COMPUTE_VER=50``. A quick explanation and numbers for some architectures can be found `in this page <https://arnon.dk/matching-sm-architectures-arch-and-gencode-for-various-nvidia-cards/>`_.
+  To speed up compilation, the compute version specific to your GPU could be passed to cmake as, e.g., ``-DCMAKE_CUDA_ARCHITECTURES=75``. A quick explanation and numbers for some architectures can be found `in this page <https://arnon.dk/matching-sm-architectures-arch-and-gencode-for-various-nvidia-cards/>`_.
 
-.. note:: Enabling distributed GPU training
+.. note:: Faster distributed GPU training with NCCL
 
-  By default, distributed GPU training is disabled and only a single GPU will be used. To enable distributed GPU training, set the option ``USE_NCCL=ON``. Distributed GPU training depends on NCCL2, available at `this link <https://developer.nvidia.com/nccl>`_. Since NCCL2 is only available for Linux machines, **distributed GPU training is available only for Linux**.
+  By default, distributed GPU training is enabled and uses Rabit for communication. For faster training, set the option ``USE_NCCL=ON``. Faster distributed GPU training depends on NCCL2, available at `this link <https://developer.nvidia.com/nccl>`_. Since NCCL2 is only available for Linux machines, **faster distributed GPU training is available only for Linux**.
 
   .. code-block:: bash
 
@@ -166,31 +147,36 @@ From the command line on Linux starting from the XGBoost directory:
     cmake .. -DUSE_CUDA=ON -DUSE_NCCL=ON -DNCCL_ROOT=/path/to/nccl2
     make -j4
 
+Some additional flags are available for NCCL, ``BUILD_WITH_SHARED_NCCL`` enables building XGBoost with NCCL as a shared library, while ``USE_DLOPEN_NCCL`` enables XGBoost  to load NCCL at runtime using ``dlopen``.
+
 On Windows, run CMake as follows:
 
 .. code-block:: bash
 
   mkdir build
   cd build
-  cmake .. -G"Visual Studio 14 2015 Win64" -DUSE_CUDA=ON
+  cmake .. -G"Visual Studio 17 2022" -A x64 -DUSE_CUDA=ON
 
 (Change the ``-G`` option appropriately if you have a different version of Visual Studio installed.)
 
-.. note:: Visual Studio 2017 Win64 Generator may not work
-
-  Choosing the Visual Studio 2017 generator may cause compilation failure. When it happens, specify the 2015 compiler by adding the ``-T`` option:
-
-  .. code-block:: bash
-
-    cmake .. -G"Visual Studio 15 2017 Win64" -T v140,cuda=8.0 -DUSE_CUDA=ON
-
-The above cmake configuration run will create an ``xgboost.sln`` solution file in the build directory. Build this solution in release mode as a x64 build, either from Visual studio or from command line:
+The above cmake configuration run will create an ``xgboost.sln`` solution file in the build directory. Build this solution in Release mode, either from Visual studio or from command line:
 
 .. code-block:: bash
 
   cmake --build . --target xgboost --config Release
 
 To speed up compilation, run multiple jobs in parallel by appending option ``-- /MP``.
+
+Federated Learning
+==================
+
+The federated learning plugin requires ``grpc`` and ``protobuf``. To install grpc, refer
+to the `installation guide from the gRPC website
+<https://grpc.io/docs/languages/cpp/quickstart/>`_. Alternatively, one can use the
+``libgrpc`` and the ``protobuf`` package from conda forge if conda is available. After
+obtaining the required dependencies, enable the flag: `-DPLUGIN_FEDERATED=ON` when running
+CMake. Please note that only Linux is supported for the federated plugin.
+
 
 .. _build_python:
 
@@ -204,110 +190,104 @@ Building Python Package with Default Toolchains
 ===============================================
 There are several ways to build and install the package from source:
 
-1. Use Python setuptools directly
+1. Build C++ core with CMake first
 
-  The XGBoost Python package supports most of the setuptools commands, here is a list of tested commands:
+  You can first build C++ library using CMake as described in :ref:`build_shared_lib`.
+  After compilation, a shared library will appear in ``lib/`` directory.
+  On Linux distributions, the shared library is ``lib/libxgboost.so``.
+  The install script ``pip install .`` will reuse the shared library instead of compiling
+  it from scratch, making it quite fast to run.
 
-  .. code-block:: bash
+  .. code-block:: console
 
-    python setup.py install  # Install the XGBoost to your current Python environment.
-    python setup.py build    # Build the Python package.
-    python setup.py build_ext # Build only the C++ core.
-    python setup.py sdist     # Create a source distribution
-    python setup.py bdist     # Create a binary distribution
-    python setup.py bdist_wheel # Create a binary distribution with wheel format
+    $ cd python-package/
+    $ pip install .  # Will re-use lib/libxgboost.so
 
-  Running ``python setup.py install`` will compile XGBoost using default CMake flags.  For
-  passing additional compilation options, append the flags to the command.  For example,
-  to enable CUDA acceleration and NCCL (distributed GPU) support:
+2. Install the Python package directly
 
-  .. code-block:: bash
+  You can navigate to ``python-package/`` directory and install the Python package directly
+  by running
 
-    python setup.py install --use-cuda --use-nccl
+  .. code-block:: console
 
-  Please refer to ``setup.py`` for a complete list of avaiable options.  Some other
-  options used for development are only available for using CMake directly.  See next
-  section on how to use CMake with setuptools manually.
+    $ cd python-package/
+    $ pip install -v .
 
-  You can install the created distribution packages using pip. For example, after running
-  ``sdist`` setuptools command, a tar ball similar to ``xgboost-1.0.0.tar.gz`` will be
-  created under the ``dist`` directory.  Then you can install it by invoking the following
-  command under ``dist`` directory:
+  which will compile XGBoost's native (C++) code using default CMake flags.
+  To enable additional compilation options, pass corresponding ``--config-settings``:
 
-  .. code-block:: bash
+  .. code-block:: console
 
-    # under python-package directory
-    cd dist
-    pip install ./xgboost-1.0.0.tar.gz
+    $ pip install -v . --config-settings use_cuda=True --config-settings use_nccl=True
 
+  Use Pip 22.1 or later to use ``--config-settings`` option.
 
-  For details about these commands, please refer to the official document of `setuptools
-  <https://setuptools.readthedocs.io/en/latest/>`_, or just Google "how to install Python
-  package from source".  XGBoost Python package follows the general convention.
-  Setuptools is usually available with your Python distribution, if not you can install it
-  via system command.  For example on Debian or Ubuntu:
+  Here are the available options for ``--config-settings``:
 
-  .. code-block:: bash
+  .. literalinclude:: ../python-package/packager/build_config.py
+    :language: python
+    :start-at: @dataclasses.dataclass
+    :end-before: def _set_config_setting(
 
-    sudo apt-get install python-setuptools
+  ``use_system_libxgboost`` is a special option. See Item 4 below for
+  detailed description.
 
+  .. note:: Verbose flag recommended
 
-  For cleaning up the directory after running above commands, ``python setup.py clean`` is
-  not sufficient.  After copying out the build result, simply running ``git clean -xdf``
-  under ``python-package`` is an efficient way to remove generated cache files.  If you
-  find weird behaviors in Python build or running linter, it might be caused by those
-  cached files.
-
-  For using develop command (editable installation), see next section.
-
-  .. code-block::
-
-    python setup.py develop   # Create a editable installation.
-    pip install -e .          # Same as above, but carried out by pip.
+    As ``pip install .`` will build C++ code, it will take a while to complete.
+    To ensure that the build is progressing successfully, we suggest that
+    you add the verbose flag (``-v``) when invoking ``pip install``.
 
 
-2. Build C++ core with CMake first
+3. Editable installation
 
-  This is mostly for C++ developers who don't want to go through the hooks in Python
-  setuptools.  You can build C++ library directly using CMake as described in above
-  sections.  After compilation, a shared object (or called dynamic linked library, jargon
-  depending on your platform) will appear in XGBoost's source tree under ``lib/``
-  directory.  On Linux distributions it's ``lib/libxgboost.so``.  From there all Python
-  setuptools commands will reuse that shared object instead of compiling it again.  This
-  is especially convenient if you are using the editable installation, where the installed
-  package is simply a link to the source tree.  We can perform rapid testing during
-  development.  Here is a simple bash script does that:
+  To further enable rapid development and iteration, we provide an **editable
+  installation**.  In an editable installation, the installed package is simply a symbolic
+  link to your working copy of the XGBoost source code. So every changes you make to your
+  source directory will be immediately visible to the Python interpreter. To install
+  XGBoost as editable installation, first build the shared library as previously
+  described, then install the Python package:
 
   .. code-block:: bash
 
-    # Under xgboost source tree.
+    # Under xgboost source directory
     mkdir build
     cd build
-    cmake ..
-    make -j$(nproc)
+    # Build shared library libxgboost.so
+    cmake .. -GNinja
+    ninja
+    # Install as editable installation
     cd ../python-package
-    pip install -e .  # or equivalently python setup.py develop
+    pip install -e .
 
-3. Use ``libxgboost.so`` on system path.
+4. Use ``libxgboost.so`` on system path.
 
-  This is for distributing xgboost in a language independent manner, where
-  ``libxgboost.so`` is separately packaged with Python package.  Assuming `libxgboost.so`
-  is already presented in system library path, which can be queried via:
+  This option is useful for package managers that wish to separately package
+  ``libxgboost.so`` and the XGBoost Python package. For example, Conda
+  publishes ``libxgboost`` (for the shared library) and ``py-xgboost``
+  (for the Python package).
+
+  To use this option, first make sure that ``libxgboost.so`` exists in the system library path:
 
   .. code-block:: python
 
     import sys
-    import os
-    os.path.join(sys.prefix, 'lib')
+    import pathlib
+    libpath = pathlib.Path(sys.base_prefix).joinpath("lib", "libxgboost.so")
+    assert libpath.exists()
 
-  Then one only needs to provide an user option when installing Python package to reuse the
-  shared object in system path:
+  Then pass ``use_system_libxgboost=True`` option to ``pip install``:
 
   .. code-block:: bash
 
-    cd xgboost/python-package
-    python setup.py install --use-system-libxgboost
+    cd python-package
+    pip install . --config-settings use_system_libxgboost=True
 
+
+.. note::
+
+  See :doc:`contrib/python_packaging` for instructions on packaging
+  and distributing XGBoost as Python distributions.
 
 .. _python_mingw:
 
@@ -325,11 +305,11 @@ So you may want to build XGBoost with GCC own your own risk. This presents some 
 2. ``-O3`` is OK.
 3. ``-mtune=native`` is also OK.
 4. Don't use ``-march=native`` gcc flag. Using it causes the Python interpreter to crash if the DLL was actually used.
-5. You may need to provide the lib with the runtime libs. If ``mingw32/bin`` is not in ``PATH``, build a wheel (``python setup.py bdist_wheel``), open it with an archiver and put the needed dlls to the directory where ``xgboost.dll`` is situated. Then you can install the wheel with ``pip``.
+5. You may need to provide the lib with the runtime libs. If ``mingw32/bin`` is not in ``PATH``, build a wheel (``pip wheel``), open it with an archiver and put the needed dlls to the directory where ``xgboost.dll`` is situated. Then you can install the wheel with ``pip``.
 
-*******************************
-Building R Package From Source.
-*******************************
+******************************
+Building R Package From Source
+******************************
 
 By default, the package installed by running ``install.packages`` is built from source.
 Here we list some other options for installing development version.
@@ -340,23 +320,28 @@ Installing the development version (Linux / Mac OSX)
 Make sure you have installed git and a recent C++ compiler supporting C++11 (See above
 sections for requirements of building C++ core).
 
-Due to the use of git-submodules, ``devtools::install_github`` can no longer be used to install the latest version of R package.
-Thus, one has to run git to check out the code first:
+Due to the use of git-submodules, ``remotes::install_github()`` cannot be used to
+install the latest version of R package. Thus, one has to run git to check out the code
+first, see :ref:`get_source` on how to initialize the git repository for XGBoost. The
+simplest way to install the R package after obtaining the source code is:
 
 .. code-block:: bash
 
-  git clone --recursive https://github.com/dmlc/xgboost
-  cd xgboost
-  git submodule init
-  git submodule update
+  cd R-package
+  R CMD INSTALL .
+
+But if you want to use CMake build for better performance (which has the logic for
+detecting available CPU instructions) or greater flexibility around compile flags, the
+above snippet can be replaced by:
+
+.. code-block:: bash
+
   mkdir build
   cd build
   cmake .. -DR_LIB=ON
   make -j$(nproc)
   make install
 
-If all fails, try `Building the shared library`_ to see whether a problem is specific to R
-package or not.  Notice that the R package is installed by CMake directly.
 
 Installing the development version with Visual Studio (Windows)
 ===============================================================
@@ -522,20 +507,6 @@ XGBoost uses `Sphinx <https://www.sphinx-doc.org/en/stable/>`_ for documentation
 
 * Python dependencies
 
-  - sphinx
-  - breathe
-  - guzzle_sphinx_theme
-  - recommonmark
-  - mock
-  - sh
-  - graphviz
-  - matplotlib
+  Checkout the ``requirements.txt`` file under ``doc/``
 
 Under ``xgboost/doc`` directory, run ``make <format>`` with ``<format>`` replaced by the format you want.  For a list of supported formats, run ``make help`` under the same directory.
-
-*********
-Makefiles
-*********
-
-It's only used for creating shorthands for running linters, performing packaging tasks
-etc.  So the remaining makefiles are legacy.

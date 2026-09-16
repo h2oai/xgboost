@@ -9,16 +9,22 @@ xgboost <- function(data = NULL, label = NULL, missing = NA, weight = NULL,
                     early_stopping_rounds = NULL, maximize = NULL,
                     save_period = NULL, save_name = "xgboost.model",
                     xgb_model = NULL, callbacks = list(), ...) {
+  merged <- check.booster.params(params, ...)
+  dtrain <- xgb.get.DMatrix(
+    data = data,
+    label = label,
+    missing = missing,
+    weight = weight,
+    nthread = merged$nthread
+  )
 
-  dtrain <- xgb.get.DMatrix(data, label, missing, weight, nthread = params$nthread)
+  evals <- list(train = dtrain)
 
-  watchlist <- list(train = dtrain)
-
-  bst <- xgb.train(params, dtrain, nrounds, watchlist, verbose = verbose, print_every_n = print_every_n,
+  bst <- xgb.train(params, dtrain, nrounds, evals, verbose = verbose, print_every_n = print_every_n,
                    early_stopping_rounds = early_stopping_rounds, maximize = maximize,
                    save_period = save_period, save_name = save_name,
                    xgb_model = xgb_model, callbacks = callbacks, ...)
-  return (bst)
+  return(bst)
 }
 
 #' Training part from Mushroom Data Set
@@ -34,10 +40,10 @@ xgboost <- function(data = NULL, label = NULL, missing = NA, weight = NULL,
 #' }
 #'
 #' @references
-#' https://archive.ics.uci.edu/ml/datasets/Mushroom
+#' <https://archive.ics.uci.edu/ml/datasets/Mushroom>
 #'
 #' Bache, K. & Lichman, M. (2013). UCI Machine Learning Repository
-#' [http://archive.ics.uci.edu/ml]. Irvine, CA: University of California,
+#' <http://archive.ics.uci.edu/ml>. Irvine, CA: University of California,
 #' School of Information and Computer Science.
 #'
 #' @docType data
@@ -61,10 +67,10 @@ NULL
 #' }
 #'
 #' @references
-#' https://archive.ics.uci.edu/ml/datasets/Mushroom
+#' <https://archive.ics.uci.edu/ml/datasets/Mushroom>
 #'
 #' Bache, K. & Lichman, M. (2013). UCI Machine Learning Repository
-#' [http://archive.ics.uci.edu/ml]. Irvine, CA: University of California,
+#' <http://archive.ics.uci.edu/ml>. Irvine, CA: University of California,
 #' School of Information and Computer Science.
 #'
 #' @docType data
@@ -76,12 +82,8 @@ NULL
 NULL
 
 # Various imports
-#' @importClassesFrom Matrix dgCMatrix dgeMatrix
-#' @importFrom Matrix colSums
+#' @importClassesFrom Matrix dgCMatrix dgRMatrix CsparseMatrix
 #' @importFrom Matrix sparse.model.matrix
-#' @importFrom Matrix sparseVector
-#' @importFrom Matrix sparseMatrix
-#' @importFrom Matrix t
 #' @importFrom data.table data.table
 #' @importFrom data.table is.data.table
 #' @importFrom data.table as.data.table
@@ -92,9 +94,13 @@ NULL
 #' @importFrom data.table setnames
 #' @importFrom jsonlite fromJSON
 #' @importFrom jsonlite toJSON
+#' @importFrom methods new
 #' @importFrom utils object.size str tail
+#' @importFrom stats coef
 #' @importFrom stats predict
 #' @importFrom stats median
+#' @importFrom stats sd
+#' @importFrom stats variable.names
 #' @importFrom utils head
 #' @importFrom graphics barplot
 #' @importFrom graphics lines

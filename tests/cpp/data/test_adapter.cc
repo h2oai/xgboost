@@ -36,14 +36,15 @@ TEST(Adapter, CSRAdapter) {
 }
 
 TEST(Adapter, CSRArrayAdapter) {
-  HostDeviceVector<bst_row_t> indptr;
+  HostDeviceVector<std::size_t> indptr;
   HostDeviceVector<float> values;
   HostDeviceVector<bst_feature_t> indices;
   size_t n_features = 100, n_samples = 10;
   RandomDataGenerator{n_samples, n_features, 0.5}.GenerateCSR(&values, &indptr, &indices);
-  auto indptr_arr = MakeArrayInterface(indptr.HostPointer(), indptr.Size());
-  auto values_arr = MakeArrayInterface(values.HostPointer(), values.Size());
-  auto indices_arr = MakeArrayInterface(indices.HostPointer(), indices.Size());
+  using linalg::MakeVec;
+  auto indptr_arr = ArrayInterfaceStr(MakeVec(indptr.HostPointer(), indptr.Size()));
+  auto values_arr = ArrayInterfaceStr(MakeVec(values.HostPointer(), values.Size()));
+  auto indices_arr = ArrayInterfaceStr(MakeVec(indices.HostPointer(), indices.Size()));
   auto adapter = data::CSRArrayAdapter(
       StringView{indptr_arr.c_str(), indptr_arr.size()},
       StringView{values_arr.c_str(), values_arr.size()},
@@ -154,7 +155,7 @@ TEST(Adapter, IteratorAdapter) {
   ASSERT_EQ(data->Info().num_row_, kRows);
   int num_batch = 0;
   for (auto const& batch : data->GetBatches<SparsePage>()) {
-    ASSERT_EQ(batch.offset.HostVector(), std::vector<bst_row_t>({0, 2, 4, 5, 5, 7, 9, 10, 10}));
+    ASSERT_EQ(batch.offset.HostVector(), std::vector<bst_idx_t>({0, 2, 4, 5, 5, 7, 9, 10, 10}));
     ++num_batch;
   }
   ASSERT_EQ(num_batch, 1);

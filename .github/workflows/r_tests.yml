@@ -3,8 +3,14 @@ name: XGBoost-R-Tests
 on: [push, pull_request]
 
 env:
-  R_PACKAGES: c('XML', 'igraph', 'data.table', 'ggplot2', 'DiagrammeR', 'Ckmeans.1d.dp', 'vcd', 'testthat', 'lintr', 'knitr', 'rmarkdown', 'e1071', 'cplm', 'devtools', 'float', 'titanic')
   GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+
+permissions:
+  contents: read # to fetch code (actions/checkout)
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   lintr:
@@ -13,126 +19,132 @@ jobs:
     strategy:
       matrix:
         config:
-          - {os: windows-latest, r: 'release', compiler: 'mingw', build: 'autotools'}
+          - {os: ubuntu-latest, r: 'release'}
     env:
       R_REMOTES_NO_ERRORS_FROM_WARNINGS: true
       RSPM: ${{ matrix.config.rspm }}
 
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
       with:
         submodules: 'true'
 
-    - uses: r-lib/actions/setup-r@master
+    - uses: r-lib/actions/setup-r@929c772977a3a13c8733b363bf5a2f685c25dd91 # v2.9.0
       with:
         r-version: ${{ matrix.config.r }}
 
     - name: Cache R packages
-      uses: actions/cache@v2
+      uses: actions/cache@937d24475381cd9c75ae6db12cb4e79714b926ed # v3.0.11
       with:
         path: ${{ env.R_LIBS_USER }}
-        key: ${{ runner.os }}-r-${{ matrix.config.r }}-2-${{ hashFiles('R-package/DESCRIPTION') }}
-        restore-keys: ${{ runner.os }}-r-${{ matrix.config.r }}-2-${{ hashFiles('R-package/DESCRIPTION') }}
+        key: ${{ runner.os }}-r-${{ matrix.config.r }}-7-${{ hashFiles('R-package/DESCRIPTION') }}
+        restore-keys: ${{ runner.os }}-r-${{ matrix.config.r }}-7-${{ hashFiles('R-package/DESCRIPTION') }}
 
     - name: Install dependencies
       shell: Rscript {0}
       run: |
-        install.packages(${{ env.R_PACKAGES }},
-                         repos = 'http://cloud.r-project.org',
-                         dependencies = c('Depends', 'Imports', 'LinkingTo'))
+        source("./R-package/tests/helper_scripts/install_deps.R")
 
     - name: Run lintr
       run: |
-        cd R-package
-        R.exe CMD INSTALL .
-        Rscript.exe tests/helper_scripts/run_lint.R
+        MAKEFLAGS="-j$(nproc)" R CMD INSTALL R-package/
+        Rscript tests/ci_build/lint_r.R $(pwd)
 
-  test-with-R:
+  test-Rpkg:
     runs-on: ${{ matrix.config.os }}
     name: Test R on OS ${{ matrix.config.os }}, R ${{ matrix.config.r }}, Compiler ${{ matrix.config.compiler }}, Build ${{ matrix.config.build }}
     strategy:
       fail-fast: false
       matrix:
         config:
-          - {os: windows-2016, r: 'release', compiler: 'mingw', build: 'autotools'}
-          - {os: windows-2016, r: 'release', compiler: 'msvc', build: 'cmake'}
-          - {os: windows-2016, r: 'release', compiler: 'mingw', build: 'cmake'}
+          - {os: windows-latest, r: 'release', compiler: 'mingw', build: 'autotools'}
+          - {os: ubuntu-latest, r: 'release', compiler: 'none', build: 'cmake'}
     env:
       R_REMOTES_NO_ERRORS_FROM_WARNINGS: true
       RSPM: ${{ matrix.config.rspm }}
 
     steps:
-    - uses: actions/checkout@v2
+    - name: Install system dependencies
+      run: |
+        sudo apt update
+        sudo apt install libcurl4-openssl-dev libssl-dev libssh2-1-dev libgit2-dev libglpk-dev libxml2-dev libharfbuzz-dev libfribidi-dev
+      if: matrix.config.os == 'ubuntu-latest'
+    - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
       with:
         submodules: 'true'
 
-    - uses: r-lib/actions/setup-r@master
+    - uses: r-lib/actions/setup-r@929c772977a3a13c8733b363bf5a2f685c25dd91 # v2.9.0
       with:
         r-version: ${{ matrix.config.r }}
 
     - name: Cache R packages
-      uses: actions/cache@v2
+      uses: actions/cache@937d24475381cd9c75ae6db12cb4e79714b926ed # v3.0.11
       with:
         path: ${{ env.R_LIBS_USER }}
-        key: ${{ runner.os }}-r-${{ matrix.config.r }}-2-${{ hashFiles('R-package/DESCRIPTION') }}
-        restore-keys: ${{ runner.os }}-r-${{ matrix.config.r }}-2-${{ hashFiles('R-package/DESCRIPTION') }}
+        key: ${{ runner.os }}-r-${{ matrix.config.r }}-7-${{ hashFiles('R-package/DESCRIPTION') }}
+        restore-keys: ${{ runner.os }}-r-${{ matrix.config.r }}-7-${{ hashFiles('R-package/DESCRIPTION') }}
+
+    - uses: actions/setup-python@0a5c61591373683505ea898e09a3ea4f39ef2b9c # v5.0.0
+      with:
+        python-version: "3.8"
+        architecture: 'x64'
+
+    - uses: r-lib/actions/setup-tinytex@v2
 
     - name: Install dependencies
       shell: Rscript {0}
       run: |
-        install.packages(${{ env.R_PACKAGES }},
-                         repos = 'http://cloud.r-project.org',
-                         dependencies = c('Depends', 'Imports', 'LinkingTo'))
-
-    - uses: actions/setup-python@v2
-      with:
-        python-version: '3.7'
-        architecture: 'x64'
+        source("./R-package/tests/helper_scripts/install_deps.R")
 
     - name: Test R
       run: |
-        python tests/ci_build/test_r_package.py --compiler="${{ matrix.config.compiler }}" --build-tool="${{ matrix.config.build }}"
+        python tests/ci_build/test_r_package.py --compiler='${{ matrix.config.compiler }}' --build-tool="${{ matrix.config.build }}" --task=check
+      if: matrix.config.compiler != 'none'
 
-  test-R-CRAN:
+    - name: Test R
+      run: |
+        python tests/ci_build/test_r_package.py --build-tool="${{ matrix.config.build }}" --task=check
+      if: matrix.config.compiler == 'none'
+
+  test-R-on-Debian:
+    name: Test R package on Debian
     runs-on: ubuntu-latest
-
-    strategy:
-      fail-fast: false
-      matrix:
-        config:
-          - {r: 'release'}
+    container:
+      image: rhub/debian-gcc-release
 
     steps:
-    - uses: actions/checkout@v2
+    - name: Install system dependencies
+      run: |
+        # Must run before checkout to have the latest git installed.
+        # No need to add pandoc, the container has it figured out.
+        apt update && apt install libcurl4-openssl-dev libssl-dev libssh2-1-dev libgit2-dev libglpk-dev libxml2-dev libharfbuzz-dev libfribidi-dev git -y
+
+    - name: Trust git cloning project sources
+      run: |
+        git config --global --add safe.directory "${GITHUB_WORKSPACE}"
+
+    - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
       with:
         submodules: 'true'
 
-    - uses: r-lib/actions/setup-r@master
-      with:
-        r-version: ${{ matrix.config.r }}
-
-    - uses: r-lib/actions/setup-tinytex@master
-
-    - name: Install system packages
-      run: |
-        sudo apt-get update && sudo apt-get install libcurl4-openssl-dev libssl-dev libssh2-1-dev libgit2-dev pandoc pandoc-citeproc
-
-    - name: Cache R packages
-      uses: actions/cache@v2
-      with:
-        path: ${{ env.R_LIBS_USER }}
-        key: ${{ runner.os }}-r-${{ matrix.config.r }}-2-${{ hashFiles('R-package/DESCRIPTION') }}
-        restore-keys: ${{ runner.os }}-r-${{ matrix.config.r }}-2-${{ hashFiles('R-package/DESCRIPTION') }}
-
     - name: Install dependencies
-      shell: Rscript {0}
+      shell: bash -l {0}
       run: |
-        install.packages(${{ env.R_PACKAGES }},
-                         repos = 'http://cloud.r-project.org',
-                         dependencies = c('Depends', 'Imports', 'LinkingTo'))
+        Rscript -e "source('./R-package/tests/helper_scripts/install_deps.R')"
 
-    - name: Check R Package
+    - name: Test R
+      shell: bash -l {0}
       run: |
-        # Print stacktrace upon success of failure
-        make Rcheck || tests/ci_build/print_r_stacktrace.sh fail
-        tests/ci_build/print_r_stacktrace.sh success
+        python3 tests/ci_build/test_r_package.py --r=/usr/bin/R --build-tool=autotools --task=check
+
+    - uses: dorny/paths-filter@v3
+      id: changes
+      with:
+        filters: |
+          r_package:
+            - 'R-package/**'
+
+    - name: Run document check
+      if: steps.changes.outputs.r_package == 'true'
+      run: |
+        python3 tests/ci_build/test_r_package.py --r=/usr/bin/R --task=doc

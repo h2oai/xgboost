@@ -10,7 +10,12 @@ Contents
 
 .. toctree::
   python_intro
+  sklearn_estimator
   python_api
   callbacks
   model
-  Python examples <https://github.com/dmlc/xgboost/tree/master/demo/guide-python>
+  examples/index
+  dask-examples/index
+  survival-examples/index
+  gpu-examples/index
+  rmm-examples/index

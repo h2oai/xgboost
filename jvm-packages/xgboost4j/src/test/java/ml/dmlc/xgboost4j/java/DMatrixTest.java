@@ -1,10 +1,10 @@
 /*
- Copyright (c) 2014 by Contributors 
+ Copyright (c) 2014-2024 by Contributors
 
  Licensed under the Apache License, Version 2.0 (the "License");
  you may not use this file except in compliance with the License.
  You may obtain a copy of the License at
-    
+
  http://www.apache.org/licenses/LICENSE-2.0
 
  Unless required by applicable law or agreed to in writing, software
@@ -88,7 +88,7 @@ public class DMatrixTest {
   public void testCreateFromFile() throws XGBoostError {
     //create DMatrix from file
     String filePath = writeResourceIntoTempFile("/agaricus.txt.test");
-    DMatrix dmat = new DMatrix(filePath);
+    DMatrix dmat = new DMatrix(filePath + "?format=libsvm");
     //get label
     float[] labels = dmat.getLabel();
     //check length
@@ -212,7 +212,7 @@ public class DMatrixTest {
       label0[i] = random.nextFloat();
     }
 
-    DMatrix dmat0 = new DMatrix(data0, nrow, ncol);
+    DMatrix dmat0 = new DMatrix(data0, nrow, ncol, Float.NaN);
     dmat0.setLabel(label0);
 
     //check
@@ -281,7 +281,7 @@ public class DMatrixTest {
         label0[i] = random.nextFloat();
       }
 
-      dmat0 = new DMatrix(data0);
+      dmat0 = new DMatrix(data0, Float.NaN);
       dmat0.setLabel(label0);
 
       //check
@@ -298,9 +298,9 @@ public class DMatrixTest {
 
   @Test
   public void testTrainWithDenseMatrixRef() throws XGBoostError {
-    Map<String, String> rabitEnv = new HashMap<>();
+    Map<String, Object> rabitEnv = new HashMap<>();
     rabitEnv.put("DMLC_TASK_ID", "0");
-    Rabit.init(rabitEnv);
+    Communicator.init(rabitEnv);
     DMatrix trainMat = null;
     BigDenseMatrix data0 = null;
     try {
@@ -318,7 +318,7 @@ public class DMatrixTest {
         for (int j = 0; j < data0.ncol; j++)
           data0.set(i, j, data[i][j]);
 
-      trainMat = new DMatrix(data0);
+      trainMat = new DMatrix(data0, Float.NaN);
       trainMat.setLabel(new float[]{1f, 2f, 3f});
 
       HashMap<String, Object> params = new HashMap<>();
@@ -338,7 +338,7 @@ public class DMatrixTest {
       // (3,1) -> 2
       // (2,3) -> 3
       for (int i = 0; i < 3; i++) {
-        float[][] preds = booster.predict(new DMatrix(data[i], 1, 2));
+        float[][] preds = booster.predict(new DMatrix(data[i], 1, 2, Float.NaN));
         assertEquals(1, preds.length);
         assertArrayEquals(new float[]{(float) (i + 1)}, preds[0], 1e-2f);
       }
@@ -348,7 +348,7 @@ public class DMatrixTest {
       else if (data0 != null) {
         data0.dispose();
       }
-      Rabit.shutdown();
+      Communicator.shutdown();
     }
   }
 
@@ -402,5 +402,30 @@ public class DMatrixTest {
 
     //check
     TestCase.assertTrue(Arrays.equals(new int[]{0, 5, 10}, dmat0.getGroup()));
+  }
+
+  @Test
+  public void testSetAndGetFeatureInfo() throws XGBoostError {
+    //create DMatrix from 10*5 dense matrix
+    int nrow = 10;
+    int ncol = 5;
+    float[] data = new float[nrow * ncol];
+    //put random nums
+    Random random = new Random();
+    for (int i = 0; i < nrow * ncol; i++) {
+      data[i] = random.nextInt();
+    }
+
+    DMatrix dmat = new DMatrix(data, nrow, ncol, Float.NaN);
+
+    String[] featureNames = new String[]{"f1", "f2", "f3", "f4", "f5"};
+    dmat.setFeatureNames(featureNames);
+    String[] retFeatureNames = dmat.getFeatureNames();
+    assertArrayEquals(featureNames, retFeatureNames);
+
+    String[] featureTypes = new String[]{"i", "q", "c", "i", "q"};
+    dmat.setFeatureTypes(featureTypes);
+    String[] retFeatureTypes = dmat.getFeatureTypes();
+    assertArrayEquals(featureTypes, retFeatureTypes);
   }
 }

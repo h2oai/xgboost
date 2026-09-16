@@ -1,5 +1,5 @@
 /*
- Copyright (c) 2014 by Contributors
+ Copyright (c) 2014-2023 by Contributors
 
  Licensed under the Apache License, Version 2.0 (the "License");
  you may not use this file except in compliance with the License.
@@ -34,10 +34,26 @@ import org.apache.commons.logging.LogFactory;
  * Booster for xgboost, this is a model API that support interactive build of a XGBoost Model
  */
 public class Booster implements Serializable, KryoSerializable {
+  public static final String DEFAULT_FORMAT = "ubj";
   private static final Log logger = LogFactory.getLog(Booster.class);
   // handle to the booster.
   private long handle = 0;
   private int version = 0;
+  /**
+   * Type of prediction, used for inplace_predict.
+   */
+  public enum PredictionType {
+    kValue(0),
+    kMargin(1);
+
+    private Integer ptype;
+    private PredictionType(final Integer ptype) {
+      this.ptype = ptype;
+    }
+    public Integer getPType() {
+      return ptype;
+    }
+  }
 
   /**
    * Create a new Booster with empty stage.
@@ -162,6 +178,51 @@ public class Booster implements Serializable, KryoSerializable {
   }
 
   /**
+   * Get feature names from the Booster.
+   * @return
+   * @throws XGBoostError
+   */
+  public final String[] getFeatureNames() throws XGBoostError {
+    int numFeature = (int) getNumFeature();
+    String[] out = new String[numFeature];
+    XGBoostJNI.checkCall(XGBoostJNI.XGBoosterGetStrFeatureInfo(handle, "feature_name", out));
+    return out;
+  }
+
+  /**
+   * Set feature names to the Booster.
+   *
+   * @param featureNames
+   * @throws XGBoostError
+   */
+  public void setFeatureNames(String[] featureNames) throws XGBoostError {
+    XGBoostJNI.checkCall(XGBoostJNI.XGBoosterSetStrFeatureInfo(
+        handle, "feature_name", featureNames));
+  }
+
+  /**
+   * Get feature types from the Booster.
+   * @return
+   * @throws XGBoostError
+   */
+  public final String[] getFeatureTypes() throws XGBoostError {
+    int numFeature = (int) getNumFeature();
+    String[] out = new String[numFeature];
+    XGBoostJNI.checkCall(XGBoostJNI.XGBoosterGetStrFeatureInfo(handle, "feature_type", out));
+    return out;
+  }
+
+  /**
+   * Set feature types to the Booster.
+   * @param featureTypes
+   * @throws XGBoostError
+   */
+  public void setFeatureTypes(String[] featureTypes) throws XGBoostError {
+    XGBoostJNI.checkCall(XGBoostJNI.XGBoosterSetStrFeatureInfo(
+        handle, "feature_type", featureTypes));
+  }
+
+  /**
    * Update the booster for one iteration.
    *
    * @param dtrain training data
@@ -172,34 +233,48 @@ public class Booster implements Serializable, KryoSerializable {
     XGBoostJNI.checkCall(XGBoostJNI.XGBoosterUpdateOneIter(handle, iter, dtrain.getHandle()));
   }
 
+  @Deprecated
+  public void update(DMatrix dtrain, IObjective obj) throws XGBoostError {
+    float[][] predicts = this.predict(dtrain, true, 0, false, false);
+    List<float[]> gradients = obj.getGradient(predicts, dtrain);
+    this.boost(dtrain, gradients.get(0), gradients.get(1));
+  }
+
   /**
    * Update with customize obj func
    *
    * @param dtrain training data
+   * @param iter   The current training iteration.
    * @param obj    customized objective class
    * @throws XGBoostError native error
    */
-  public void update(DMatrix dtrain, IObjective obj) throws XGBoostError {
+  public void update(DMatrix dtrain, int iter, IObjective obj) throws XGBoostError {
     float[][] predicts = this.predict(dtrain, true, 0, false, false);
     List<float[]> gradients = obj.getGradient(predicts, dtrain);
-    boost(dtrain, gradients.get(0), gradients.get(1));
+    this.boost(dtrain, iter, gradients.get(0), gradients.get(1));
+  }
+
+  @Deprecated
+  public void boost(DMatrix dtrain, float[] grad, float[] hess) throws XGBoostError {
+    this.boost(dtrain, 0, grad, hess);
   }
 
   /**
-   * update with give grad and hess
+   * Update with give grad and hess
    *
    * @param dtrain training data
+   * @param iter   The current training iteration.
    * @param grad   first order of gradient
    * @param hess   seconde order of gradient
    * @throws XGBoostError native error
    */
-  public void boost(DMatrix dtrain, float[] grad, float[] hess) throws XGBoostError {
+  public void boost(DMatrix dtrain, int iter, float[] grad, float[] hess) throws XGBoostError {
     if (grad.length != hess.length) {
       throw new AssertionError(String.format("grad/hess length mismatch %s / %s", grad.length,
               hess.length));
     }
-    XGBoostJNI.checkCall(XGBoostJNI.XGBoosterBoostOneIter(handle,
-            dtrain.getHandle(), grad, hess));
+    XGBoostJNI.checkCall(XGBoostJNI.XGBoosterTrainOneIter(handle,
+                                                          dtrain.getHandle(), iter, grad, hess));
   }
 
   /**
@@ -316,6 +391,97 @@ public class Booster implements Serializable, KryoSerializable {
   }
 
   /**
+   * Perform thread-safe prediction.
+   *
+   * @param data      Flattened input matrix of features for prediction
+   * @param nrow      The number of preditions to make (count of input matrix rows)
+   * @param ncol      The number of features in the model (count of input matrix columns)
+   * @param missing   Value indicating missing element in the <code>data</code> input matrix
+   *
+   * @return predict  Result matrix
+   */
+  public float[][] inplace_predict(float[] data,
+                                   int nrow,
+                                   int ncol,
+                                   float missing) throws XGBoostError {
+    int[] iteration_range = new int[2];
+    iteration_range[0] = 0;
+    iteration_range[1] = 0;
+    return this.inplace_predict(data, nrow, ncol,
+        missing, iteration_range, PredictionType.kValue, null);
+  }
+
+  /**
+   * Perform thread-safe prediction.
+   *
+   * @param data      Flattened input matrix of features for prediction
+   * @param nrow      The number of preditions to make (count of input matrix rows)
+   * @param ncol      The number of features in the model (count of input matrix columns)
+   * @param missing   Value indicating missing element in the <code>data</code> input matrix
+   * @param iteration_range Specifies which layer of trees are used in prediction.  For
+   *                        example, if a random forest is trained with 100 rounds.
+   *                        Specifying `iteration_range=[10, 20)`, then only the forests
+   *                        built during [10, 20) (half open set) rounds are used in this
+   *                        prediction.
+   *
+   * @return predict  Result matrix
+   */
+  public float[][] inplace_predict(float[] data,
+                                   int nrow,
+                                   int ncol,
+                                   float missing, int[] iteration_range) throws XGBoostError {
+    return this.inplace_predict(data, nrow, ncol,
+        missing, iteration_range, PredictionType.kValue, null);
+  }
+
+
+  /**
+   * Perform thread-safe prediction.
+   *
+   * @param data            Flattened input matrix of features for prediction
+   * @param nrow            The number of preditions to make (count of input matrix rows)
+   * @param ncol            The number of features in the model (count of input matrix columns)
+   * @param missing         Value indicating missing element in the <code>data</code> input matrix
+   * @param iteration_range Specifies which layer of trees are used in prediction.  For
+   *                        example, if a random forest is trained with 100 rounds.
+   *                        Specifying `iteration_range=[10, 20)`, then only the forests
+   *                        built during [10, 20) (half open set) rounds are used in this
+   *                        prediction.
+   * @param predict_type    What kind of prediction to run.
+   * @return predict       Result matrix
+   */
+  public float[][] inplace_predict(float[] data,
+                                   int nrow,
+                                   int ncol,
+                                   float missing,
+                                   int[] iteration_range,
+                                   PredictionType predict_type,
+                                   float[] base_margin) throws XGBoostError {
+    if (iteration_range.length != 2) {
+      throw new XGBoostError(new String("Iteration range is expected to be [begin, end)."));
+    }
+    int ptype = predict_type.getPType();
+
+    int begin = iteration_range[0];
+    int end = iteration_range[1];
+
+    float[][] rawPredicts = new float[1][];
+    XGBoostJNI.checkCall(XGBoostJNI.XGBoosterPredictFromDense(handle, data, nrow, ncol,
+        missing,
+        begin, end, ptype, base_margin, rawPredicts));
+
+    int col = rawPredicts[0].length / nrow;
+    float[][] predicts = new float[nrow][col];
+    int r, c;
+    for (int i = 0; i < rawPredicts[0].length; i++) {
+      r = i / col;
+      c = i % col;
+      predicts[r][c] = rawPredicts[0][i];
+    }
+    return predicts;
+  }
+
+  /**
    * Predict leaf indices given the data
    *
    * @param data The input data.
@@ -391,7 +557,22 @@ public class Booster implements Serializable, KryoSerializable {
    * @param out The output stream
    */
   public void saveModel(OutputStream out) throws XGBoostError, IOException {
-    out.write(this.toByteArray());
+    saveModel(out, DEFAULT_FORMAT);
+  }
+
+  /**
+   * Save the model to file opened as output stream.
+   * The model format is compatible with other xgboost bindings.
+   * The output stream can only save one xgboost model.
+   * This function will close the OutputStream after the save.
+   *
+   * @param out The output stream
+   * @param format The model format (ubj, json, deprecated)
+   * @throws XGBoostError
+   * @throws IOException
+   */
+  public void saveModel(OutputStream out, String format) throws XGBoostError, IOException {
+    out.write(this.toByteArray(format));
     out.close();
   }
 
@@ -436,7 +617,7 @@ public class Booster implements Serializable, KryoSerializable {
   }
 
   public String[] getModelDump(String[] featureNames, boolean withStats, String format)
-    throws XGBoostError {
+      throws XGBoostError {
     int statsFlag = 0;
     if (withStats) {
       statsFlag = 1;
@@ -607,66 +788,27 @@ public class Booster implements Serializable, KryoSerializable {
   }
 
   /**
-   * Save the model as byte array representation.
-   * Write these bytes to a file will give compatible format with other xgboost bindings.
+   * Save model into raw byte array in the UBJSON ("ubj") format.
    *
-   * If java natively support HDFS file API, use toByteArray and write the ByteArray
-   *
-   * @param withStats Controls whether the split statistics are output.
-   * @return dumped model information
-   * @throws XGBoostError native error
-   */
-  private String[] getDumpInfo(boolean withStats) throws XGBoostError {
-    int statsFlag = 0;
-    if (withStats) {
-      statsFlag = 1;
-    }
-    String[][] modelInfos = new String[1][];
-    XGBoostJNI.checkCall(XGBoostJNI.XGBoosterDumpModelEx(handle, "", statsFlag, "text",
-            modelInfos));
-    return modelInfos[0];
-  }
-
-  public int getVersion() {
-    return this.version;
-  }
-
-  public void setVersion(int version) {
-    this.version = version;
-  }
-
-  /**
-   *
-   * @return the saved byte array.
+   * @return the saved byte array
    * @throws XGBoostError native error
    */
   public byte[] toByteArray() throws XGBoostError {
+    return this.toByteArray(DEFAULT_FORMAT);
+  }
+
+  /**
+   * Save model into raw byte array.
+   *
+   * @param format The output format.  Available options are "json", "ubj" and "deprecated".
+   *
+   * @return the saved byte array
+   * @throws XGBoostError native error
+   */
+  public byte[] toByteArray(String format) throws XGBoostError {
     byte[][] bytes = new byte[1][];
-    XGBoostJNI.checkCall(XGBoostJNI.XGBoosterGetModelRaw(this.handle, bytes));
+    XGBoostJNI.checkCall(XGBoostJNI.XGBoosterSaveModelToBuffer(this.handle, format, bytes));
     return bytes[0];
-  }
-
-  /**
-   * Load the booster model from thread-local rabit checkpoint.
-   * This is only used in distributed training.
-   * @return the stored version number of the checkpoint.
-   * @throws XGBoostError
-   */
-  int loadRabitCheckpoint() throws XGBoostError {
-    int[] out = new int[1];
-    XGBoostJNI.checkCall(XGBoostJNI.XGBoosterLoadRabitCheckpoint(this.handle, out));
-    version = out[0];
-    return version;
-  }
-
-  /**
-   * Save the booster model into thread-local rabit checkpoint and increment the version.
-   * This is only used in distributed training.
-   * @throws XGBoostError
-   */
-  void saveRabitCheckpoint() throws XGBoostError {
-    XGBoostJNI.checkCall(XGBoostJNI.XGBoosterSaveRabitCheckpoint(this.handle));
-    version += 1;
   }
 
   /**
@@ -678,6 +820,11 @@ public class Booster implements Serializable, KryoSerializable {
     long[] numFeature = new long[1];
     XGBoostJNI.checkCall(XGBoostJNI.XGBoosterGetNumFeature(this.handle, numFeature));
     return numFeature[0];
+  }
+  public int getNumBoostedRound() throws XGBoostError {
+    int[] numRound = new int[1];
+    XGBoostJNI.checkCall(XGBoostJNI.XGBoosterGetNumBoostedRound(this.handle, numRound));
+    return numRound[0];
   }
 
   /**
@@ -714,7 +861,7 @@ public class Booster implements Serializable, KryoSerializable {
   private void writeObject(java.io.ObjectOutputStream out) throws IOException {
     try {
       out.writeInt(version);
-      out.writeObject(this.toByteArray());
+      out.writeObject(this.toByteArray("ubj"));
     } catch (XGBoostError ex) {
       ex.printStackTrace();
       logger.error(ex.getMessage());
@@ -750,7 +897,7 @@ public class Booster implements Serializable, KryoSerializable {
   @Override
   public void write(Kryo kryo, Output output) {
     try {
-      byte[] serObj = this.toByteArray();
+      byte[] serObj = this.toByteArray("ubj");
       int serObjSize = serObj.length;
       output.writeInt(serObjSize);
       output.writeInt(version);

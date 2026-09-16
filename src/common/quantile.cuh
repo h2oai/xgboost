@@ -1,7 +1,8 @@
+/**
+ * Copyright 2020-2024, XGBoost Contributors
+ */
 #ifndef XGBOOST_COMMON_QUANTILE_CUH_
 #define XGBOOST_COMMON_QUANTILE_CUH_
-
-#include <memory>
 
 #include "xgboost/span.h"
 #include "xgboost/data.h"
@@ -32,17 +33,16 @@ struct SketchUnique {
 class SketchContainer {
  public:
   static constexpr float kFactor = WQSketch::kFactor;
-  using OffsetT = bst_row_t;
+  using OffsetT = bst_idx_t;
   static_assert(sizeof(OffsetT) == sizeof(size_t), "Wrong type for sketch element offset.");
 
  private:
   Monitor timer_;
-  std::unique_ptr<dh::AllReducer> reducer_;
   HostDeviceVector<FeatureType> feature_types_;
-  bst_row_t num_rows_;
+  bst_idx_t num_rows_;
   bst_feature_t num_columns_;
   int32_t num_bins_;
-  int32_t device_;
+  DeviceOrd device_;
 
   // Double buffer as neither prune nor merge can be performed inplace.
   dh::device_vector<SketchEntry> entries_a_;
@@ -94,13 +94,10 @@ class SketchContainer {
    * \param num_rows    Total number of rows in known dataset (typically the rows in current worker).
    * \param device      GPU ID.
    */
-  SketchContainer(HostDeviceVector<FeatureType> const& feature_types,
-                  int32_t max_bin,
-                  bst_feature_t num_columns, bst_row_t num_rows,
-                  int32_t device)
-      : num_rows_{num_rows},
-        num_columns_{num_columns}, num_bins_{max_bin}, device_{device} {
-    CHECK_GE(device, 0);
+  SketchContainer(HostDeviceVector<FeatureType> const& feature_types, int32_t max_bin,
+                  bst_feature_t num_columns, bst_idx_t num_rows, DeviceOrd device)
+      : num_rows_{num_rows}, num_columns_{num_columns}, num_bins_{max_bin}, device_{device} {
+    CHECK(device.IsCUDA());
     // Initialize Sketches for this dmatrix
     this->columns_ptr_.SetDevice(device_);
     this->columns_ptr_.Resize(num_columns + 1);
@@ -117,13 +114,12 @@ class SketchContainer {
     auto d_feature_types = feature_types_.ConstDeviceSpan();
     has_categorical_ =
         !d_feature_types.empty() &&
-        thrust::any_of(dh::tbegin(d_feature_types), dh::tend(d_feature_types),
-                       common::IsCatOp{});
+        thrust::any_of(dh::tbegin(d_feature_types), dh::tend(d_feature_types), common::IsCatOp{});
 
     timer_.Init(__func__);
   }
   /* \brief Return GPU ID for this container. */
-  int32_t DeviceIdx() const { return device_; }
+  [[nodiscard]] DeviceOrd DeviceIdx() const { return device_; }
   /* \brief Whether the predictor matrix contains categorical features. */
   bool HasCategorical() const { return has_categorical_; }
   /* \brief Accumulate weights of duplicated entries in input. */
@@ -156,9 +152,9 @@ class SketchContainer {
              Span<SketchEntry const> that);
 
   /* \brief Merge quantiles from other GPU workers. */
-  void AllReduce();
+  void AllReduce(Context const* ctx, bool is_column_split);
   /* \brief Create the final histogram cut values. */
-  void MakeCuts(HistogramCuts* cuts);
+  void MakeCuts(Context const* ctx, HistogramCuts* cuts, bool is_column_split);
 
   Span<SketchEntry const> Data() const {
     return {this->Current().data().get(), this->Current().size()};
@@ -177,7 +173,7 @@ class SketchContainer {
   template <typename KeyComp = thrust::equal_to<size_t>>
   size_t Unique(KeyComp key_comp = thrust::equal_to<size_t>{}) {
     timer_.Start(__func__);
-    dh::safe_cuda(cudaSetDevice(device_));
+    dh::safe_cuda(cudaSetDevice(device_.ordinal));
     this->columns_ptr_.SetDevice(device_);
     Span<OffsetT> d_column_scan = this->columns_ptr_.DeviceSpan();
     CHECK_EQ(d_column_scan.size(), num_columns_ + 1);

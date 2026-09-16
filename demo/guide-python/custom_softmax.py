@@ -1,14 +1,21 @@
-'''Demo for creating customized multi-class objective function.  This demo is
-only applicable after (excluding) XGBoost 1.0.0, as before this version XGBoost
-returns transformed prediction for multi-class objective function.  More
-details in comments.
+'''
+Demo for creating customized multi-class objective function
+===========================================================
+
+This demo is only applicable after (excluding) XGBoost 1.0.0, as before this version
+XGBoost returns transformed prediction for multi-class objective function.  More details
+in comments.
+
+See :doc:`/tutorials/custom_metric_obj` for detailed tutorial and notes.
 
 '''
 
-import numpy as np
-import xgboost as xgb
-from matplotlib import pyplot as plt
 import argparse
+
+import numpy as np
+from matplotlib import pyplot as plt
+
+import xgboost as xgb
 
 np.random.seed(1994)
 
@@ -69,9 +76,7 @@ def softprob_obj(predt: np.ndarray, data: xgb.DMatrix):
             grad[r, c] = g
             hess[r, c] = h
 
-    # Right now (XGBoost 1.0.0), reshaping is necessary
-    grad = grad.reshape((kRows * kClasses, 1))
-    hess = hess.reshape((kRows * kClasses, 1))
+    # After 2.1.0, pass the gradient as it is.
     return grad, hess
 
 
@@ -95,7 +100,12 @@ def predict(booster: xgb.Booster, X):
 
 def merror(predt: np.ndarray, dtrain: xgb.DMatrix):
     y = dtrain.get_label()
-    # Like custom objective, the predt is untransformed leaf weight
+    # Like custom objective, the predt is untransformed leaf weight when custom objective
+    # is provided.
+
+    # With the use of `custom_metric` parameter in train function, custom metric receives
+    # raw input only when custom objective is also being used.  Otherwise custom metric
+    # will receive transformed prediction.
     assert predt.shape == (kRows, kClasses)
     out = np.zeros(kRows)
     for r in range(predt.shape[0]):
@@ -134,7 +144,7 @@ def main(args):
                                m,
                                num_boost_round=kRounds,
                                obj=softprob_obj,
-                               feval=merror,
+                               custom_metric=merror,
                                evals_result=custom_results,
                                evals=[(m, 'train')])
 
@@ -143,6 +153,7 @@ def main(args):
     native_results = {}
     # Use the same objective function defined in XGBoost.
     booster_native = xgb.train({'num_class': kClasses,
+                                "objective": "multi:softmax",
                                 'eval_metric': 'merror'},
                                m,
                                num_boost_round=kRounds,

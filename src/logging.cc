@@ -1,39 +1,32 @@
-/*!
- * Copyright 2015-2018 by Contributors
+/**
+ * Copyright 2015-2024, XGBoost Contributors
  * \file logging.cc
  * \brief Implementation of loggers.
  * \author Tianqi Chen
  */
-#include <rabit/rabit.h>
-
-#include <iostream>
-#include <map>
-
-#include <cstdarg>
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
-#include <exception>
-#include <iostream>
-#include <stdexcept>
-#include <string>
-
-#include "xgboost/parameter.h"
 #include "xgboost/logging.h"
-#include "xgboost/json.h"
+
+#include <cstdio>   // for printf, fflush  (h2oai fork)
+#include <cstdlib>  // for getenv          (h2oai fork)
+#include <string>  // for string
+
+#include "collective/communicator-inl.h"
 
 #if !defined(XGBOOST_STRICT_R_MODE) || XGBOOST_STRICT_R_MODE == 0
 // Override logging mechanism for non-R interfaces
 void dmlc::CustomLogMessage::Log(const std::string& msg) {
+  // h2oai fork: when DAI_XGBOOST_AVOID_LOGGER is set, bypass the registered log
+  // callback and print directly. Works around a DAI logger-hook deadlock
+  // (env var set in h2oaicore/systemutils_basic.py).
   if (getenv("DAI_XGBOOST_AVOID_LOGGER")) {
-        printf("[XGBoost] [%s]\n", msg.c_str());
-        fflush(stdout);
-  } else {
-    const xgboost::LogCallbackRegistry *registry =
-        xgboost::LogCallbackRegistryStore::Get();
-    auto callback = registry->Get();
-    callback(msg.c_str());
+    printf("[XGBoost] [%s]\n", msg.c_str());
+    fflush(stdout);
+    return;
   }
+  const xgboost::LogCallbackRegistry *registry =
+      xgboost::LogCallbackRegistryStore::Get();
+  auto callback = registry->Get();
+  callback(msg.c_str());
 }
 
 namespace xgboost {
@@ -46,7 +39,7 @@ ConsoleLogger::~ConsoleLogger() {
 
 TrackerLogger::~TrackerLogger() {
   log_stream_ << '\n';
-  rabit::TrackerPrint(log_stream_.str());
+  collective::Print(log_stream_.str());
 }
 
 }  // namespace xgboost

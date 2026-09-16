@@ -26,6 +26,10 @@ NVL <- function(x, val) {
            'multi:softprob', 'rank:pairwise', 'rank:ndcg', 'rank:map'))
 }
 
+.RANKING_OBJECTIVES <- function() {
+  return(c('rank:pairwise', 'rank:ndcg', 'rank:map'))
+}
+
 
 #
 # Low-level functions for boosting --------------------------------------------
@@ -38,11 +42,11 @@ check.booster.params <- function(params, ...) {
     stop("params must be a list")
 
   # in R interface, allow for '.' instead of '_' in parameter names
-  names(params) <- gsub("\\.", "_", names(params))
+  names(params) <- gsub(".", "_", names(params), fixed = TRUE)
 
   # merge parameters from the params and the dots-expansion
   dot_params <- list(...)
-  names(dot_params) <- gsub("\\.", "_", names(dot_params))
+  names(dot_params) <- gsub(".", "_", names(dot_params), fixed = TRUE)
   if (length(intersect(names(params),
                        names(dot_params))) > 0)
     stop("Same parameters in 'params' and in the call are not allowed. Please check your 'params' list.")
@@ -82,7 +86,7 @@ check.booster.params <- function(params, ...) {
 
   # interaction constraints parser (convert from list of column indices to string)
   if (!is.null(params[['interaction_constraints']]) &&
-      typeof(params[['interaction_constraints']]) != "character"){
+      typeof(params[['interaction_constraints']]) != "character") {
     # check input class
     if (!identical(class(params[['interaction_constraints']]), 'list')) stop('interaction_constraints should be class list')
     if (!all(unique(sapply(params[['interaction_constraints']], class)) %in% c('numeric', 'integer'))) {
@@ -92,6 +96,14 @@ check.booster.params <- function(params, ...) {
     # recast parameter as string
     interaction_constraints <- sapply(params[['interaction_constraints']], function(x) paste0('[', paste(x, collapse = ','), ']'))
     params[['interaction_constraints']] <- paste0('[', paste(interaction_constraints, collapse = ','), ']')
+  }
+
+  # for evaluation metrics, should generate multiple entries per metric
+  if (NROW(params[['eval_metric']]) > 1) {
+    eval_metrics <- as.list(params[["eval_metric"]])
+    names(eval_metrics) <- rep("eval_metric", length(eval_metrics))
+    params_without_ev_metrics <- within(params, rm("eval_metric"))
+    params <- c(params_without_ev_metrics, eval_metrics)
   }
   return(params)
 }
@@ -134,27 +146,49 @@ check.custom.eval <- function(env = parent.frame()) {
   if (!is.null(env$feval) &&
       is.null(env$maximize) && (
         !is.null(env$early_stopping_rounds) ||
-        has.callbacks(env$callbacks, 'cb.early.stop')))
+        has.callbacks(env$callbacks, "early_stop")))
     stop("Please set 'maximize' to indicate whether the evaluation metric needs to be maximized or not")
 }
 
 
 # Update a booster handle for an iteration with dtrain data
-xgb.iter.update <- function(booster_handle, dtrain, iter, obj = NULL) {
-  if (!identical(class(booster_handle), "xgb.Booster.handle")) {
-    stop("booster_handle must be of xgb.Booster.handle class")
-  }
+xgb.iter.update <- function(bst, dtrain, iter, obj) {
   if (!inherits(dtrain, "xgb.DMatrix")) {
     stop("dtrain must be of xgb.DMatrix class")
   }
+  handle <- xgb.get.handle(bst)
 
   if (is.null(obj)) {
-    .Call(XGBoosterUpdateOneIter_R, booster_handle, as.integer(iter), dtrain)
+    .Call(XGBoosterUpdateOneIter_R, handle, as.integer(iter), dtrain)
   } else {
-    pred <- predict(booster_handle, dtrain, outputmargin = TRUE, training = TRUE,
-                    ntreelimit = 0)
+    pred <- predict(
+      bst,
+      dtrain,
+      outputmargin = TRUE,
+      training = TRUE,
+      reshape = TRUE
+    )
     gpair <- obj(pred, dtrain)
-    .Call(XGBoosterBoostOneIter_R, booster_handle, dtrain, gpair$grad, gpair$hess)
+    n_samples <- dim(dtrain)[1]
+    grad <- gpair$grad
+    hess <- gpair$hess
+
+    if ((is.matrix(grad) && dim(grad)[1] != n_samples) ||
+        (is.vector(grad) && length(grad) != n_samples) ||
+        (is.vector(grad) != is.vector(hess))) {
+      warning(paste(
+        "Since 2.1.0, the shape of the gradient and hessian is required to be ",
+        "(n_samples, n_targets) or (n_samples, n_classes). Will reshape assuming ",
+        "column-major order.",
+        sep = ""
+      ))
+      grad <- matrix(grad, nrow = n_samples)
+      hess <- matrix(hess, nrow = n_samples)
+    }
+
+    .Call(
+      XGBoosterTrainOneIter_R, handle, dtrain, iter, grad, hess
+    )
   }
   return(TRUE)
 }
@@ -163,23 +197,22 @@ xgb.iter.update <- function(booster_handle, dtrain, iter, obj = NULL) {
 # Evaluate one iteration.
 # Returns a named vector of evaluation metrics
 # with the names in a 'datasetname-metricname' format.
-xgb.iter.eval <- function(booster_handle, watchlist, iter, feval = NULL) {
-  if (!identical(class(booster_handle), "xgb.Booster.handle"))
-    stop("class of booster_handle must be xgb.Booster.handle")
+xgb.iter.eval <- function(bst, evals, iter, feval) {
+  handle <- xgb.get.handle(bst)
 
-  if (length(watchlist) == 0)
+  if (length(evals) == 0)
     return(NULL)
 
-  evnames <- names(watchlist)
+  evnames <- names(evals)
   if (is.null(feval)) {
-    msg <- .Call(XGBoosterEvalOneIter_R, booster_handle, as.integer(iter), watchlist, as.list(evnames))
+    msg <- .Call(XGBoosterEvalOneIter_R, handle, as.integer(iter), evals, as.list(evnames))
     mat <- matrix(strsplit(msg, '\\s+|:')[[1]][-1], nrow = 2)
     res <- structure(as.numeric(mat[2, ]), names = mat[1, ])
   } else {
-    res <- sapply(seq_along(watchlist), function(j) {
-      w <- watchlist[[j]]
+    res <- sapply(seq_along(evals), function(j) {
+      w <- evals[[j]]
       ## predict using all trees
-      preds <- predict(booster_handle, w, outputmargin = TRUE, iterationrange = c(1, 1))
+      preds <- predict(bst, w, outputmargin = TRUE, reshape = TRUE, iterationrange = "all")
       eval_res <- feval(preds, w)
       out <- eval_res$value
       names(out) <- paste0(evnames[j], "-", eval_res$metric)
@@ -206,35 +239,45 @@ convert.labels <- function(labels, objective_name) {
 }
 
 # Generates random (stratified if needed) CV folds
-generate.cv.folds <- function(nfold, nrows, stratified, label, params) {
+generate.cv.folds <- function(nfold, nrows, stratified, label, group, params) {
+  if (NROW(group)) {
+    if (stratified) {
+      warning(
+        paste0(
+          "Stratified splitting is not supported when using 'group' attribute.",
+          " Will use unstratified splitting."
+        )
+      )
+    }
+    return(generate.group.folds(nfold, group))
+  }
+  objective <- params$objective
+  if (!is.character(objective)) {
+    warning("Will use unstratified splitting (custom objective used)")
+    stratified <- FALSE
+  }
+  # cannot stratify if label is NULL
+  if (stratified && is.null(label)) {
+    warning("Will use unstratified splitting (no 'labels' available)")
+    stratified <- FALSE
+  }
 
   # cannot do it for rank
-  objective <- params$objective
   if (is.character(objective) && strtrim(objective, 5) == 'rank:') {
-    stop("\n\tAutomatic generation of CV-folds is not implemented for ranking!\n",
+    stop("\n\tAutomatic generation of CV-folds is not implemented for ranking without 'group' field!\n",
          "\tConsider providing pre-computed CV-folds through the 'folds=' parameter.\n")
   }
   # shuffle
   rnd_idx <- sample.int(nrows)
-  if (stratified &&
-      length(label) == length(rnd_idx)) {
+  if (stratified && length(label) == length(rnd_idx)) {
     y <- label[rnd_idx]
-    # WARNING: some heuristic logic is employed to identify classification setting!
     #  - For classification, need to convert y labels to factor before making the folds,
     #    and then do stratification by factor levels.
     #  - For regression, leave y numeric and do stratification by quantiles.
     if (is.character(objective)) {
-      y <- convert.labels(y, params$objective)
-    } else {
-      # If no 'objective' given in params, it means that user either wants to
-      # use the default 'reg:squarederror' objective or has provided a custom
-      # obj function.  Here, assume classification setting when y has 5 or less
-      # unique values:
-      if (length(unique(y)) <= 5) {
-        y <- factor(y)
-      }
+      y <- convert.labels(y, objective)
     }
-    folds <- xgb.createFolds(y, nfold)
+    folds <- xgb.createFolds(y = y, k = nfold)
   } else {
     # make simple non-stratified folds
     kstep <- length(rnd_idx) %/% nfold
@@ -248,11 +291,33 @@ generate.cv.folds <- function(nfold, nrows, stratified, label, params) {
   return(folds)
 }
 
+generate.group.folds <- function(nfold, group) {
+  ngroups <- length(group) - 1
+  if (ngroups < nfold) {
+    stop("DMatrix has fewer groups than folds.")
+  }
+  seq_groups <- seq_len(ngroups)
+  indices <- lapply(seq_groups, function(gr) seq(group[gr] + 1, group[gr + 1]))
+  assignments <- base::split(seq_groups, as.integer(seq_groups %% nfold))
+  assignments <- unname(assignments)
+
+  out <- vector("list", nfold)
+  randomized_groups <- sample(ngroups)
+  for (idx in seq_len(nfold)) {
+    groups_idx_test <- randomized_groups[assignments[[idx]]]
+    groups_test <- indices[groups_idx_test]
+    idx_test <- unlist(groups_test)
+    attributes(idx_test)$group_test <- lengths(groups_test)
+    attributes(idx_test)$group_train <- lengths(indices[-groups_idx_test])
+    out[[idx]] <- idx_test
+  }
+  return(out)
+}
+
 # Creates CV folds stratified by the values of y.
 # It was borrowed from caret::createFolds and simplified
 # by always returning an unnamed list of fold indices.
-xgb.createFolds <- function(y, k = 10)
-{
+xgb.createFolds <- function(y, k) {
   if (is.numeric(y)) {
     ## Group the numeric data based on their magnitudes
     ## and sample within those groups.
@@ -321,16 +386,45 @@ xgb.createFolds <- function(y, k = 10)
 #' @name xgboost-deprecated
 NULL
 
-#' Do not use \code{\link[base]{saveRDS}} or \code{\link[base]{save}} for long-term archival of
-#' models. Instead, use \code{\link{xgb.save}} or \code{\link{xgb.save.raw}}.
+#' @title Model Serialization and Compatibility
+#' @description
 #'
-#' It is a common practice to use the built-in \code{\link[base]{saveRDS}} function (or
-#' \code{\link[base]{save}}) to persist R objects to the disk. While it is possible to persist
-#' \code{xgb.Booster} objects using \code{\link[base]{saveRDS}}, it is not advisable to do so if
-#' the model is to be accessed in the future. If you train a model with the current version of
-#' XGBoost and persist it with \code{\link[base]{saveRDS}}, the model is not guaranteed to be
-#' accessible in later releases of XGBoost. To ensure that your model can be accessed in future
-#' releases of XGBoost, use \code{\link{xgb.save}} or \code{\link{xgb.save.raw}} instead.
+#' When it comes to serializing XGBoost models, it's possible to use R serializers such as
+#' \link{save} or \link{saveRDS} to serialize an XGBoost R model, but XGBoost also provides
+#' its own serializers with better compatibility guarantees, which allow loading
+#' said models in other language bindings of XGBoost.
+#'
+#' Note that an `xgb.Booster` object, outside of its core components, might also keep:\itemize{
+#' \item Additional model configuration (accessible through \link{xgb.config}),
+#' which includes model fitting parameters like `max_depth` and runtime parameters like `nthread`.
+#' These are not necessarily useful for prediction/importance/plotting.
+#' \item Additional R-specific attributes  - e.g. results of callbacks, such as evaluation logs,
+#' which are kept as a `data.table` object, accessible through `attributes(model)$evaluation_log`
+#' if present.
+#' }
+#'
+#' The first one (configurations) does not have the same compatibility guarantees as
+#' the model itself, including attributes that are set and accessed through \link{xgb.attributes} - that is, such configuration
+#' might be lost after loading the booster in a different XGBoost version, regardless of the
+#' serializer that was used. These are saved when using \link{saveRDS}, but will be discarded
+#' if loaded into an incompatible XGBoost version. They are not saved when using XGBoost's
+#' serializers from its public interface including \link{xgb.save} and \link{xgb.save.raw}.
+#'
+#' The second ones (R attributes) are not part of the standard XGBoost model structure, and thus are
+#' not saved when using XGBoost's own serializers. These attributes are only used for informational
+#' purposes, such as keeping track of evaluation metrics as the model was fit, or saving the R
+#' call that produced the model, but are otherwise not used for prediction / importance / plotting / etc.
+#' These R attributes are only preserved when using R's serializers.
+#'
+#' Note that XGBoost models in R starting from version `2.1.0` and onwards, and XGBoost models
+#' before version `2.1.0`; have a very different R object structure and are incompatible with
+#' each other. Hence, models that were saved with R serializers live `saveRDS` or `save` before
+#' version `2.1.0` will not work with latter `xgboost` versions and vice versa. Be aware that
+#' the structure of R model objects could in theory change again in the future, so XGBoost's serializers
+#' should be preferred for long-term storage.
+#'
+#' Furthermore, note that using the package `qs` for serialization will require version 0.26 or
+#' higher of said package, and will have the same compatibility restrictions as R serializers.
 #'
 #' @details
 #' Use \code{\link{xgb.save}} to save the XGBoost model as a stand-alone file. You may opt into
@@ -343,26 +437,29 @@ NULL
 #' The \code{\link{xgb.save.raw}} function is useful if you'd like to persist the XGBoost model
 #' as part of another R object.
 #'
-#' Note: Do not use \code{\link{xgb.serialize}} to store models long-term. It persists not only the
-#' model but also internal configurations and parameters, and its format is not stable across
-#' multiple XGBoost versions. Use \code{\link{xgb.serialize}} only for checkpointing.
+#' Use \link{saveRDS} if you require the R-specific attributes that a booster might have, such
+#' as evaluation logs, but note that future compatibility of such objects is outside XGBoost's
+#' control as it relies on R's serialization format (see e.g. the details section in
+#' \link{serialize} and \link{save} from base R).
 #'
 #' For more details and explanation about model persistence and archival, consult the page
 #' \url{https://xgboost.readthedocs.io/en/latest/tutorials/saving_model.html}.
 #'
 #' @examples
 #' data(agaricus.train, package='xgboost')
-#' bst <- xgboost(data = agaricus.train$data, label = agaricus.train$label, max_depth = 2,
-#'                eta = 1, nthread = 2, nrounds = 2, objective = "binary:logistic")
+#' bst <- xgb.train(data = xgb.DMatrix(agaricus.train$data, label = agaricus.train$label),
+#'                  max_depth = 2, eta = 1, nthread = 2, nrounds = 2,
+#'                  objective = "binary:logistic")
 #'
 #' # Save as a stand-alone file; load it with xgb.load()
-#' xgb.save(bst, 'xgb.model')
-#' bst2 <- xgb.load('xgb.model')
+#' fname <- file.path(tempdir(), "xgb_model.ubj")
+#' xgb.save(bst, fname)
+#' bst2 <- xgb.load(fname)
 #'
 #' # Save as a stand-alone file (JSON); load it with xgb.load()
-#' xgb.save(bst, 'xgb.model.json')
-#' bst2 <- xgb.load('xgb.model.json')
-#' if (file.exists('xgb.model.json')) file.remove('xgb.model.json')
+#' fname <- file.path(tempdir(), "xgb_model.json")
+#' xgb.save(bst, fname)
+#' bst2 <- xgb.load(fname)
 #'
 #' # Save as a raw byte vector; load it with xgb.load.raw()
 #' xgb_bytes <- xgb.save.raw(bst)
@@ -373,12 +470,12 @@ NULL
 #' # Persist the R object. Here, saveRDS() is okay, since it doesn't persist
 #' # xgb.Booster directly. What's being persisted is the future-proof byte representation
 #' # as given by xgb.save.raw().
-#' saveRDS(obj, 'my_object.rds')
+#' fname <- file.path(tempdir(), "my_object.Rds")
+#' saveRDS(obj, fname)
 #' # Read back the R object
-#' obj2 <- readRDS('my_object.rds')
+#' obj2 <- readRDS(fname)
 #' # Re-construct xgb.Booster object from the bytes
 #' bst2 <- xgb.load.raw(obj2$xgb_model_bytes)
-#' if (file.exists('my_object.rds')) file.remove('my_object.rds')
 #'
 #' @name a-compatibility-note-for-saveRDS-save
 NULL
@@ -394,7 +491,8 @@ depr_par_lut <- matrix(c(
   'plot.height', 'plot_height',
   'plot.width', 'plot_width',
   'n_first_tree', 'trees',
-  'dummy', 'DUMMY'
+  'dummy', 'DUMMY',
+  'watchlist', 'evals'
 ), ncol = 2, byrow = TRUE)
 colnames(depr_par_lut) <- c('old', 'new')
 

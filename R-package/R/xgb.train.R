@@ -18,17 +18,37 @@
 #' 2.1. Parameters for Tree Booster
 #'
 #' \itemize{
-#'   \item \code{eta} control the learning rate: scale the contribution of each tree by a factor of \code{0 < eta < 1} when it is added to the current approximation. Used to prevent overfitting by making the boosting process more conservative. Lower value for \code{eta} implies larger value for \code{nrounds}: low \code{eta} value means model more robust to overfitting but slower to compute. Default: 0.3
-#'   \item \code{gamma} minimum loss reduction required to make a further partition on a leaf node of the tree. the larger, the more conservative the algorithm will be.
+#'   \item{ \code{eta} control the learning rate: scale the contribution of each tree by a factor of \code{0 < eta < 1}
+#'          when it is added to the current approximation.
+#'          Used to prevent overfitting by making the boosting process more conservative.
+#'          Lower value for \code{eta} implies larger value for \code{nrounds}: low \code{eta} value means model
+#'          more robust to overfitting but slower to compute. Default: 0.3}
+#'   \item{ \code{gamma} minimum loss reduction required to make a further partition on a leaf node of the tree.
+#'          the larger, the more conservative the algorithm will be.}
 #'   \item \code{max_depth} maximum depth of a tree. Default: 6
-#'   \item \code{min_child_weight} minimum sum of instance weight (hessian) needed in a child. If the tree partition step results in a leaf node with the sum of instance weight less than min_child_weight, then the building process will give up further partitioning. In linear regression mode, this simply corresponds to minimum number of instances needed to be in each node. The larger, the more conservative the algorithm will be. Default: 1
-#'   \item \code{subsample} subsample ratio of the training instance. Setting it to 0.5 means that xgboost randomly collected half of the data instances to grow trees and this will prevent overfitting. It makes computation shorter (because less data to analyse). It is advised to use this parameter with \code{eta} and increase \code{nrounds}. Default: 1
+#'   \item{\code{min_child_weight} minimum sum of instance weight (hessian) needed in a child.
+#'         If the tree partition step results in a leaf node with the sum of instance weight less than min_child_weight,
+#'         then the building process will give up further partitioning.
+#'         In linear regression mode, this simply corresponds to minimum number of instances needed to be in each node.
+#'         The larger, the more conservative the algorithm will be. Default: 1}
+#'   \item{ \code{subsample} subsample ratio of the training instance.
+#'         Setting it to 0.5 means that xgboost randomly collected half of the data instances to grow trees
+#'         and this will prevent overfitting. It makes computation shorter (because less data to analyse).
+#'         It is advised to use this parameter with \code{eta} and increase \code{nrounds}. Default: 1}
 #'   \item \code{colsample_bytree} subsample ratio of columns when constructing each tree. Default: 1
 #'   \item \code{lambda} L2 regularization term on weights. Default: 1
 #'   \item \code{alpha} L1 regularization term on weights. (there is no L1 reg on bias because it is not important). Default: 0
-#'   \item \code{num_parallel_tree} Experimental parameter. number of trees to grow per round. Useful to test Random Forest through XGBoost (set \code{colsample_bytree < 1}, \code{subsample  < 1}  and \code{round = 1}) accordingly. Default: 1
-#'   \item \code{monotone_constraints} A numerical vector consists of \code{1}, \code{0} and \code{-1} with its length equals to the number of features in the training data. \code{1} is increasing, \code{-1} is decreasing and \code{0} is no constraint.
-#'   \item \code{interaction_constraints} A list of vectors specifying feature indices of permitted interactions. Each item of the list represents one permitted interaction where specified features are allowed to interact with each other. Feature index values should start from \code{0} (\code{0} references the first column).  Leave argument unspecified for no interaction constraints.
+#'   \item{ \code{num_parallel_tree} Experimental parameter. number of trees to grow per round.
+#'          Useful to test Random Forest through XGBoost
+#'          (set \code{colsample_bytree < 1}, \code{subsample  < 1}  and \code{round = 1}) accordingly.
+#'          Default: 1}
+#'   \item{ \code{monotone_constraints} A numerical vector consists of \code{1}, \code{0} and \code{-1} with its length
+#'          equals to the number of features in the training data.
+#'          \code{1} is increasing, \code{-1} is decreasing and \code{0} is no constraint.}
+#'   \item{ \code{interaction_constraints} A list of vectors specifying feature indices of permitted interactions.
+#'        Each item of the list represents one permitted interaction where specified features are allowed to interact with each other.
+#'        Feature index values should start from \code{0} (\code{0} references the first column).
+#'        Leave argument unspecified for no interaction constraints.}
 #' }
 #'
 #' 2.2. Parameters for Linear Booster
@@ -42,72 +62,113 @@
 #' 3. Task Parameters
 #'
 #' \itemize{
-#' \item \code{objective} specify the learning task and the corresponding learning objective, users can pass a self-defined function to it. The default objective options are below:
+#' \item{ \code{objective} specify the learning task and the corresponding learning objective, users can pass a self-defined function to it.
+#'        The default objective options are below:
 #'   \itemize{
 #'     \item \code{reg:squarederror} Regression with squared loss (Default).
-#'     \item \code{reg:squaredlogerror}: regression with squared log loss \eqn{1/2 * (log(pred + 1) - log(label + 1))^2}. All inputs are required to be greater than -1. Also, see metric rmsle for possible issue with this objective.
+#'     \item{ \code{reg:squaredlogerror}: regression with squared log loss \eqn{1/2 * (log(pred + 1) - log(label + 1))^2}.
+#'            All inputs are required to be greater than -1.
+#'            Also, see metric rmsle for possible issue with this objective.}
 #'     \item \code{reg:logistic} logistic regression.
 #'     \item \code{reg:pseudohubererror}: regression with Pseudo Huber loss, a twice differentiable alternative to absolute loss.
 #'     \item \code{binary:logistic} logistic regression for binary classification. Output probability.
 #'     \item \code{binary:logitraw} logistic regression for binary classification, output score before logistic transformation.
 #'     \item \code{binary:hinge}: hinge loss for binary classification. This makes predictions of 0 or 1, rather than producing probabilities.
-#'     \item \code{count:poisson}: Poisson regression for count data, output mean of Poisson distribution. \code{max_delta_step} is set to 0.7 by default in poisson regression (used to safeguard optimization).
-#'     \item \code{survival:cox}: Cox regression for right censored survival time data (negative values are considered right censored). Note that predictions are returned on the hazard ratio scale (i.e., as HR = exp(marginal_prediction) in the proportional hazard function \code{h(t) = h0(t) * HR)}.
-#'     \item \code{survival:aft}: Accelerated failure time model for censored survival time data. See \href{https://xgboost.readthedocs.io/en/latest/tutorials/aft_survival_analysis.html}{Survival Analysis with Accelerated Failure Time} for details.
+#'     \item{ \code{count:poisson}: Poisson regression for count data, output mean of Poisson distribution.
+#'            \code{max_delta_step} is set to 0.7 by default in poisson regression (used to safeguard optimization).}
+#'     \item{ \code{survival:cox}: Cox regression for right censored survival time data (negative values are considered right censored).
+#'            Note that predictions are returned on the hazard ratio scale (i.e., as HR = exp(marginal_prediction) in the proportional
+#'            hazard function \code{h(t) = h0(t) * HR)}.}
+#'     \item{ \code{survival:aft}: Accelerated failure time model for censored survival time data. See
+#'            \href{https://xgboost.readthedocs.io/en/latest/tutorials/aft_survival_analysis.html}{Survival Analysis with Accelerated Failure Time}
+#'            for details.}
 #'     \item \code{aft_loss_distribution}: Probability Density Function used by \code{survival:aft} and \code{aft-nloglik} metric.
-#'     \item \code{multi:softmax} set xgboost to do multiclass classification using the softmax objective. Class is represented by a number and should be from 0 to \code{num_class - 1}.
-#'     \item \code{multi:softprob} same as softmax, but prediction outputs a vector of ndata * nclass elements, which can be further reshaped to ndata, nclass matrix. The result contains predicted probabilities of each data point belonging to each class.
+#'     \item{ \code{multi:softmax} set xgboost to do multiclass classification using the softmax objective.
+#'            Class is represented by a number and should be from 0 to \code{num_class - 1}.}
+#'     \item{ \code{multi:softprob} same as softmax, but prediction outputs a vector of ndata * nclass elements, which can be
+#'            further reshaped to ndata, nclass matrix. The result contains predicted probabilities of each data point belonging
+#'            to each class.}
 #'     \item \code{rank:pairwise} set xgboost to do ranking task by minimizing the pairwise loss.
-#'     \item \code{rank:ndcg}: Use LambdaMART to perform list-wise ranking where \href{https://en.wikipedia.org/wiki/Discounted_cumulative_gain}{Normalized Discounted Cumulative Gain (NDCG)} is maximized.
-#'     \item \code{rank:map}: Use LambdaMART to perform list-wise ranking where \href{https://en.wikipedia.org/wiki/Evaluation_measures_(information_retrieval)#Mean_average_precision}{Mean Average Precision (MAP)} is maximized.
-#'     \item \code{reg:gamma}: gamma regression with log-link. Output is a mean of gamma distribution. It might be useful, e.g., for modeling insurance claims severity, or for any outcome that might be \href{https://en.wikipedia.org/wiki/Gamma_distribution#Applications}{gamma-distributed}.
-#'     \item \code{reg:tweedie}: Tweedie regression with log-link. It might be useful, e.g., for modeling total loss in insurance, or for any outcome that might be \href{https://en.wikipedia.org/wiki/Tweedie_distribution#Applications}{Tweedie-distributed}.
+#'     \item{ \code{rank:ndcg}: Use LambdaMART to perform list-wise ranking where
+#'            \href{https://en.wikipedia.org/wiki/Discounted_cumulative_gain}{Normalized Discounted Cumulative Gain (NDCG)} is maximized.}
+#'     \item{ \code{rank:map}: Use LambdaMART to perform list-wise ranking where
+#'            \href{https://en.wikipedia.org/wiki/Evaluation_measures_(information_retrieval)#Mean_average_precision}{Mean Average Precision (MAP)}
+#'            is maximized.}
+#'     \item{ \code{reg:gamma}: gamma regression with log-link.
+#'            Output is a mean of gamma distribution.
+#'            It might be useful, e.g., for modeling insurance claims severity, or for any outcome that might be
+#'            \href{https://en.wikipedia.org/wiki/Gamma_distribution#Applications}{gamma-distributed}.}
+#'     \item{ \code{reg:tweedie}: Tweedie regression with log-link.
+#'            It might be useful, e.g., for modeling total loss in insurance, or for any outcome that might be
+#'            \href{https://en.wikipedia.org/wiki/Tweedie_distribution#Applications}{Tweedie-distributed}.}
 #'   }
+#'  }
 #'   \item \code{base_score} the initial prediction score of all instances, global bias. Default: 0.5
-#'   \item \code{eval_metric} evaluation metrics for validation data. Users can pass a self-defined function to it. Default: metric will be assigned according to objective(rmse for regression, and error for classification, mean average precision for ranking). List is provided in detail section.
+#'   \item{ \code{eval_metric} evaluation metrics for validation data.
+#'          Users can pass a self-defined function to it.
+#'          Default: metric will be assigned according to objective
+#'          (rmse for regression, and error for classification, mean average precision for ranking).
+#'          List is provided in detail section.}
 #' }
 #'
 #' @param data training dataset. \code{xgb.train} accepts only an \code{xgb.DMatrix} as the input.
 #'        \code{xgboost}, in addition, also accepts \code{matrix}, \code{dgCMatrix}, or name of a local data file.
 #' @param nrounds max number of boosting iterations.
-#' @param watchlist named list of xgb.DMatrix datasets to use for evaluating model performance.
+#' @param evals Named list of `xgb.DMatrix` datasets to use for evaluating model performance.
 #'        Metrics specified in either \code{eval_metric} or \code{feval} will be computed for each
 #'        of these datasets during each boosting iteration, and stored in the end as a field named
 #'        \code{evaluation_log} in the resulting object. When either \code{verbose>=1} or
-#'        \code{\link{cb.print.evaluation}} callback is engaged, the performance results are continuously
+#'        \code{\link{xgb.cb.print.evaluation}} callback is engaged, the performance results are continuously
 #'        printed out during the training.
-#'        E.g., specifying \code{watchlist=list(validation1=mat1, validation2=mat2)} allows to track
+#'        E.g., specifying \code{evals=list(validation1=mat1, validation2=mat2)} allows to track
 #'        the performance of each round's model on mat1 and mat2.
-#' @param obj customized objective function. Returns gradient and second order
-#'        gradient with given prediction and dtrain.
-#' @param feval customized evaluation function. Returns
-#'        \code{list(metric='metric-name', value='metric-value')} with given
-#'        prediction and dtrain.
+#' @param obj customized objective function. Should take two arguments: the first one will be the
+#'        current predictions (either a numeric vector or matrix depending on the number of targets / classes),
+#'        and the second one will be the `data` DMatrix object that is used for training.
+#'
+#'        It should return a list with two elements `grad` and `hess` (in that order), as either
+#'        numeric vectors or numeric matrices depending on the number of targets / classes (same
+#'        dimension as the predictions that are passed as first argument).
+#' @param feval customized evaluation function. Just like `obj`, should take two arguments, with
+#'        the first one being the predictions and the second one the `data` DMatrix.
+#'
+#'        Should return a list with two elements `metric` (name that will be displayed for this metric,
+#'        should be a string / character), and `value` (the number that the function calculates, should
+#'        be a numeric scalar).
+#'
+#'        Note that even if passing `feval`, objectives also have an associated default metric that
+#'        will be evaluated in addition to it. In order to disable the built-in metric, one can pass
+#'        parameter `disable_default_eval_metric = TRUE`.
 #' @param verbose If 0, xgboost will stay silent. If 1, it will print information about performance.
 #'        If 2, some additional information will be printed out.
 #'        Note that setting \code{verbose > 0} automatically engages the
-#'        \code{cb.print.evaluation(period=1)} callback function.
+#'        \code{xgb.cb.print.evaluation(period=1)} callback function.
 #' @param print_every_n Print each n-th iteration evaluation messages when \code{verbose>0}.
 #'        Default is 1 which means all messages are printed. This parameter is passed to the
-#'        \code{\link{cb.print.evaluation}} callback.
+#'        \code{\link{xgb.cb.print.evaluation}} callback.
 #' @param early_stopping_rounds If \code{NULL}, the early stopping function is not triggered.
 #'        If set to an integer \code{k}, training with a validation set will stop if the performance
 #'        doesn't improve for \code{k} rounds.
-#'        Setting this parameter engages the \code{\link{cb.early.stop}} callback.
+#'        Setting this parameter engages the \code{\link{xgb.cb.early.stop}} callback.
 #' @param maximize If \code{feval} and \code{early_stopping_rounds} are set,
 #'        then this parameter must be set as well.
 #'        When it is \code{TRUE}, it means the larger the evaluation score the better.
-#'        This parameter is passed to the \code{\link{cb.early.stop}} callback.
+#'        This parameter is passed to the \code{\link{xgb.cb.early.stop}} callback.
 #' @param save_period when it is non-NULL, model is saved to disk after every \code{save_period} rounds,
-#'        0 means save at the end. The saving is handled by the \code{\link{cb.save.model}} callback.
+#'        0 means save at the end. The saving is handled by the \code{\link{xgb.cb.save.model}} callback.
 #' @param save_name the name or path for periodically saved model file.
 #' @param xgb_model a previously built model to continue the training from.
 #'        Could be either an object of class \code{xgb.Booster}, or its raw data, or the name of a
 #'        file with a previously saved model.
 #' @param callbacks a list of callback functions to perform various task during boosting.
-#'        See \code{\link{callbacks}}. Some of the callbacks are automatically created depending on the
+#'        See \code{\link{xgb.Callback}}. Some of the callbacks are automatically created depending on the
 #'        parameters' values. User can provide either existing or their own callback methods in order
 #'        to customize the training process.
+#'
+#'        Note that some callbacks might try to leave attributes in the resulting model object,
+#'        such as an evaluation log (a `data.table` object) - be aware that these objects are kept
+#'        as R attributes, and thus do not get saved when using XGBoost's own serializaters like
+#'        \link{xgb.save} (but are kept when using R serializers like \link{saveRDS}).
 #' @param ... other parameters to pass to \code{params}.
 #' @param label vector of response values. Should not be provided when data is
 #'        a local data file name or an \code{xgb.DMatrix}.
@@ -116,15 +177,24 @@
 #'        This parameter is only used when input is a dense matrix.
 #' @param weight a vector indicating the weight for each row of the input.
 #'
+#' @return
+#' An object of class \code{xgb.Booster}.
+#'
 #' @details
 #' These are the training functions for \code{xgboost}.
 #'
-#' The \code{xgb.train} interface supports advanced features such as \code{watchlist},
+#' The \code{xgb.train} interface supports advanced features such as \code{evals},
 #' customized objective and evaluation metric functions, therefore it is more flexible
 #' than the \code{xgboost} interface.
 #'
 #' Parallelization is automatically enabled if \code{OpenMP} is present.
-#' Number of threads can also be manually specified via \code{nthread} parameter.
+#' Number of threads can also be manually specified via the \code{nthread}
+#' parameter.
+#'
+#' While in other interfaces, the default random seed defaults to zero, in R, if a parameter `seed`
+#' is not manually supplied, it will generate a random seed through R's own random number generator,
+#' whose seed in turn is controllable through `set.seed`. If `seed` is passed, it will override the
+#' RNG from R.
 #'
 #' The evaluation metric is chosen automatically by XGBoost (according to the objective)
 #' when the \code{eval_metric} parameter is not provided.
@@ -141,45 +211,39 @@
 #'      \item \code{merror} Multiclass classification error rate. It is calculated as \code{(# wrong cases) / (# all cases)}.
 #'      \item \code{mae} Mean absolute error
 #'      \item \code{mape} Mean absolute percentage error
-#'      \item \code{auc} Area under the curve. \url{https://en.wikipedia.org/wiki/Receiver_operating_characteristic#'Area_under_curve} for ranking evaluation.
+#'      \item{ \code{auc} Area under the curve.
+#'             \url{https://en.wikipedia.org/wiki/Receiver_operating_characteristic#'Area_under_curve} for ranking evaluation.}
 #'      \item \code{aucpr} Area under the PR curve. \url{https://en.wikipedia.org/wiki/Precision_and_recall} for ranking evaluation.
 #'      \item \code{ndcg} Normalized Discounted Cumulative Gain (for ranking task). \url{https://en.wikipedia.org/wiki/NDCG}
 #'   }
 #'
 #' The following callbacks are automatically created when certain parameters are set:
 #' \itemize{
-#'   \item \code{cb.print.evaluation} is turned on when \code{verbose > 0};
+#'   \item \code{xgb.cb.print.evaluation} is turned on when \code{verbose > 0};
 #'         and the \code{print_every_n} parameter is passed to it.
-#'   \item \code{cb.evaluation.log} is on when \code{watchlist} is present.
-#'   \item \code{cb.early.stop}: when \code{early_stopping_rounds} is set.
-#'   \item \code{cb.save.model}: when \code{save_period > 0} is set.
+#'   \item \code{xgb.cb.evaluation.log} is on when \code{evals} is present.
+#'   \item \code{xgb.cb.early.stop}: when \code{early_stopping_rounds} is set.
+#'   \item \code{xgb.cb.save.model}: when \code{save_period > 0} is set.
 #' }
 #'
-#' @return
-#' An object of class \code{xgb.Booster} with the following elements:
-#' \itemize{
-#'   \item \code{handle} a handle (pointer) to the xgboost model in memory.
-#'   \item \code{raw} a cached memory dump of the xgboost model saved as R's \code{raw} type.
-#'   \item \code{niter} number of boosting iterations.
-#'   \item \code{evaluation_log} evaluation history stored as a \code{data.table} with the
-#'         first column corresponding to iteration number and the rest corresponding to evaluation
-#'         metrics' values. It is created by the \code{\link{cb.evaluation.log}} callback.
-#'   \item \code{call} a function call.
-#'   \item \code{params} parameters that were passed to the xgboost library. Note that it does not
-#'         capture parameters changed by the \code{\link{cb.reset.parameters}} callback.
-#'   \item \code{callbacks} callback functions that were either automatically assigned or
-#'         explicitly passed.
-#'   \item \code{best_iteration} iteration number with the best evaluation metric value
-#'         (only available with early stopping).
-#'   \item \code{best_score} the best evaluation metric value during early stopping.
-#'         (only available with early stopping).
-#'   \item \code{feature_names} names of the training dataset features
-#'         (only when column names were defined in training data).
-#'   \item \code{nfeatures} number of features in training data.
-#' }
+#' Note that objects of type `xgb.Booster` as returned by this function behave a bit differently
+#' from typical R objects (it's an 'altrep' list class), and it makes a separation between
+#' internal booster attributes (restricted to jsonifyable data), accessed through \link{xgb.attr}
+#' and shared between interfaces through serialization functions like \link{xgb.save}; and
+#' R-specific attributes (typically the result from a callback), accessed through \link{attributes}
+#' and \link{attr}, which are otherwise
+#' only used in the R interface, only kept when using R's serializers like \link{saveRDS}, and
+#' not anyhow used by functions like \link{predict.xgb.Booster}.
+#'
+#' Be aware that one such R attribute that is automatically added is `params` - this attribute
+#' is assigned from the `params` argument to this function, and is only meant to serve as a
+#' reference for what went into the booster, but is not used in other methods that take a booster
+#' object - so for example, changing the booster's configuration requires calling `xgb.config<-`
+#' or 'xgb.parameters<-', while simply modifying `attributes(model)$params$<...>` will have no
+#' effect elsewhere.
 #'
 #' @seealso
-#' \code{\link{callbacks}},
+#' \code{\link{xgb.Callback}},
 #' \code{\link{predict.xgb.Booster}},
 #' \code{\link{xgb.cv}}
 #'
@@ -192,17 +256,25 @@
 #' data(agaricus.train, package='xgboost')
 #' data(agaricus.test, package='xgboost')
 #'
-#' dtrain <- with(agaricus.train, xgb.DMatrix(data, label = label))
-#' dtest <- with(agaricus.test, xgb.DMatrix(data, label = label))
-#' watchlist <- list(train = dtrain, eval = dtest)
+#' ## Keep the number of threads to 1 for examples
+#' nthread <- 1
+#' data.table::setDTthreads(nthread)
+#'
+#' dtrain <- with(
+#'   agaricus.train, xgb.DMatrix(data, label = label, nthread = nthread)
+#' )
+#' dtest <- with(
+#'   agaricus.test, xgb.DMatrix(data, label = label, nthread = nthread)
+#' )
+#' evals <- list(train = dtrain, eval = dtest)
 #'
 #' ## A simple xgb.train example:
-#' param <- list(max_depth = 2, eta = 1, verbose = 0, nthread = 2,
+#' param <- list(max_depth = 2, eta = 1, nthread = nthread,
 #'               objective = "binary:logistic", eval_metric = "auc")
-#' bst <- xgb.train(param, dtrain, nrounds = 2, watchlist)
+#' bst <- xgb.train(param, dtrain, nrounds = 2, evals = evals, verbose = 0)
 #'
-#'
-#' ## An xgb.train example where custom objective and evaluation metric are used:
+#' ## An xgb.train example where custom objective and evaluation metric are
+#' ## used:
 #' logregobj <- function(preds, dtrain) {
 #'    labels <- getinfo(dtrain, "label")
 #'    preds <- 1/(1 + exp(-preds))
@@ -218,40 +290,40 @@
 #'
 #' # These functions could be used by passing them either:
 #' #  as 'objective' and 'eval_metric' parameters in the params list:
-#' param <- list(max_depth = 2, eta = 1, verbose = 0, nthread = 2,
+#' param <- list(max_depth = 2, eta = 1, nthread = nthread,
 #'               objective = logregobj, eval_metric = evalerror)
-#' bst <- xgb.train(param, dtrain, nrounds = 2, watchlist)
+#' bst <- xgb.train(param, dtrain, nrounds = 2, evals = evals, verbose = 0)
 #'
 #' #  or through the ... arguments:
-#' param <- list(max_depth = 2, eta = 1, verbose = 0, nthread = 2)
-#' bst <- xgb.train(param, dtrain, nrounds = 2, watchlist,
+#' param <- list(max_depth = 2, eta = 1, nthread = nthread)
+#' bst <- xgb.train(param, dtrain, nrounds = 2, evals = evals, verbose = 0,
 #'                  objective = logregobj, eval_metric = evalerror)
 #'
 #' #  or as dedicated 'obj' and 'feval' parameters of xgb.train:
-#' bst <- xgb.train(param, dtrain, nrounds = 2, watchlist,
+#' bst <- xgb.train(param, dtrain, nrounds = 2, evals = evals,
 #'                  obj = logregobj, feval = evalerror)
 #'
 #'
 #' ## An xgb.train example of using variable learning rates at each iteration:
-#' param <- list(max_depth = 2, eta = 1, verbose = 0, nthread = 2,
+#' param <- list(max_depth = 2, eta = 1, nthread = nthread,
 #'               objective = "binary:logistic", eval_metric = "auc")
 #' my_etas <- list(eta = c(0.5, 0.1))
-#' bst <- xgb.train(param, dtrain, nrounds = 2, watchlist,
-#'                  callbacks = list(cb.reset.parameters(my_etas)))
+#' bst <- xgb.train(param, dtrain, nrounds = 2, evals = evals, verbose = 0,
+#'                  callbacks = list(xgb.cb.reset.parameters(my_etas)))
 #'
 #' ## Early stopping:
-#' bst <- xgb.train(param, dtrain, nrounds = 25, watchlist,
+#' bst <- xgb.train(param, dtrain, nrounds = 25, evals = evals,
 #'                  early_stopping_rounds = 3)
 #'
 #' ## An 'xgboost' interface example:
 #' bst <- xgboost(data = agaricus.train$data, label = agaricus.train$label,
-#'                max_depth = 2, eta = 1, nthread = 2, nrounds = 2,
+#'                max_depth = 2, eta = 1, nthread = nthread, nrounds = 2,
 #'                objective = "binary:logistic")
 #' pred <- predict(bst, agaricus.test$data)
 #'
 #' @rdname xgb.train
 #' @export
-xgb.train <- function(params = list(), data, nrounds, watchlist = list(),
+xgb.train <- function(params = list(), data, nrounds, evals = list(),
                       obj = NULL, feval = NULL, verbose = 1, print_every_n = 1L,
                       early_stopping_rounds = NULL, maximize = NULL,
                       save_period = NULL, save_name = "xgboost.model",
@@ -264,71 +336,78 @@ xgb.train <- function(params = list(), data, nrounds, watchlist = list(),
   check.custom.obj()
   check.custom.eval()
 
-  # data & watchlist checks
+  # data & evals checks
   dtrain <- data
   if (!inherits(dtrain, "xgb.DMatrix"))
     stop("second argument dtrain must be xgb.DMatrix")
-  if (length(watchlist) > 0) {
-    if (typeof(watchlist) != "list" ||
-        !all(vapply(watchlist, inherits, logical(1), what = 'xgb.DMatrix')))
-      stop("watchlist must be a list of xgb.DMatrix elements")
-    evnames <- names(watchlist)
+  if (length(evals) > 0) {
+    if (typeof(evals) != "list" ||
+        !all(vapply(evals, inherits, logical(1), what = 'xgb.DMatrix')))
+      stop("'evals' must be a list of xgb.DMatrix elements")
+    evnames <- names(evals)
     if (is.null(evnames) || any(evnames == ""))
-      stop("each element of the watchlist must have a name tag")
+      stop("each element of 'evals' must have a name tag")
+  }
+  # Handle multiple evaluation metrics given as a list
+  for (m in params$eval_metric) {
+    params <- c(params, list(eval_metric = m))
   }
 
-  # evaluation printing callback
   params <- c(params)
-  print_every_n <- max(as.integer(print_every_n), 1L)
-  if (!has.callbacks(callbacks, 'cb.print.evaluation') &&
-      verbose) {
-    callbacks <- add.cb(callbacks, cb.print.evaluation(print_every_n))
+  params['validate_parameters'] <- TRUE
+  if (!("seed" %in% names(params))) {
+    params[["seed"]] <- sample(.Machine$integer.max, size = 1)
   }
-  # evaluation log callback:  it is automatically enabled when watchlist is provided
-  evaluation_log <- list()
-  if (!has.callbacks(callbacks, 'cb.evaluation.log') &&
-      length(watchlist) > 0) {
-    callbacks <- add.cb(callbacks, cb.evaluation.log())
+
+  # callbacks
+  tmp <- .process.callbacks(callbacks, is_cv = FALSE)
+  callbacks <- tmp$callbacks
+  cb_names <- tmp$cb_names
+  rm(tmp)
+
+  # Early stopping callback (should always come first)
+  if (!is.null(early_stopping_rounds) && !("early_stop" %in% cb_names)) {
+    callbacks <- add.callback(
+      callbacks,
+      xgb.cb.early.stop(
+        early_stopping_rounds,
+        maximize = maximize,
+        verbose = verbose
+      ),
+      as_first_elt = TRUE
+    )
+  }
+  # evaluation printing callback
+  print_every_n <- max(as.integer(print_every_n), 1L)
+  if (verbose && !("print_evaluation" %in% cb_names)) {
+    callbacks <- add.callback(callbacks, xgb.cb.print.evaluation(print_every_n))
+  }
+  # evaluation log callback:  it is automatically enabled when 'evals' is provided
+  if (length(evals) && !("evaluation_log" %in% cb_names)) {
+    callbacks <- add.callback(callbacks, xgb.cb.evaluation.log())
   }
   # Model saving callback
-  if (!is.null(save_period) &&
-      !has.callbacks(callbacks, 'cb.save.model')) {
-    callbacks <- add.cb(callbacks, cb.save.model(save_period, save_name))
-  }
-  # Early stopping callback
-  stop_condition <- FALSE
-  if (!is.null(early_stopping_rounds) &&
-      !has.callbacks(callbacks, 'cb.early.stop')) {
-    callbacks <- add.cb(callbacks, cb.early.stop(early_stopping_rounds,
-                                                 maximize = maximize, verbose = verbose))
-  }
-
-  # Sort the callbacks into categories
-  cb <- categorize.callbacks(callbacks)
-  params['validate_parameters'] <- TRUE
-  if (!is.null(params[['seed']])) {
-    warning("xgb.train: `seed` is ignored in R package.  Use `set.seed()` instead.")
+  if (!is.null(save_period) && !("save_model" %in% cb_names)) {
+    callbacks <- add.callback(callbacks, xgb.cb.save.model(save_period, save_name))
   }
 
   # The tree updating process would need slightly different handling
   is_update <- NVL(params[['process_type']], '.') == 'update'
 
   # Construct a booster (either a new one or load from xgb_model)
-  handle <- xgb.Booster.handle(params, append(watchlist, dtrain), xgb_model)
-  bst <- xgb.handleToBooster(handle)
+  bst <- xgb.Booster(
+    params = params,
+    cachelist = append(evals, dtrain),
+    modelfile = xgb_model
+  )
+  niter_init <- bst$niter
+  bst <- bst$bst
+  .Call(
+    XGBoosterCopyInfoFromDMatrix_R,
+    xgb.get.handle(bst),
+    dtrain
+  )
 
-  # extract parameters that can affect the relationship b/w #trees and #iterations
-  num_class <- max(as.numeric(NVL(params[['num_class']], 1)), 1)
-  num_parallel_tree <- max(as.numeric(NVL(params[['num_parallel_tree']], 1)), 1)
-
-  # When the 'xgb_model' was set, find out how many boosting iterations it has
-  niter_init <- 0
-  if (!is.null(xgb_model)) {
-    niter_init <- as.numeric(xgb.attr(bst, 'niter')) + 1
-    if (length(niter_init) == 0) {
-      niter_init <- xgb.ntree(bst) %/% (num_parallel_tree * num_class)
-    }
-  }
   if (is_update && nrounds > niter_init)
     stop("nrounds cannot be larger than ", niter_init, " (nrounds of xgb_model)")
 
@@ -336,49 +415,83 @@ xgb.train <- function(params = list(), data, nrounds, watchlist = list(),
   begin_iteration <- niter_skip + 1
   end_iteration <- niter_skip + nrounds
 
+  .execute.cb.before.training(
+    callbacks,
+    bst,
+    dtrain,
+    evals,
+    begin_iteration,
+    end_iteration
+  )
+
   # the main loop for boosting iterations
   for (iteration in begin_iteration:end_iteration) {
 
-    for (f in cb$pre_iter) f()
+    .execute.cb.before.iter(
+      callbacks,
+      bst,
+      dtrain,
+      evals,
+      iteration
+    )
 
-    xgb.iter.update(bst$handle, dtrain, iteration - 1, obj)
+    xgb.iter.update(
+      bst = bst,
+      dtrain = dtrain,
+      iter = iteration - 1,
+      obj = obj
+    )
 
-    if (length(watchlist) > 0)
-      bst_evaluation <- xgb.iter.eval(bst$handle, watchlist, iteration - 1, feval)
-
-    xgb.attr(bst$handle, 'niter') <- iteration - 1
-
-    for (f in cb$post_iter) f()
-
-    if (stop_condition) break
-  }
-  for (f in cb$finalize) f(finalize = TRUE)
-
-  bst <- xgb.Booster.complete(bst, saveraw = TRUE)
-
-  # store the total number of boosting iterations
-  bst$niter <- end_iteration
-
-  # store the evaluation results
-  if (length(evaluation_log) > 0 &&
-      nrow(evaluation_log) > 0) {
-    # include the previous compatible history when available
-    if (inherits(xgb_model, 'xgb.Booster') &&
-        !is_update &&
-        !is.null(xgb_model$evaluation_log) &&
-        isTRUE(all.equal(colnames(evaluation_log),
-                         colnames(xgb_model$evaluation_log)))) {
-      evaluation_log <- rbindlist(list(xgb_model$evaluation_log, evaluation_log))
+    bst_evaluation <- NULL
+    if (length(evals) > 0) {
+      bst_evaluation <- xgb.iter.eval(
+        bst = bst,
+        evals = evals,
+        iter = iteration - 1,
+        feval = feval
+      )
     }
-    bst$evaluation_log <- evaluation_log
+
+    should_stop <- .execute.cb.after.iter(
+      callbacks,
+      bst,
+      dtrain,
+      evals,
+      iteration,
+      bst_evaluation
+    )
+
+    if (should_stop) break
   }
 
-  bst$call <- match.call()
-  bst$params <- params
-  bst$callbacks <- callbacks
-  if (!is.null(colnames(dtrain)))
-    bst$feature_names <- colnames(dtrain)
-  bst$nfeatures <- ncol(dtrain)
+  cb_outputs <- .execute.cb.after.training(
+    callbacks,
+    bst,
+    dtrain,
+    evals,
+    iteration,
+    bst_evaluation
+  )
+
+  extra_attrs <- list(
+    call = match.call(),
+    params = params
+  )
+
+  curr_attrs <- attributes(bst)
+  if (NROW(curr_attrs)) {
+    curr_attrs <- curr_attrs[
+      setdiff(
+        names(curr_attrs),
+        c(names(extra_attrs), names(cb_outputs))
+      )
+    ]
+  }
+  curr_attrs <- c(extra_attrs, curr_attrs)
+  if (NROW(cb_outputs)) {
+    curr_attrs <- c(curr_attrs, cb_outputs)
+  }
+  attributes(bst) <- curr_attrs
 
   return(bst)
 }

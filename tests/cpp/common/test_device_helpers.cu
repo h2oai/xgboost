@@ -1,14 +1,16 @@
-/*!
- * Copyright 2017-2021 XGBoost contributors
+/**
+ * Copyright 2017-2024, XGBoost contributors
  */
+#include <thrust/device_vector.h>
+#include <thrust/sort.h>  // for is_sorted
+#include <xgboost/base.h>
+
 #include <cstddef>
 #include <cstdint>
-#include <thrust/device_vector.h>
 #include <vector>
-#include <xgboost/base.h>
+
 #include "../../../src/common/device_helpers.cuh"
 #include "../../../src/common/quantile.h"
-#include "../helpers.h"
 #include "gtest/gtest.h"
 
 TEST(SumReduce, Test) {
@@ -67,7 +69,7 @@ TEST(SegmentedUnique, Basic) {
   CHECK_EQ(n_uniques, 5);
 
   std::vector<float> values_sol{0.1f, 0.2f, 0.3f, 0.62448811531066895f, 0.4f};
-  for (auto i = 0 ; i < values_sol.size(); i ++) {
+  for (size_t i = 0 ; i < values_sol.size(); i ++) {
     ASSERT_EQ(d_vals_out[i], values_sol[i]);
   }
 
@@ -84,7 +86,7 @@ TEST(SegmentedUnique, Basic) {
       d_segs_out.data().get(), d_vals_out.data().get(),
       thrust::equal_to<float>{});
   ASSERT_EQ(n_uniques, values.size());
-  for (auto i = 0 ; i < values.size(); i ++) {
+  for (size_t i = 0 ; i < values.size(); i ++) {
     ASSERT_EQ(d_vals_out[i], values[i]);
   }
 }
@@ -165,103 +167,11 @@ TEST(SegmentedUnique, Regression) {
   }
 }
 
-TEST(Allocator, OOM) {
+TEST(Allocator, DISABLED_OOM) {
   auto size = dh::AvailableMemory(0) * 4;
   ASSERT_THROW({dh::caching_device_vector<char> vec(size);}, dmlc::Error);
   ASSERT_THROW({dh::device_vector<char> vec(size);}, dmlc::Error);
   // Clear last error so we don't fail subsequent tests
   cudaGetLastError();
-}
-
-TEST(DeviceHelpers, ArgSort) {
-  dh::device_vector<float> values(20);
-  dh::Iota(dh::ToSpan(values));  // accending
-  dh::device_vector<size_t> sorted_idx(20);
-  dh::ArgSort<false>(dh::ToSpan(values), dh::ToSpan(sorted_idx));  // sort to descending
-  ASSERT_TRUE(thrust::is_sorted(thrust::device, sorted_idx.begin(),
-                                sorted_idx.end(), thrust::greater<size_t>{}));
-
-  dh::Iota(dh::ToSpan(values));
-  dh::device_vector<size_t> groups(3);
-  groups[0] = 0;
-  groups[1] = 10;
-  groups[2] = 20;
-  dh::SegmentedArgSort<false>(dh::ToSpan(values), dh::ToSpan(groups),
-                              dh::ToSpan(sorted_idx));
-  ASSERT_FALSE(thrust::is_sorted(thrust::device, sorted_idx.begin(),
-                                 sorted_idx.end(), thrust::greater<size_t>{}));
-  ASSERT_TRUE(thrust::is_sorted(sorted_idx.begin(), sorted_idx.begin() + 10,
-                                thrust::greater<size_t>{}));
-  ASSERT_TRUE(thrust::is_sorted(sorted_idx.begin() + 10, sorted_idx.end(),
-                                thrust::greater<size_t>{}));
-}
-
-namespace {
-// Atomic add as type cast for test.
-XGBOOST_DEV_INLINE int64_t atomicAdd(int64_t *dst, int64_t src) {  // NOLINT
-  uint64_t* u_dst = reinterpret_cast<uint64_t*>(dst);
-  uint64_t u_src = *reinterpret_cast<uint64_t*>(&src);
-  uint64_t ret = ::atomicAdd(u_dst, u_src);
-  return *reinterpret_cast<int64_t*>(&ret);
-}
-}
-
-void TestAtomicAdd() {
-  size_t n_elements = 1024;
-  dh::device_vector<int64_t> result_a(1, 0);
-  auto d_result_a = result_a.data().get();
-
-  dh::device_vector<int64_t> result_b(1, 0);
-  auto d_result_b = result_b.data().get();
-
-  /**
-   * Test for simple inputs
-   */
-  std::vector<int64_t> h_inputs(n_elements);
-  for (size_t i = 0; i < h_inputs.size(); ++i) {
-    h_inputs[i] = (i % 2 == 0) ? i : -i;
-  }
-  dh::device_vector<int64_t> inputs(h_inputs);
-  auto d_inputs = inputs.data().get();
-
-  dh::LaunchN(n_elements, [=] __device__(size_t i) {
-    dh::AtomicAdd64As32(d_result_a, d_inputs[i]);
-    atomicAdd(d_result_b, d_inputs[i]);
-  });
-  ASSERT_EQ(result_a[0], result_b[0]);
-
-  /**
-   * Test for positive values that don't fit into 32 bit integer.
-   */
-  thrust::fill(inputs.begin(), inputs.end(),
-               (std::numeric_limits<uint32_t>::max() / 2));
-  thrust::fill(result_a.begin(), result_a.end(), 0);
-  thrust::fill(result_b.begin(), result_b.end(), 0);
-  dh::LaunchN(n_elements, [=] __device__(size_t i) {
-    dh::AtomicAdd64As32(d_result_a, d_inputs[i]);
-    atomicAdd(d_result_b, d_inputs[i]);
-  });
-  ASSERT_EQ(result_a[0], result_b[0]);
-  ASSERT_GT(result_a[0], std::numeric_limits<uint32_t>::max());
-  CHECK_EQ(thrust::reduce(inputs.begin(), inputs.end(), int64_t(0)), result_a[0]);
-
-  /**
-   * Test for negative values that don't fit into 32 bit integer.
-   */
-  thrust::fill(inputs.begin(), inputs.end(),
-               (std::numeric_limits<int32_t>::min() / 2));
-  thrust::fill(result_a.begin(), result_a.end(), 0);
-  thrust::fill(result_b.begin(), result_b.end(), 0);
-  dh::LaunchN(n_elements, [=] __device__(size_t i) {
-    dh::AtomicAdd64As32(d_result_a, d_inputs[i]);
-    atomicAdd(d_result_b, d_inputs[i]);
-  });
-  ASSERT_EQ(result_a[0], result_b[0]);
-  ASSERT_LT(result_a[0], std::numeric_limits<int32_t>::min());
-  CHECK_EQ(thrust::reduce(inputs.begin(), inputs.end(), int64_t(0)), result_a[0]);
-}
-
-TEST(AtomicAdd, Int64) {
-  TestAtomicAdd();
 }
 }  // namespace xgboost

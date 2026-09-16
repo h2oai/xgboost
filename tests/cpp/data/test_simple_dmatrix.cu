@@ -1,5 +1,4 @@
 // Copyright by Contributors
-#include <dmlc/filesystem.h>
 #include <xgboost/data.h>
 #include "../../../src/data/simple_dmatrix.h"
 
@@ -122,13 +121,13 @@ TEST(SimpleDMatrix, FromColumnarWithEmptyRows) {
     col["data"] = j_data;
     std::vector<Json> j_shape{Json(Integer(static_cast<Integer::Int>(kRows)))};
     col["shape"] = Array(j_shape);
-    col["version"] = Integer(static_cast<Integer::Int>(1));
+    col["version"] = 3;
     col["typestr"] = String("<f4");
 
     // Construct the mask object.
     col["mask"] = Object();
     auto& j_mask = col["mask"];
-    j_mask["version"] = Integer(static_cast<Integer::Int>(1));
+    j_mask["version"] = 3;
     auto& mask_storage = column_bitfields[i];
     mask_storage.resize(16);  // 16 bytes
 
@@ -190,8 +189,8 @@ TEST(SimpleCSRSource, FromColumnarSparse) {
     auto& mask = column_bitfields[0];
     mask.resize(8);
 
-    for (size_t j = 0; j < mask.size(); ++j) {
-      mask[j] = ~0;
+    for (auto && j : mask) {
+      j = ~0;
     }
     // the 2^th entry of first column is invalid
     // [0 0 0 0 0 1 0 0]
@@ -202,8 +201,8 @@ TEST(SimpleCSRSource, FromColumnarSparse) {
     auto& mask = column_bitfields[1];
     mask.resize(8);
 
-    for (size_t j = 0; j < mask.size(); ++j) {
-      mask[j] = ~0;
+    for (auto && j : mask) {
+      j = ~0;
     }
     // the 19^th entry of second column is invalid
     // [~0~], [~0~], [0 0 0 0 1 0 0 0]
@@ -220,7 +219,7 @@ TEST(SimpleCSRSource, FromColumnarSparse) {
   for (size_t c = 0; c < kCols; ++c) {
     auto& column = j_columns[c];
     column = Object();
-    column["version"] = Integer(static_cast<Integer::Int>(1));
+    column["version"] = 3;
     column["typestr"] = String("<f4");
     auto p_d_data = raw_pointer_cast(columns_data[c].data());
     std::vector<Json> j_data {
@@ -229,12 +228,12 @@ TEST(SimpleCSRSource, FromColumnarSparse) {
     column["data"] = j_data;
     std::vector<Json> j_shape {Json(Integer(static_cast<Integer::Int>(kRows)))};
     column["shape"] = Array(j_shape);
-    column["version"] = Integer(static_cast<Integer::Int>(1));
+    column["version"] = 3;
     column["typestr"] = String("<f4");
 
     column["mask"] = Object();
     auto& j_mask = column["mask"];
-    j_mask["version"] = Integer(static_cast<Integer::Int>(1));
+    j_mask["version"] = 3;
     j_mask["data"] = std::vector<Json>{
       Json(Integer(reinterpret_cast<Integer::Int>(column_bitfields[c].data().get()))),
       Json(Boolean(false))};

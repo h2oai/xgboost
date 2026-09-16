@@ -1,5 +1,5 @@
-/*!
- * Copyright 2019-2020 by Contributors
+/**
+ * Copyright 2019-2023, XGBoost Contributors
  * \file aft_obj.cu
  * \brief Definition of AFT loss for survival analysis.
  * \author Avinash Barnwal, Hyunsu Cho and Toby Hocking
@@ -34,16 +34,16 @@ DMLC_REGISTRY_FILE_TAG(aft_obj_gpu);
 
 class AFTObj : public ObjFunction {
  public:
-  void Configure(const std::vector<std::pair<std::string, std::string> >& args) override {
+  void Configure(Args const& args) override {
     param_.UpdateAllowUnknown(args);
   }
 
+  ObjInfo Task() const override { return ObjInfo::kSurvival; }
+
   template <typename Distribution>
-  void GetGradientImpl(const HostDeviceVector<bst_float> &preds,
-                       const MetaInfo &info,
-                       HostDeviceVector<GradientPair> *out_gpair,
-                       size_t ndata, int device, bool is_null_weight,
-                       float aft_loss_distribution_scale) {
+  void GetGradientImpl(const HostDeviceVector<bst_float>& preds, const MetaInfo& info,
+                       linalg::Matrix<GradientPair>* out_gpair, size_t ndata, DeviceOrd device,
+                       bool is_null_weight, float aft_loss_distribution_scale) {
     common::Transform<>::Init(
         [=] XGBOOST_DEVICE(size_t _idx,
         common::Span<GradientPair> _out_gpair,
@@ -63,20 +63,19 @@ class AFTObj : public ObjFunction {
       const bst_float w = is_null_weight ? 1.0f : _weights[_idx];
       _out_gpair[_idx] = GradientPair(grad * w, hess * w);
     },
-    common::Range{0, static_cast<int64_t>(ndata)}, device).Eval(
-        out_gpair, &preds, &info.labels_lower_bound_, &info.labels_upper_bound_,
+    common::Range{0, static_cast<int64_t>(ndata)}, this->ctx_->Threads(), device).Eval(
+        out_gpair->Data(), &preds, &info.labels_lower_bound_, &info.labels_upper_bound_,
         &info.weights_);
   }
 
-  void GetGradient(const HostDeviceVector<bst_float>& preds,
-                   const MetaInfo& info,
-                   int iter,
-                   HostDeviceVector<GradientPair>* out_gpair) override {
+  void GetGradient(const HostDeviceVector<bst_float>& preds, const MetaInfo& info, int /*iter*/,
+                   linalg::Matrix<GradientPair>* out_gpair) override {
     const size_t ndata = preds.Size();
     CHECK_EQ(info.labels_lower_bound_.Size(), ndata);
     CHECK_EQ(info.labels_upper_bound_.Size(), ndata);
-    out_gpair->Resize(ndata);
-    const int device = tparam_->gpu_id;
+    out_gpair->SetDevice(ctx_->Device());
+    out_gpair->Reshape(ndata, 1);
+    const auto device = ctx_->Device();
     const float aft_loss_distribution_scale = param_.aft_loss_distribution_scale;
     const bool is_null_weight = info.weights_.Size() == 0;
     if (!is_null_weight) {
@@ -106,13 +105,14 @@ class AFTObj : public ObjFunction {
     // Trees give us a prediction in log scale, so exponentiate
     common::Transform<>::Init(
         [] XGBOOST_DEVICE(size_t _idx, common::Span<bst_float> _preds) {
-      _preds[_idx] = exp(_preds[_idx]);
-    }, common::Range{0, static_cast<int64_t>(io_preds->Size())},
-        io_preds->DeviceIdx())
-    .Eval(io_preds);
+          _preds[_idx] = exp(_preds[_idx]);
+        },
+        common::Range{0, static_cast<int64_t>(io_preds->Size())}, this->ctx_->Threads(),
+        io_preds->Device())
+        .Eval(io_preds);
   }
 
-  void EvalTransform(HostDeviceVector<bst_float> *io_preds) override {
+  void EvalTransform(HostDeviceVector<bst_float>* /*io_preds*/) override {
     // do nothing here, since the AFT metric expects untransformed prediction score
   }
 
@@ -132,6 +132,12 @@ class AFTObj : public ObjFunction {
 
   void LoadConfig(Json const& in) override {
     FromJson(in["aft_loss_param"], &param_);
+  }
+  Json DefaultMetricConfig() const override {
+    Json config{Object{}};
+    config["name"] = String{this->DefaultEvalMetric()};
+    config["aft_loss_param"] = ToJson(param_);
+    return config;
   }
 
  private:

@@ -16,12 +16,6 @@ This tutorial is to cover the end-to-end process to build a machine learning pip
 * Building a Machine Learning Pipeline with XGBoost4J-Spark
 * Running XGBoost4J-Spark in Production
 
-.. note::
-
-  **SparkContext will be stopped by default when XGBoost training task fails**.
-
-  XGBoost4J-Spark 1.2.0+ exposes a parameter **kill_spark_context_on_worker_failure**. Set **kill_spark_context_on_worker_failure** to **false** so that the SparkContext will not be stopping on training failure. Instead of stopping the SparkContext, XGBoost4J-Spark will throw an exception instead. Users who want to re-use the SparkContext should wrap the training code in a try-catch block.
-
 .. contents::
   :backlinks: none
   :local:
@@ -45,7 +39,7 @@ Installation from maven repo
 
 .. note:: Use of Python in XGBoost4J-Spark
 
-  By default, we use the tracker in `dmlc-core <https://github.com/dmlc/dmlc-core/tree/master/tracker>`_ to drive the training with XGBoost4J-Spark. It requires Python 2.7+. We also have an experimental Scala version of tracker which can be enabled by passing the parameter ``tracker_conf`` as ``scala``.
+  By default, we use the tracker in `Python package <https://github.com/dmlc/xgboost/blob/master/python-package/xgboost/tracker.py>`_ to drive the training with XGBoost4J-Spark. It requires Python 3.6+. We also have an experimental Scala version of tracker which can be enabled by passing the parameter ``tracker_conf`` as ``scala``.
 
 Data Preparation
 ================
@@ -79,7 +73,7 @@ The first thing in data transformation is to load the dataset as Spark's structu
     StructField("class", StringType, true)))
   val rawInput = spark.read.schema(schema).csv("input_path")
 
-At the first line, we create a instance of `SparkSession <http://spark.apache.org/docs/latest/sql-programming-guide.html#starting-point-sparksession>`_ which is the entry of any Spark program working with DataFrame. The ``schema`` variable defines the schema of DataFrame wrapping Iris data. With this explicitly set schema, we can define the columns' name as well as their types; otherwise the column name would be the default ones derived by Spark, such as ``_col0``, etc. Finally, we can use Spark's built-in csv reader to load Iris csv file as a DataFrame named ``rawInput``.
+At the first line, we create a instance of `SparkSession <https://spark.apache.org/docs/latest/sql-getting-started.html#starting-point-sparksession>`_ which is the entry of any Spark program working with DataFrame. The ``schema`` variable defines the schema of DataFrame wrapping Iris data. With this explicitly set schema, we can define the columns' name as well as their types; otherwise the column name would be the default ones derived by Spark, such as ``_col0``, etc. Finally, we can use Spark's built-in csv reader to load Iris csv file as a DataFrame named ``rawInput``.
 
 Spark also contains many built-in readers for other format. The latest version of Spark supports CSV, JSON, Parquet, and LIBSVM.
 
@@ -127,10 +121,15 @@ Now, we have a DataFrame containing only two columns, "features" which contains 
 "sepal length", "sepal width", "petal length" and "petal width" and "classIndex" which has Double-typed
 labels. A DataFrame like this (containing vector-represented features and numeric labels) can be fed to XGBoost4J-Spark's training engine directly.
 
+.. note::
+
+  There is no need to assemble feature columns from version 1.6.1+. Instead, users can specify an array of
+  feature column names by ``setFeaturesCol(value: Array[String])`` and XGBoost4j-Spark will do it.
+
 Dealing with missing values
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-XGBoost supports missing values by default (`as desribed here <https://xgboost.readthedocs.io/en/latest/faq.html#how-to-deal-with-missing-value>`_).
+XGBoost supports missing values by default (`as desribed here <https://xgboost.readthedocs.io/en/latest/faq.html#how-to-deal-with-missing-values>`_).
 If given a SparseVector, XGBoost will treat any values absent from the SparseVector as missing. You are also able to
 specify to XGBoost to treat a specific value in your Dataset as if it was a missing value. By default XGBoost will treat NaN as the value representing missing.
 
@@ -162,17 +161,17 @@ Example of setting a missing value (e.g. -999) to the "missing" parameter in XGB
   doing this with missing values encoded as NaN, you will want to set ``setHandleInvalid = "keep"`` on VectorAssembler
   in order to keep the NaN values in the dataset. You would then set the "missing" parameter to whatever you want to be
   treated as missing. However this may cause a large amount of memory use if your dataset is very sparse. For example:
-  
+
   .. code-block:: scala
 
   val assembler = new VectorAssembler().setInputCols(feature_names.toArray).setOutputCol("features").setHandleInvalid("keep")
 
   // conversion to dense vector using Array()
-  
+
   val featurePipeline = new Pipeline().setStages(Array(assembler))
   val featureModel = featurePipeline.fit(df_training)
   val featureDf = featureModel.transform(df_training)
-  
+
   val xgbParam = Map("eta" -> 0.1f,
         "max_depth" -> 2,
         "objective" -> "multi:softprob",
@@ -181,10 +180,10 @@ Example of setting a missing value (e.g. -999) to the "missing" parameter in XGB
         "num_workers" -> 2,
         "allow_non_zero_for_missing" -> "true",
         "missing" -> -999)
-        
+
   val xgb = new XGBoostClassifier(xgbParam)
   val xgbclassifier = xgb.fit(featureDf)
-  
+
 
   2. Before calling VectorAssembler you can transform the values you want to represent missing into an irregular value
   that is not 0, NaN, or Null and set the "missing" parameter to 0. The irregular value should ideally be chosen to be
@@ -346,11 +345,37 @@ and then loading the model in another session:
   val xgbClassificationModel2 = XGBoostClassificationModel.load(xgbClassificationModelPath)
   xgbClassificationModel2.transform(xgbInput)
 
+.. note::
+
+  Besides dumping the model to raw format, users are able to dump the model to be json or ubj format from ``version 1.7.0+``.
+
+  .. code-block:: scala
+
+    val xgbClassificationModelPath = "/tmp/xgbClassificationModel"
+    xgbClassificationModel.write.overwrite().option("format", "json").save(xgbClassificationModelPath)
+
+
 With regards to ML pipeline save and load, please refer the next section.
 
 Interact with Other Bindings of XGBoost
 ---------------------------------------
-After we train a model with XGBoost4j-Spark on massive dataset, sometimes we want to do model serving in single machine or integrate it with other single node libraries for further processing. XGBoost4j-Spark supports export model to local by:
+After we train a model with XGBoost4j-Spark on massive dataset, sometimes we want to do model serving
+in single machine or integrate it with other single node libraries for further processing.
+
+After saving the model, we can load this model with single node Python XGBoost directly from ``version 1.7.0+``.
+
+.. code-block:: scala
+
+  val xgbClassificationModelPath = "/tmp/xgbClassificationModel"
+  xgbClassificationModel.write.overwrite().save(xgbClassificationModelPath)
+
+.. code-block:: python
+
+  import xgboost as xgb
+  bst = xgb.Booster({'nthread': 4})
+  bst.load_model("/tmp/xgbClassificationModel/data/XGBoostClassificationModel")
+
+Before ``version 1.7.0``, XGBoost4j-Spark needs to export model to local manually by:
 
 .. code-block:: scala
 
@@ -364,39 +389,6 @@ Then we can load this model with single node Python XGBoost:
   import xgboost as xgb
   bst = xgb.Booster({'nthread': 4})
   bst.load_model(nativeModelPath)
-
-.. note:: Using HDFS and S3 for exporting the models with nativeBooster.saveModel()
-
-  When interacting with other language bindings, XGBoost also supports saving-models-to and loading-models-from file systems other than the local one. You can use HDFS and S3 by prefixing the path with ``hdfs://`` and ``s3://`` respectively. However, for this capability, you must do **one** of the following:
-
-  1. Build XGBoost4J-Spark with the steps described in `here <https://xgboost.readthedocs.io/en/latest/jvm/index.html#installation-from-source>`_, but turning `USE_HDFS <https://github.com/dmlc/xgboost/blob/e939192978a0c152ad7b49b744630e99d54cffa8/jvm-packages/create_jni.py#L18>`_ (or USE_S3, etc. in the same place) switch on. With this approach, you can reuse the above code example by replacing "nativeModelPath" with a HDFS path.
-
-     - However, if you build with USE_HDFS, etc. you have to ensure that the involved shared object file, e.g. libhdfs.so, is put in the LIBRARY_PATH of your cluster. To avoid the complicated cluster environment configuration, choose the other option.
-
-  2. Use bindings of HDFS, S3, etc. to pass model files around. Here are the steps (taking HDFS as an example):
-
-     - Create a new file with
-
-       .. code-block:: scala
-
-         val outputStream = fs.create("hdfs_path")
-
-       where "fs" is an instance of `org.apache.hadoop.fs.FileSystem <https://hadoop.apache.org/docs/stable/api/org/apache/hadoop/fs/FileSystem.html>`_ class in Hadoop.
-
-     - Pass the returned OutputStream in the first step to nativeBooster.saveModel():
-
-       .. code-block:: scala
-
-         xgbClassificationModel.nativeBooster.saveModel(outputStream)
-
-     - Download file in other languages from HDFS and load with the pre-built (without the requirement of libhdfs.so) version of XGBoost. (The function "download_from_hdfs" is a helper function to be implemented by the user)
-
-       .. code-block:: python
-
-         import xgboost as xgb
-         bst = xgb.Booster({'nthread': 4})
-         local_path = download_from_hdfs("hdfs_path")
-         bst.load_model(local_path)
 
 .. note:: Consistency issue between XGBoost4J-Spark and other bindings
 

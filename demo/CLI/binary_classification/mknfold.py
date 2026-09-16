@@ -1,6 +1,7 @@
-#!/usr/bin/python
-import sys
+#!/usr/bin/env python3
+
 import random
+import sys
 
 if len(sys.argv) < 2:
     print ('Usage:<filename> <k> [nfold = 5]')
@@ -26,4 +27,3 @@ for l in fi:
 fi.close()
 ftr.close()
 fte.close()
-

@@ -24,10 +24,10 @@ accuracy.before <- (sum((predict(bst, agaricus.test$data) >= 0.5) == agaricus.te
 pred_with_leaf <- predict(bst, dtest, predleaf = TRUE)
 head(pred_with_leaf)
 
-create.new.tree.features <- function(model, original.features){
+create.new.tree.features <- function(model, original.features) {
   pred_with_leaf <- predict(model, original.features, predleaf = TRUE)
   cols <- list()
-  for (i in 1:model$niter) {
+  for (i in 1:xgb.get.num.boosted.rounds(model)) {
     # max is not the real max but it s not important for the purpose of adding features
     leaf.id <- sort(unique(pred_with_leaf[, i]))
     cols[[i]] <- factor(x = pred_with_leaf[, i], level = leaf.id)
@@ -43,7 +43,6 @@ colnames(new.features.test) <- colnames(new.features.train)
 # learning with new features
 new.dtrain <- xgb.DMatrix(data = new.features.train, label = agaricus.train$label)
 new.dtest <- xgb.DMatrix(data = new.features.test, label = agaricus.test$label)
-watchlist <- list(train = new.dtrain)
 bst <- xgb.train(params = param, data = new.dtrain, nrounds = nrounds, nthread = 2)
 
 # Model accuracy with new features

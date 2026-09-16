@@ -1,25 +1,26 @@
-/*!
- * Copyright 2017-2020 XGBoost contributors
+/**
+ * Copyright 2017-2023, XGBoost contributors
  */
 #include <gtest/gtest.h>
-#include <dmlc/filesystem.h>
 #include <xgboost/c_api.h>
-#include <xgboost/predictor.h>
-#include <xgboost/logging.h>
 #include <xgboost/learner.h>
+#include <xgboost/logging.h>
+#include <xgboost/predictor.h>
+
 #include <string>
 
-#include "../helpers.h"
-#include "../../../src/gbm/gbtree_model.h"
 #include "../../../src/data/device_adapter.cuh"
+#include "../../../src/data/proxy_dmatrix.h"
+#include "../../../src/gbm/gbtree_model.h"
+#include "../collective/test_worker.h"  // for TestDistributedGlobal, BaseMGPUTest
+#include "../helpers.h"
 #include "test_predictor.h"
 
-namespace xgboost {
-namespace predictor {
+namespace xgboost::predictor {
 
 TEST(GPUPredictor, Basic) {
-  auto cpu_lparam = CreateEmptyGenericParam(-1);
-  auto gpu_lparam = CreateEmptyGenericParam(0);
+  auto cpu_lparam = MakeCUDACtx(-1);
+  auto gpu_lparam = MakeCUDACtx(0);
 
   std::unique_ptr<Predictor> gpu_predictor =
       std::unique_ptr<Predictor>(Predictor::Create("gpu_predictor", &gpu_lparam));
@@ -33,12 +34,9 @@ TEST(GPUPredictor, Basic) {
     int n_row = i, n_col = i;
     auto dmat = RandomDataGenerator(n_row, n_col, 0).GenerateDMatrix();
 
-    LearnerModelParam param;
-    param.num_feature = n_col;
-    param.num_output_group = 1;
-    param.base_score = 0.5;
-
-    gbm::GBTreeModel model = CreateTestModel(&param);
+    auto ctx = MakeCUDACtx(0);
+    LearnerModelParam mparam{MakeMP(n_col, .5, 1, ctx.Device())};
+    gbm::GBTreeModel model = CreateTestModel(&mparam, &ctx);
 
     // Test predict batch
     PredictionCacheEntry gpu_out_predictions;
@@ -52,55 +50,114 @@ TEST(GPUPredictor, Basic) {
     std::vector<float>& gpu_out_predictions_h = gpu_out_predictions.predictions.HostVector();
     std::vector<float>& cpu_out_predictions_h = cpu_out_predictions.predictions.HostVector();
     float abs_tolerance = 0.001;
-    for (int j = 0; j < gpu_out_predictions.predictions.Size(); j++) {
+    for (size_t j = 0; j < gpu_out_predictions.predictions.Size(); j++) {
       ASSERT_NEAR(gpu_out_predictions_h[j], cpu_out_predictions_h[j], abs_tolerance);
     }
   }
 }
 
+namespace {
+void VerifyBasicColumnSplit(std::array<std::vector<float>, 32> const& expected_result) {
+  auto const world_size = collective::GetWorldSize();
+  auto const rank = collective::GetRank();
+
+  auto ctx = MakeCUDACtx(GPUIDX);
+  std::unique_ptr<Predictor> predictor =
+      std::unique_ptr<Predictor>(Predictor::Create("gpu_predictor", &ctx));
+  predictor->Configure({});
+
+  for (size_t i = 1; i < 33; i *= 2) {
+    size_t n_row = i, n_col = i;
+    auto dmat = RandomDataGenerator(n_row, n_col, 0).GenerateDMatrix();
+    std::unique_ptr<DMatrix> sliced{dmat->SliceCol(world_size, rank)};
+
+    LearnerModelParam mparam{MakeMP(n_col, .5, 1, ctx.Device())};
+    gbm::GBTreeModel model = CreateTestModel(&mparam, &ctx);
+
+    // Test predict batch
+    PredictionCacheEntry out_predictions;
+
+    predictor->InitOutPredictions(sliced->Info(), &out_predictions.predictions, model);
+    predictor->PredictBatch(sliced.get(), &out_predictions, model, 0);
+
+    std::vector<float>& out_predictions_h = out_predictions.predictions.HostVector();
+    EXPECT_EQ(out_predictions_h, expected_result[i - 1]);
+  }
+}
+}  // anonymous namespace
+
+class MGPUPredictorTest : public collective::BaseMGPUTest {};
+
+TEST_F(MGPUPredictorTest, BasicColumnSplit) {
+  auto ctx = MakeCUDACtx(0);
+  std::unique_ptr<Predictor> predictor =
+      std::unique_ptr<Predictor>(Predictor::Create("gpu_predictor", &ctx));
+  predictor->Configure({});
+
+  std::array<std::vector<float>, 32> result{};
+  for (size_t i = 1; i < 33; i *= 2) {
+    size_t n_row = i, n_col = i;
+    auto dmat = RandomDataGenerator(n_row, n_col, 0).GenerateDMatrix();
+
+    LearnerModelParam mparam{MakeMP(n_col, .5, 1, ctx.Device())};
+    gbm::GBTreeModel model = CreateTestModel(&mparam, &ctx);
+
+    // Test predict batch
+    PredictionCacheEntry out_predictions;
+
+    predictor->InitOutPredictions(dmat->Info(), &out_predictions.predictions, model);
+    predictor->PredictBatch(dmat.get(), &out_predictions, model, 0);
+
+    std::vector<float>& out_predictions_h = out_predictions.predictions.HostVector();
+    result[i - 1] = out_predictions_h;
+  }
+
+  this->DoTest([&] { VerifyBasicColumnSplit(result); }, true);
+  this->DoTest([&] { VerifyBasicColumnSplit(result); }, false);
+}
+
 TEST(GPUPredictor, EllpackBasic) {
-  size_t constexpr kCols {8};
+  size_t constexpr kCols{8};
+  auto ctx = MakeCUDACtx(0);
   for (size_t bins = 2; bins < 258; bins += 16) {
     size_t rows = bins * 16;
     auto p_m = RandomDataGenerator{rows, kCols, 0.0}
-         .Bins(bins)
-         .Device(0)
-         .GenerateDeviceDMatrix(true);
-    TestPredictionFromGradientIndex<EllpackPage>("gpu_predictor", rows, kCols, p_m);
-    TestPredictionFromGradientIndex<EllpackPage>("gpu_predictor", bins, kCols, p_m);
+                   .Bins(bins)
+                   .Device(DeviceOrd::CUDA(0))
+                   .GenerateDeviceDMatrix(false);
+    ASSERT_FALSE(p_m->PageExists<SparsePage>());
+    TestPredictionFromGradientIndex<EllpackPage>(&ctx, rows, kCols, p_m);
+    TestPredictionFromGradientIndex<EllpackPage>(&ctx, bins, kCols, p_m);
   }
 }
 
 TEST(GPUPredictor, EllpackTraining) {
-  size_t constexpr kRows { 128 }, kCols { 16 }, kBins { 64 };
+  auto ctx = MakeCUDACtx(0);
+  size_t constexpr kRows{128}, kCols{16}, kBins{64};
   auto p_ellpack = RandomDataGenerator{kRows, kCols, 0.0}
-       .Bins(kBins)
-       .Device(0)
-       .GenerateDeviceDMatrix(true);
+                       .Bins(kBins)
+                       .Device(ctx.Device())
+                       .GenerateDeviceDMatrix(false);
   HostDeviceVector<float> storage(kRows * kCols);
-  auto columnar = RandomDataGenerator{kRows, kCols, 0.0}
-       .Device(0)
-       .GenerateArrayInterface(&storage);
+  auto columnar =
+      RandomDataGenerator{kRows, kCols, 0.0}.Device(ctx.Device()).GenerateArrayInterface(&storage);
   auto adapter = data::CupyAdapter(columnar);
-  std::shared_ptr<DMatrix> p_full {
-    DMatrix::Create(&adapter, std::numeric_limits<float>::quiet_NaN(), 1)
-  };
-  TestTrainingPrediction(kRows, kBins, "gpu_hist", p_full, p_ellpack);
+  std::shared_ptr<DMatrix> p_full{
+      DMatrix::Create(&adapter, std::numeric_limits<float>::quiet_NaN(), 1)};
+  TestTrainingPrediction(&ctx, kRows, kBins, p_full, p_ellpack);
 }
 
 TEST(GPUPredictor, ExternalMemoryTest) {
-  auto lparam = CreateEmptyGenericParam(0);
+  auto lparam = MakeCUDACtx(0);
   std::unique_ptr<Predictor> gpu_predictor =
       std::unique_ptr<Predictor>(Predictor::Create("gpu_predictor", &lparam));
   gpu_predictor->Configure({});
 
-  LearnerModelParam param;
-  param.num_feature = 5;
   const int n_classes = 3;
-  param.num_output_group = n_classes;
-  param.base_score = 0.5;
+  Context ctx = MakeCUDACtx(0);
+  LearnerModelParam mparam{MakeMP(5, .5, n_classes, ctx.Device())};
 
-  gbm::GBTreeModel model = CreateTestModel(&param, n_classes);
+  gbm::GBTreeModel model = CreateTestModel(&mparam, &ctx, n_classes);
   std::vector<std::unique_ptr<DMatrix>> dmats;
 
   dmats.push_back(CreateSparsePageDMatrix(400));
@@ -108,13 +165,15 @@ TEST(GPUPredictor, ExternalMemoryTest) {
   dmats.push_back(CreateSparsePageDMatrix(8000));
 
   for (const auto& dmat: dmats) {
-    dmat->Info().base_margin_.Resize(dmat->Info().num_row_ * n_classes, 0.5);
+    dmat->Info().base_margin_ = decltype(dmat->Info().base_margin_){
+        {dmat->Info().num_row_, static_cast<size_t>(n_classes)}, DeviceOrd::CUDA(0)};
+    dmat->Info().base_margin_.Data()->Fill(0.5);
     PredictionCacheEntry out_predictions;
     gpu_predictor->InitOutPredictions(dmat->Info(), &out_predictions.predictions, model);
     gpu_predictor->PredictBatch(dmat.get(), &out_predictions, model, 0);
     EXPECT_EQ(out_predictions.predictions.Size(), dmat->Info().num_row_ * n_classes);
     const std::vector<float> &host_vector = out_predictions.predictions.ConstHostVector();
-    for (int i = 0; i < host_vector.size() / n_classes; i++) {
+    for (size_t i = 0; i < host_vector.size() / n_classes; i++) {
       ASSERT_EQ(host_vector[i * n_classes], 2.0);
       ASSERT_EQ(host_vector[i * n_classes + 1], 0.5);
       ASSERT_EQ(host_vector[i * n_classes + 2], 0.5);
@@ -123,58 +182,52 @@ TEST(GPUPredictor, ExternalMemoryTest) {
 }
 
 TEST(GPUPredictor, InplacePredictCupy) {
+  auto ctx = MakeCUDACtx(0);
   size_t constexpr kRows{128}, kCols{64};
   RandomDataGenerator gen(kRows, kCols, 0.5);
-  gen.Device(0);
+  gen.Device(ctx.Device());
   HostDeviceVector<float> data;
   std::string interface_str = gen.GenerateArrayInterface(&data);
-  auto x = std::make_shared<data::CupyAdapter>(interface_str);
-  TestInplacePrediction(x, "gpu_predictor", kRows, kCols, 0);
+  std::shared_ptr<DMatrix> p_fmat{new data::DMatrixProxy};
+  dynamic_cast<data::DMatrixProxy*>(p_fmat.get())->SetCUDAArray(interface_str.c_str());
+  TestInplacePrediction(&ctx, p_fmat, kRows, kCols);
 }
 
 TEST(GPUPredictor, InplacePredictCuDF) {
+  auto ctx = MakeCUDACtx(0);
   size_t constexpr kRows{128}, kCols{64};
   RandomDataGenerator gen(kRows, kCols, 0.5);
-  gen.Device(0);
+  gen.Device(ctx.Device());
   std::vector<HostDeviceVector<float>> storage(kCols);
   auto interface_str = gen.GenerateColumnarArrayInterface(&storage);
-  auto x = std::make_shared<data::CudfAdapter>(interface_str);
-  TestInplacePrediction(x, "gpu_predictor", kRows, kCols, 0);
-}
-
-TEST(GPUPredictor, MGPU_InplacePredict) {  // NOLINT
-  int32_t n_gpus = xgboost::common::AllVisibleGPUs();
-  if (n_gpus <= 1) {
-    LOG(WARNING) << "GPUPredictor.MGPU_InplacePredict is skipped.";
-    return;
-  }
-  size_t constexpr kRows{128}, kCols{64};
-  RandomDataGenerator gen(kRows, kCols, 0.5);
-  gen.Device(1);
-  HostDeviceVector<float> data;
-  std::string interface_str = gen.GenerateArrayInterface(&data);
-  auto x = std::make_shared<data::CupyAdapter>(interface_str);
-  TestInplacePrediction(x, "gpu_predictor", kRows, kCols, 1);
-  EXPECT_THROW(TestInplacePrediction(x, "gpu_predictor", kRows, kCols, 0),
-               dmlc::Error);
+  std::shared_ptr<DMatrix> p_fmat{new data::DMatrixProxy};
+  dynamic_cast<data::DMatrixProxy*>(p_fmat.get())->SetCUDAArray(interface_str.c_str());
+  TestInplacePrediction(&ctx, p_fmat, kRows, kCols);
 }
 
 TEST(GpuPredictor, LesserFeatures) {
-  TestPredictionWithLesserFeatures("gpu_predictor");
+  auto ctx = MakeCUDACtx(0);
+  TestPredictionWithLesserFeatures(&ctx);
 }
+
+TEST_F(MGPUPredictorTest, LesserFeaturesColumnSplit) {
+  this->DoTest([] { TestPredictionWithLesserFeaturesColumnSplit(true); }, true);
+  this->DoTest([] { TestPredictionWithLesserFeaturesColumnSplit(true); }, false);
+}
+
 // Very basic test of empty model
 TEST(GPUPredictor, ShapStump) {
   cudaSetDevice(0);
-  LearnerModelParam param;
-  param.num_feature = 1;
-  param.num_output_group = 1;
-  param.base_score = 0.5;
-  gbm::GBTreeModel model(&param);
-  std::vector<std::unique_ptr<RegTree>> trees;
-  trees.push_back(std::unique_ptr<RegTree>(new RegTree));
-  model.CommitModel(std::move(trees), 0);
 
-  auto gpu_lparam = CreateEmptyGenericParam(0);
+  auto ctx = MakeCUDACtx(0);
+  LearnerModelParam mparam{MakeMP(1, .5, 1, ctx.Device())};
+  gbm::GBTreeModel model(&mparam, &ctx);
+
+  std::vector<std::unique_ptr<RegTree>> trees;
+  trees.push_back(std::make_unique<RegTree>());
+  model.CommitModelGroup(std::move(trees), 0);
+
+  auto gpu_lparam = MakeCUDACtx(0);
   std::unique_ptr<Predictor> gpu_predictor = std::unique_ptr<Predictor>(
       Predictor::Create("gpu_predictor", &gpu_lparam));
   gpu_predictor->Configure({});
@@ -182,27 +235,27 @@ TEST(GPUPredictor, ShapStump) {
   auto dmat = RandomDataGenerator(3, 1, 0).GenerateDMatrix();
   gpu_predictor->PredictContribution(dmat.get(), &predictions, model);
   auto& phis = predictions.HostVector();
+  auto base_score = mparam.BaseScore(DeviceOrd::CPU())(0);
   EXPECT_EQ(phis[0], 0.0);
-  EXPECT_EQ(phis[1], param.base_score);
+  EXPECT_EQ(phis[1], base_score);
   EXPECT_EQ(phis[2], 0.0);
-  EXPECT_EQ(phis[3], param.base_score);
+  EXPECT_EQ(phis[3], base_score);
   EXPECT_EQ(phis[4], 0.0);
-  EXPECT_EQ(phis[5], param.base_score);
+  EXPECT_EQ(phis[5], base_score);
 }
 
 TEST(GPUPredictor, Shap) {
-  LearnerModelParam param;
-  param.num_feature = 1;
-  param.num_output_group = 1;
-  param.base_score = 0.5;
-  gbm::GBTreeModel model(&param);
-  std::vector<std::unique_ptr<RegTree>> trees;
-  trees.push_back(std::unique_ptr<RegTree>(new RegTree));
-  trees[0]->ExpandNode(0, 0, 0.5, true, 1.0, -1.0, 1.0, 0.0, 5.0, 2.0, 3.0);
-  model.CommitModel(std::move(trees), 0);
+  auto ctx = MakeCUDACtx(0);
+  LearnerModelParam mparam{MakeMP(1, .5, 1, ctx.Device())};
+  gbm::GBTreeModel model(&mparam, &ctx);
 
-  auto gpu_lparam = CreateEmptyGenericParam(0);
-  auto cpu_lparam = CreateEmptyGenericParam(-1);
+  std::vector<std::unique_ptr<RegTree>> trees;
+  trees.push_back(std::make_unique<RegTree>());
+  trees[0]->ExpandNode(0, 0, 0.5, true, 1.0, -1.0, 1.0, 0.0, 5.0, 2.0, 3.0);
+  model.CommitModelGroup(std::move(trees), 0);
+
+  auto gpu_lparam = MakeCUDACtx(0);
+  auto cpu_lparam = MakeCUDACtx(-1);
   std::unique_ptr<Predictor> gpu_predictor = std::unique_ptr<Predictor>(
       Predictor::Create("gpu_predictor", &gpu_lparam));
   std::unique_ptr<Predictor> cpu_predictor = std::unique_ptr<Predictor>(
@@ -222,32 +275,54 @@ TEST(GPUPredictor, Shap) {
 }
 
 TEST(GPUPredictor, IterationRange) {
-  TestIterationRange("gpu_predictor");
+  auto ctx = MakeCUDACtx(0);
+  TestIterationRange(&ctx);
 }
 
+TEST_F(MGPUPredictorTest, IterationRangeColumnSplit) {
+  TestIterationRangeColumnSplit(common::AllVisibleGPUs(), true);
+}
 
 TEST(GPUPredictor, CategoricalPrediction) {
-  TestCategoricalPrediction("gpu_predictor");
+  TestCategoricalPrediction(true, false);
+}
+
+TEST_F(MGPUPredictorTest, CategoricalPredictionColumnSplit) {
+  this->DoTest([] { TestCategoricalPrediction(true, true); }, true);
+  this->DoTest([] { TestCategoricalPrediction(true, true); }, false);
 }
 
 TEST(GPUPredictor, CategoricalPredictLeaf) {
-  TestCategoricalPredictLeaf(StringView{"gpu_predictor"});
+  auto ctx = MakeCUDACtx(common::AllVisibleGPUs() == 1 ? 0 : collective::GetRank());
+  TestCategoricalPredictLeaf(&ctx, false);
+}
+
+TEST_F(MGPUPredictorTest, CategoricalPredictionLeafColumnSplit) {
+  this->DoTest(
+      [&] {
+        auto ctx = MakeCUDACtx(collective::GetRank());
+        TestCategoricalPredictLeaf(&ctx, true);
+      },
+      true);
+  this->DoTest(
+      [&] {
+        auto ctx = MakeCUDACtx(collective::GetRank());
+        TestCategoricalPredictLeaf(&ctx, true);
+      },
+      false);
 }
 
 TEST(GPUPredictor, PredictLeafBasic) {
   size_t constexpr kRows = 5, kCols = 5;
-  auto dmat = RandomDataGenerator(kRows, kCols, 0).Device(0).GenerateDMatrix();
-  auto lparam = CreateEmptyGenericParam(GPUIDX);
+  auto dmat = RandomDataGenerator(kRows, kCols, 0).Device(DeviceOrd::CUDA(0)).GenerateDMatrix();
+  auto lparam = MakeCUDACtx(GPUIDX);
   std::unique_ptr<Predictor> gpu_predictor =
       std::unique_ptr<Predictor>(Predictor::Create("gpu_predictor", &lparam));
   gpu_predictor->Configure({});
 
-  LearnerModelParam param;
-  param.num_feature = kCols;
-  param.base_score = 0.0;
-  param.num_output_group = 1;
-
-  gbm::GBTreeModel model = CreateTestModel(&param);
+  LearnerModelParam mparam{MakeMP(kCols, .0, 1)};
+  Context ctx;
+  gbm::GBTreeModel model = CreateTestModel(&mparam, &ctx);
 
   HostDeviceVector<float> leaf_out_predictions;
   gpu_predictor->PredictLeaf(dmat.get(), &leaf_out_predictions, model);
@@ -256,5 +331,15 @@ TEST(GPUPredictor, PredictLeafBasic) {
     ASSERT_EQ(v, 0);
   }
 }
-}  // namespace predictor
-}  // namespace xgboost
+
+TEST(GPUPredictor, Sparse) {
+  auto ctx = MakeCUDACtx(0);
+  TestSparsePrediction(&ctx, 0.2);
+  TestSparsePrediction(&ctx, 0.8);
+}
+
+TEST_F(MGPUPredictorTest, SparseColumnSplit) {
+  TestSparsePredictionColumnSplit(common::AllVisibleGPUs(), true, 0.2);
+  TestSparsePredictionColumnSplit(common::AllVisibleGPUs(), true, 0.8);
+}
+}  // namespace xgboost::predictor

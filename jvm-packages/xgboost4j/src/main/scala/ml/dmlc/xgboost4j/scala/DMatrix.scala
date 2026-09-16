@@ -1,5 +1,5 @@
 /*
- Copyright (c) 2014 by Contributors
+ Copyright (c) 2014-2023 by Contributors
 
  Licensed under the Apache License, Version 2.0 (the "License");
  you may not use this file except in compliance with the License.
@@ -17,8 +17,9 @@
 package ml.dmlc.xgboost4j.scala
 
 import _root_.scala.collection.JavaConverters._
+
 import ml.dmlc.xgboost4j.LabeledPoint
-import ml.dmlc.xgboost4j.java.{DMatrix => JDMatrix, DataBatch, XGBoostError}
+import ml.dmlc.xgboost4j.java.{Column, ColumnBatch, DataBatch, XGBoostError, DMatrix => JDMatrix}
 
 class DMatrix private[scala](private[scala] val jDMatrix: JDMatrix) {
   /**
@@ -53,7 +54,7 @@ class DMatrix private[scala](private[scala] val jDMatrix: JDMatrix) {
   @throws(classOf[XGBoostError])
   @deprecated
   def this(headers: Array[Long], indices: Array[Int], data: Array[Float], st: JDMatrix.SparseType) {
-    this(new JDMatrix(headers, indices, data, st))
+    this(new JDMatrix(headers, indices, data, st, 0, Float.NaN, -1))
   }
 
   /**
@@ -69,7 +70,37 @@ class DMatrix private[scala](private[scala] val jDMatrix: JDMatrix) {
   @throws(classOf[XGBoostError])
   def this(headers: Array[Long], indices: Array[Int], data: Array[Float], st: JDMatrix.SparseType,
            shapeParam: Int) {
-    this(new JDMatrix(headers, indices, data, st, shapeParam))
+    this(new JDMatrix(headers, indices, data, st, shapeParam, Float.NaN, -1))
+  }
+
+  /**
+   * create DMatrix from sparse matrix
+   *
+   * @param headers index to headers (rowHeaders for CSR or colHeaders for CSC)
+   * @param indices Indices (colIndexs for CSR or rowIndexs for CSC)
+   * @param data    non zero values (sequence by row for CSR or by col for CSC)
+   * @param st      sparse matrix type (CSR or CSC)
+   * @param shapeParam when st is CSR, it specifies the column number, otherwise it is taken as
+   *                     row number
+   * @param missing missing value
+   * @param nthread The number of threads used for constructing DMatrix
+   */
+  @throws(classOf[XGBoostError])
+  def this(headers: Array[Long], indices: Array[Int], data: Array[Float], st: JDMatrix.SparseType,
+           shapeParam: Int, missing: Float, nthread: Int) {
+    this(new JDMatrix(headers, indices, data, st, shapeParam, missing, nthread))
+  }
+
+  /**
+   * Create the normal DMatrix from column array interface
+   * @param columnBatch the XGBoost ColumnBatch to provide the cuda array interface
+   *                    of feature columns
+   * @param missing missing value
+   * @param nthread The number of threads used for constructing DMatrix
+   */
+  @throws(classOf[XGBoostError])
+  def this(columnBatch: ColumnBatch, missing: Float, nthread: Int) {
+    this(new JDMatrix(columnBatch, missing, nthread))
   }
 
   /**
@@ -79,6 +110,7 @@ class DMatrix private[scala](private[scala] val jDMatrix: JDMatrix) {
    * @param nrow number of rows
    * @param ncol number of columns
    */
+  @deprecated("Please specify the missing value explicitly", "XGBoost 1.5")
   @throws(classOf[XGBoostError])
   def this(data: Array[Float], nrow: Int, ncol: Int) {
     this(new JDMatrix(data, nrow, ncol))
@@ -150,6 +182,50 @@ class DMatrix private[scala](private[scala] val jDMatrix: JDMatrix) {
   }
 
   /**
+   * Set label of DMatrix from cuda array interface
+   */
+  @throws(classOf[XGBoostError])
+  def setLabel(column: Column): Unit = {
+    jDMatrix.setLabel(column)
+  }
+
+  /**
+   * set weight of dmatrix from column array interface
+   */
+  @throws(classOf[XGBoostError])
+  def setWeight(column: Column): Unit = {
+    jDMatrix.setWeight(column)
+  }
+
+  /**
+   * set base margin of dmatrix from column array interface
+   */
+  @throws(classOf[XGBoostError])
+  def setBaseMargin(column: Column): Unit = {
+    jDMatrix.setBaseMargin(column)
+  }
+
+  /**
+   * set feature names
+   * @param values feature names
+   * @throws ml.dmlc.xgboost4j.java.XGBoostError
+   */
+  @throws(classOf[XGBoostError])
+  def setFeatureNames(values: Array[String]): Unit = {
+    jDMatrix.setFeatureNames(values)
+  }
+
+  /**
+   * set feature types
+   * @param values feature types
+   * @throws ml.dmlc.xgboost4j.java.XGBoostError
+   */
+  @throws(classOf[XGBoostError])
+  def setFeatureTypes(values: Array[String]): Unit = {
+    jDMatrix.setFeatureTypes(values)
+  }
+
+  /**
    * Get group sizes of DMatrix (used for ranking)
    */
   @throws(classOf[XGBoostError])
@@ -188,6 +264,26 @@ class DMatrix private[scala](private[scala] val jDMatrix: JDMatrix) {
   }
 
   /**
+   * get feature names
+   * @throws ml.dmlc.xgboost4j.java.XGBoostError
+   * @return
+   */
+  @throws(classOf[XGBoostError])
+  def getFeatureNames: Array[String] = {
+    jDMatrix.getFeatureNames
+  }
+
+  /**
+   * get feature types
+   * @throws ml.dmlc.xgboost4j.java.XGBoostError
+   * @return
+   */
+  @throws(classOf[XGBoostError])
+  def getFeatureTypes: Array[String] = {
+    jDMatrix.getFeatureTypes
+  }
+
+  /**
    * Slice the DMatrix and return a new DMatrix that only contains `rowIndex`.
    *
    * @param rowIndex row index
@@ -206,6 +302,16 @@ class DMatrix private[scala](private[scala] val jDMatrix: JDMatrix) {
   @throws(classOf[XGBoostError])
   def rowNum: Long = {
     jDMatrix.rowNum
+  }
+
+  /**
+   * Get the number of non-missing values of DMatrix.
+   *
+   * @return The number of non-missing values
+   */
+  @throws(classOf[XGBoostError])
+  def nonMissingNum: Long = {
+    jDMatrix.nonMissingNum
   }
 
   /**

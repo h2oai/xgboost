@@ -9,7 +9,7 @@ xgb.dump(
   fname = NULL,
   fmap = "",
   with_stats = FALSE,
-  dump_format = c("text", "json"),
+  dump_format = c("text", "json", "dot"),
   ...
 )
 }
@@ -20,8 +20,6 @@ xgb.dump(
 If not provided or set to \code{NULL}, the model is returned as a \code{character} vector.}
 
 \item{fmap}{feature map file representing feature types.
-Detailed description could be found at
-\url{https://github.com/dmlc/xgboost/wiki/Binary-Classification#dump-model}.
 See demo/ for walkthrough example in R, and
 \url{https://github.com/dmlc/xgboost/blob/master/demo/data/featmap.txt}
 for example Format.}
@@ -31,7 +29,10 @@ When this option is on, the model dump contains two additional values:
 gain is the approximate loss function gain we get in each split;
 cover is the sum of second order gradient in each node.}
 
-\item{dump_format}{either 'text' or 'json' format could be specified.}
+\item{dump_format}{either 'text', 'json', or 'dot' (graphviz) format could be specified.
+
+Format 'dot' for a single tree can be passed directly to packages that consume this format
+for graph visualization, such as function \code{\link[DiagrammeR:grViz]{DiagrammeR::grViz()}}}
 
 \item{...}{currently not used}
 }
@@ -43,6 +44,7 @@ as a \code{character} vector. Otherwise it will return \code{TRUE}.
 Dump an xgboost model in text format.
 }
 \examples{
+\dontshow{RhpcBLASctl::omp_set_num_threads(1)}
 data(agaricus.train, package='xgboost')
 data(agaricus.test, package='xgboost')
 train <- agaricus.train
@@ -59,4 +61,8 @@ print(xgb.dump(bst, with_stats = TRUE))
 # print in JSON format:
 cat(xgb.dump(bst, with_stats = TRUE, dump_format='json'))
 
+# plot first tree leveraging the 'dot' format
+if (requireNamespace('DiagrammeR', quietly = TRUE)) {
+  DiagrammeR::grViz(xgb.dump(bst, dump_format = "dot")[[1L]])
+}
 }

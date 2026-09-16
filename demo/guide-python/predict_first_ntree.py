@@ -1,7 +1,13 @@
+"""
+Demo for prediction using number of trees
+=========================================
+"""
 import os
+
 import numpy as np
-import xgboost as xgb
 from sklearn.datasets import load_svmlight_file
+
+import xgboost as xgb
 
 CURRENT_DIR = os.path.dirname(__file__)
 train = os.path.join(CURRENT_DIR, "../data/agaricus.txt.train")
@@ -10,8 +16,8 @@ test = os.path.join(CURRENT_DIR, "../data/agaricus.txt.test")
 
 def native_interface():
     # load data in do training
-    dtrain = xgb.DMatrix(train)
-    dtest = xgb.DMatrix(test)
+    dtrain = xgb.DMatrix(train + "?format=libsvm")
+    dtest = xgb.DMatrix(test + "?format=libsvm")
     param = {"max_depth": 2, "eta": 1, "objective": "binary:logistic"}
     watchlist = [(dtest, "eval"), (dtrain, "train")]
     num_round = 3
@@ -31,7 +37,7 @@ def native_interface():
 def sklearn_interface():
     X_train, y_train = load_svmlight_file(train)
     X_test, y_test = load_svmlight_file(test)
-    clf = xgb.XGBClassifier(n_estimators=3, max_depth=2, eta=1, use_label_encoder=False)
+    clf = xgb.XGBClassifier(n_estimators=3, max_depth=2, eta=1)
     clf.fit(X_train, y_train, eval_set=[(X_test, y_test)])
     assert clf.n_classes_ == 2
 

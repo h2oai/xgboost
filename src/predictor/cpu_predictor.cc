@@ -1,51 +1,65 @@
-/*!
- * Copyright by Contributors 2017-2021
+/**
+ * Copyright 2017-2024, XGBoost Contributors
  */
-#include <dmlc/omp.h>
-#include <dmlc/any.h>
+#include <algorithm>  // for max, fill, min
+#include <any>        // for any, any_cast
+#include <cassert>    // for assert
+#include <cstddef>    // for size_t
+#include <cstdint>    // for uint32_t, int32_t, uint64_t
+#include <memory>     // for unique_ptr, shared_ptr
+#include <ostream>    // for char_traits, operator<<, basic_ostream
+#include <typeinfo>   // for type_info
+#include <vector>     // for vector
 
-#include <cstddef>
-#include <limits>
-#include <mutex>
+#include "../collective/communicator-inl.h"   // for Allreduce, IsDistributed
+#include "../collective/allreduce.h"
+#include "../common/bitfield.h"               // for RBitField8
+#include "../common/categorical.h"            // for IsCat, Decision
+#include "../common/common.h"                 // for DivRoundUp
+#include "../common/error_msg.h"              // for InplacePredictProxy
+#include "../common/math.h"                   // for CheckNAN
+#include "../common/threading_utils.h"        // for ParallelFor
+#include "../data/adapter.h"                  // for ArrayAdapter, CSRAdapter, CSRArrayAdapter
+#include "../data/gradient_index.h"           // for GHistIndexMatrix
+#include "../data/proxy_dmatrix.h"            // for DMatrixProxy
+#include "../gbm/gbtree_model.h"              // for GBTreeModel, GBTreeModelParam
+#include "cpu_treeshap.h"                     // for CalculateContributions
+#include "dmlc/registry.h"                    // for DMLC_REGISTRY_FILE_TAG
+#include "predict_fn.h"                       // for GetNextNode, GetNextNodeMulti
+#include "xgboost/base.h"                     // for bst_float, bst_node_t, bst_omp_uint, bst_fe...
+#include "xgboost/context.h"                  // for Context
+#include "xgboost/data.h"                     // for Entry, DMatrix, MetaInfo, SparsePage, Batch...
+#include "xgboost/host_device_vector.h"       // for HostDeviceVector
+#include "xgboost/learner.h"                  // for LearnerModelParam
+#include "xgboost/linalg.h"                   // for TensorView, All, VectorView, Tensor
+#include "xgboost/logging.h"                  // for LogCheck_EQ, CHECK_EQ, CHECK, LogCheck_NE
+#include "xgboost/multi_target_tree_model.h"  // for MultiTargetTree
+#include "xgboost/predictor.h"                // for PredictionCacheEntry, Predictor, PredictorReg
+#include "xgboost/span.h"                     // for Span
+#include "xgboost/tree_model.h"               // for RegTree, MTNotImplemented, RTreeNodeStat
 
-#include "xgboost/base.h"
-#include "xgboost/data.h"
-#include "xgboost/predictor.h"
-#include "xgboost/tree_model.h"
-#include "xgboost/tree_updater.h"
-#include "xgboost/logging.h"
-#include "xgboost/host_device_vector.h"
-
-#include "predict_fn.h"
-#include "../data/adapter.h"
-#include "../common/math.h"
-#include "../common/threading_utils.h"
-#include "../common/categorical.h"
-#include "../gbm/gbtree_model.h"
-
-namespace xgboost {
-namespace predictor {
+namespace xgboost::predictor {
 
 DMLC_REGISTRY_FILE_TAG(cpu_predictor);
 
+namespace scalar {
 template <bool has_missing, bool has_categorical>
 bst_node_t GetLeafIndex(RegTree const &tree, const RegTree::FVec &feat,
-                        RegTree::CategoricalSplitMatrix const& cats) {
-  bst_node_t nid = 0;
-  while (!tree[nid].IsLeaf()) {
-    unsigned split_index = tree[nid].SplitIndex();
+                        RegTree::CategoricalSplitMatrix const &cats) {
+  bst_node_t nidx{0};
+  while (!tree[nidx].IsLeaf()) {
+    bst_feature_t split_index = tree[nidx].SplitIndex();
     auto fvalue = feat.GetFvalue(split_index);
-    nid = GetNextNode<has_missing, has_categorical>(
-        tree[nid], nid, fvalue, has_missing && feat.IsMissing(split_index), cats);
+    nidx = GetNextNode<has_missing, has_categorical>(
+        tree[nidx], nidx, fvalue, has_missing && feat.IsMissing(split_index), cats);
   }
-  return nid;
+  return nidx;
 }
 
 bst_float PredValue(const SparsePage::Inst &inst,
                     const std::vector<std::unique_ptr<RegTree>> &trees,
-                    const std::vector<int> &tree_info, int bst_group,
-                    RegTree::FVec *p_feats, unsigned tree_begin,
-                    unsigned tree_end) {
+                    const std::vector<int> &tree_info, std::int32_t bst_group,
+                    RegTree::FVec *p_feats, std::uint32_t tree_begin, std::uint32_t tree_end) {
   bst_float psum = 0.0f;
   p_feats->Fill(inst);
   for (size_t i = tree_begin; i < tree_end; ++i) {
@@ -62,41 +76,85 @@ bst_float PredValue(const SparsePage::Inst &inst,
       psum += (*trees[i])[nidx].LeafValue();
     }
   }
-  p_feats->Drop(inst);
+  p_feats->Drop();
   return psum;
 }
 
 template <bool has_categorical>
-bst_float
-PredValueByOneTree(const RegTree::FVec &p_feats, RegTree const &tree,
-                   RegTree::CategoricalSplitMatrix const& cats) {
-  const bst_node_t leaf = p_feats.HasMissing() ?
-    GetLeafIndex<true, has_categorical>(tree, p_feats, cats) :
-    GetLeafIndex<false, has_categorical>(tree, p_feats, cats);
+bst_float PredValueByOneTree(const RegTree::FVec &p_feats, RegTree const &tree,
+                             RegTree::CategoricalSplitMatrix const &cats) {
+  const bst_node_t leaf = p_feats.HasMissing()
+                              ? GetLeafIndex<true, has_categorical>(tree, p_feats, cats)
+                              : GetLeafIndex<false, has_categorical>(tree, p_feats, cats);
   return tree[leaf].LeafValue();
 }
+}  // namespace scalar
 
-void PredictByAllTrees(gbm::GBTreeModel const &model, const size_t tree_begin,
-                       const size_t tree_end, std::vector<bst_float> *out_preds,
-                       const size_t predict_offset, const size_t num_group,
-                       const std::vector<RegTree::FVec> &thread_temp,
-                       const size_t offset, const size_t block_size) {
-  std::vector<bst_float> &preds = *out_preds;
-  for (size_t tree_id = tree_begin; tree_id < tree_end; ++tree_id) {
-    const size_t gid = model.tree_info[tree_id];
-    auto const &tree = *model.trees[tree_id];
-    auto const& cats = tree.GetCategoriesMatrix();
-    auto has_categorical = tree.HasCategoricalSplit();
+namespace multi {
+template <bool has_missing, bool has_categorical>
+bst_node_t GetLeafIndex(MultiTargetTree const &tree, const RegTree::FVec &feat,
+                        RegTree::CategoricalSplitMatrix const &cats) {
+  bst_node_t nidx{0};
+  while (!tree.IsLeaf(nidx)) {
+    unsigned split_index = tree.SplitIndex(nidx);
+    auto fvalue = feat.GetFvalue(split_index);
+    nidx = GetNextNodeMulti<has_missing, has_categorical>(
+        tree, nidx, fvalue, has_missing && feat.IsMissing(split_index), cats);
+  }
+  return nidx;
+}
 
-    if (has_categorical) {
-      for (size_t i = 0; i < block_size; ++i) {
-        preds[(predict_offset + i) * num_group + gid] +=
-            PredValueByOneTree<true>(thread_temp[offset + i], tree, cats);
+template <bool has_categorical>
+void PredValueByOneTree(RegTree::FVec const &p_feats, MultiTargetTree const &tree,
+                        RegTree::CategoricalSplitMatrix const &cats,
+                        linalg::VectorView<float> out_predt) {
+  bst_node_t const leaf = p_feats.HasMissing()
+                              ? GetLeafIndex<true, has_categorical>(tree, p_feats, cats)
+                              : GetLeafIndex<false, has_categorical>(tree, p_feats, cats);
+  auto leaf_value = tree.LeafValue(leaf);
+  assert(out_predt.Shape(0) == leaf_value.Shape(0) && "shape mismatch.");
+  for (size_t i = 0; i < leaf_value.Size(); ++i) {
+    out_predt(i) += leaf_value(i);
+  }
+}
+}  // namespace multi
+
+namespace {
+void PredictByAllTrees(gbm::GBTreeModel const &model, std::uint32_t const tree_begin,
+                       std::uint32_t const tree_end, std::size_t const predict_offset,
+                       std::vector<RegTree::FVec> const &thread_temp, std::size_t const offset,
+                       std::size_t const block_size, linalg::MatrixView<float> out_predt) {
+  for (std::uint32_t tree_id = tree_begin; tree_id < tree_end; ++tree_id) {
+    auto const &tree = *model.trees.at(tree_id);
+    auto const &cats = tree.GetCategoriesMatrix();
+    bool has_categorical = tree.HasCategoricalSplit();
+
+    if (tree.IsMultiTarget()) {
+      if (has_categorical) {
+        for (std::size_t i = 0; i < block_size; ++i) {
+          auto t_predts = out_predt.Slice(predict_offset + i, linalg::All());
+          multi::PredValueByOneTree<true>(thread_temp[offset + i], *tree.GetMultiTargetTree(), cats,
+                                          t_predts);
+        }
+      } else {
+        for (std::size_t i = 0; i < block_size; ++i) {
+          auto t_predts = out_predt.Slice(predict_offset + i, linalg::All());
+          multi::PredValueByOneTree<false>(thread_temp[offset + i], *tree.GetMultiTargetTree(),
+                                           cats, t_predts);
+        }
       }
     } else {
-      for (size_t i = 0; i < block_size; ++i) {
-        preds[(predict_offset + i) * num_group + gid] +=
-            PredValueByOneTree<false>(thread_temp[offset + i], tree, cats);
+      auto const gid = model.tree_info[tree_id];
+      if (has_categorical) {
+        for (std::size_t i = 0; i < block_size; ++i) {
+          out_predt(predict_offset + i, gid) +=
+              scalar::PredValueByOneTree<true>(thread_temp[offset + i], tree, cats);
+        }
+      } else {
+        for (std::size_t i = 0; i < block_size; ++i) {
+          out_predt(predict_offset + i, gid) +=
+              scalar::PredValueByOneTree<false>(thread_temp[offset + i], tree, cats);
+        }
       }
     }
   }
@@ -104,7 +162,7 @@ void PredictByAllTrees(gbm::GBTreeModel const &model, const size_t tree_begin,
 
 template <typename DataView>
 void FVecFill(const size_t block_size, const size_t batch_offset, const int num_feature,
-              DataView* batch, const size_t fvec_offset, std::vector<RegTree::FVec>* p_feats) {
+              DataView *batch, const size_t fvec_offset, std::vector<RegTree::FVec> *p_feats) {
   for (size_t i = 0; i < block_size; ++i) {
     RegTree::FVec &feats = (*p_feats)[fvec_offset + i];
     if (feats.Size() == 0) {
@@ -115,31 +173,87 @@ void FVecFill(const size_t block_size, const size_t batch_offset, const int num_
   }
 }
 
-template <typename DataView>
-void FVecDrop(const size_t block_size, const size_t batch_offset, DataView* batch,
-              const size_t fvec_offset, std::vector<RegTree::FVec>* p_feats) {
+void FVecDrop(std::size_t const block_size, std::size_t const fvec_offset,
+              std::vector<RegTree::FVec> *p_feats) {
   for (size_t i = 0; i < block_size; ++i) {
     RegTree::FVec &feats = (*p_feats)[fvec_offset + i];
-    const SparsePage::Inst inst = (*batch)[batch_offset + i];
-    feats.Drop(inst);
+    feats.Drop();
   }
 }
 
-template <size_t kUnrollLen = 8>
-struct SparsePageView {
-  bst_row_t base_rowid;
-  HostSparsePageView view;
-  static size_t constexpr kUnroll = kUnrollLen;
+static std::size_t constexpr kUnroll = 8;
 
-  explicit SparsePageView(SparsePage const *p)
-      : base_rowid{p->base_rowid} {
-    view = p->GetView();
-  }
+struct SparsePageView {
+  bst_idx_t base_rowid;
+  HostSparsePageView view;
+
+  explicit SparsePageView(SparsePage const *p) : base_rowid{p->base_rowid} { view = p->GetView(); }
   SparsePage::Inst operator[](size_t i) { return view[i]; }
-  size_t Size() const { return view.Size(); }
+  [[nodiscard]] size_t Size() const { return view.Size(); }
 };
 
-template <typename Adapter, size_t kUnrollLen = 8>
+struct SingleInstanceView {
+  bst_idx_t base_rowid{};
+  SparsePage::Inst const &inst;
+
+  explicit SingleInstanceView(SparsePage::Inst const &instance) : inst{instance} {}
+  SparsePage::Inst operator[](size_t) { return inst; }
+  static size_t Size() { return 1; }
+};
+
+struct GHistIndexMatrixView {
+ private:
+  GHistIndexMatrix const &page_;
+  std::uint64_t const n_features_;
+  common::Span<FeatureType const> ft_;
+  common::Span<Entry> workspace_;
+  std::vector<size_t> current_unroll_;
+
+  std::vector<std::uint32_t> const& ptrs_;
+  std::vector<float> const& mins_;
+  std::vector<float> const& values_;
+
+ public:
+  bst_idx_t base_rowid;
+
+ public:
+  GHistIndexMatrixView(GHistIndexMatrix const &_page, uint64_t n_feat,
+                       common::Span<FeatureType const> ft, common::Span<Entry> workplace,
+                       int32_t n_threads)
+      : page_{_page},
+        n_features_{n_feat},
+        ft_{ft},
+        workspace_{workplace},
+        current_unroll_(n_threads > 0 ? n_threads : 1, 0),
+        ptrs_{_page.cut.Ptrs()},
+        mins_{_page.cut.MinValues()},
+        values_{_page.cut.Values()},
+        base_rowid{_page.base_rowid} {}
+
+  SparsePage::Inst operator[](size_t r) {
+    auto t = omp_get_thread_num();
+    auto const beg = (n_features_ * kUnroll * t) + (current_unroll_[t] * n_features_);
+    size_t non_missing{static_cast<std::size_t>(beg)};
+
+    for (bst_feature_t c = 0; c < n_features_; ++c) {
+      float f = page_.GetFvalue(ptrs_, values_, mins_, r, c, common::IsCat(ft_, c));
+      if (!common::CheckNAN(f)) {
+        workspace_[non_missing] = Entry{c, f};
+        ++non_missing;
+      }
+    }
+
+    auto ret = workspace_.subspan(beg, non_missing - beg);
+    current_unroll_[t]++;
+    if (current_unroll_[t] == kUnroll) {
+      current_unroll_[t] = 0;
+    }
+    return ret;
+  }
+  [[nodiscard]] size_t Size() const { return page_.Size(); }
+};
+
+template <typename Adapter>
 class AdapterView {
   Adapter* adapter_;
   float missing_;
@@ -147,13 +261,12 @@ class AdapterView {
   std::vector<size_t> current_unroll_;
 
  public:
-  static size_t constexpr kUnroll = kUnrollLen;
-
- public:
-  explicit AdapterView(Adapter *adapter, float missing,
-                       common::Span<Entry> workplace)
-      : adapter_{adapter}, missing_{missing}, workspace_{workplace},
-        current_unroll_(omp_get_max_threads() > 0 ? omp_get_max_threads() : 1, 0) {}
+  explicit AdapterView(Adapter *adapter, float missing, common::Span<Entry> workplace,
+                       int32_t n_threads)
+      : adapter_{adapter},
+        missing_{missing},
+        workspace_{workplace},
+        current_unroll_(n_threads > 0 ? n_threads : 1, 0) {}
   SparsePage::Inst operator[](size_t i) {
     bst_feature_t columns = adapter_->NumColumns();
     auto const &batch = adapter_->Value();
@@ -177,39 +290,33 @@ class AdapterView {
     return ret;
   }
 
-  size_t Size() const { return adapter_->NumRows(); }
+  [[nodiscard]] size_t Size() const { return adapter_->NumRows(); }
 
-  bst_row_t const static base_rowid = 0;  // NOLINT
+  bst_idx_t const static base_rowid = 0;  // NOLINT
 };
 
 template <typename DataView, size_t block_of_rows_size>
-void PredictBatchByBlockOfRowsKernel(
-    DataView batch, std::vector<bst_float> *out_preds,
-    gbm::GBTreeModel const &model, int32_t tree_begin, int32_t tree_end,
-    std::vector<RegTree::FVec> *p_thread_temp) {
+void PredictBatchByBlockOfRowsKernel(DataView batch, gbm::GBTreeModel const &model,
+                                     std::uint32_t tree_begin, std::uint32_t tree_end,
+                                     std::vector<RegTree::FVec> *p_thread_temp, int32_t n_threads,
+                                     linalg::TensorView<float, 2> out_predt) {
   auto &thread_temp = *p_thread_temp;
-  int32_t const num_group = model.learner_model_param->num_output_group;
 
-  CHECK_EQ(model.param.size_leaf_vector, 0)
-      << "size_leaf_vector is enforced to 0 so far";
   // parallel over local batch
   const auto nsize = static_cast<bst_omp_uint>(batch.Size());
   const int num_feature = model.learner_model_param->num_feature;
   omp_ulong n_blocks = common::DivRoundUp(nsize, block_of_rows_size);
 
-  common::ParallelFor(n_blocks, [&](bst_omp_uint block_id) {
+  common::ParallelFor(n_blocks, n_threads, [&](bst_omp_uint block_id) {
     const size_t batch_offset = block_id * block_of_rows_size;
-    const size_t block_size =
-        std::min(nsize - batch_offset, block_of_rows_size);
+    const size_t block_size = std::min(nsize - batch_offset, block_of_rows_size);
     const size_t fvec_offset = omp_get_thread_num() * block_of_rows_size;
 
-    FVecFill(block_size, batch_offset, num_feature, &batch, fvec_offset,
-             p_thread_temp);
+    FVecFill(block_size, batch_offset, num_feature, &batch, fvec_offset, p_thread_temp);
     // process block of rows through all trees to keep cache locality
-    PredictByAllTrees(model, tree_begin, tree_end, out_preds,
-                      batch_offset + batch.base_rowid, num_group, thread_temp,
-                      fvec_offset, block_size);
-    FVecDrop(block_size, batch_offset, &batch, fvec_offset, p_thread_temp);
+    PredictByAllTrees(model, tree_begin, tree_end, batch_offset + batch.base_rowid, thread_temp,
+                      fvec_offset, block_size, out_predt);
+    FVecDrop(block_size, fvec_offset, p_thread_temp);
   });
 }
 
@@ -231,7 +338,7 @@ float FillNodeMeanValues(RegTree const *tree, bst_node_t nidx, std::vector<float
 }
 
 void FillNodeMeanValues(RegTree const* tree, std::vector<float>* mean_values) {
-  size_t num_nodes = tree->param.num_nodes;
+  size_t num_nodes = tree->NumNodes();
   if (mean_values->size() == num_nodes) {
     return;
   }
@@ -239,90 +346,446 @@ void FillNodeMeanValues(RegTree const* tree, std::vector<float>* mean_values) {
   FillNodeMeanValues(tree, 0, mean_values);
 }
 
+// init thread buffers
+static void InitThreadTemp(int nthread, std::vector<RegTree::FVec> *out) {
+  int prev_thread_temp_size = out->size();
+  if (prev_thread_temp_size < nthread) {
+    out->resize(nthread, RegTree::FVec());
+  }
+}
+}  // anonymous namespace
+
+/**
+ * @brief A helper class for prediction when the DMatrix is split by column.
+ *
+ * When data is split by column, a local DMatrix only contains a subset of features. All the workers
+ * in a distributed/federated environment need to cooperate to produce a prediction. This is done in
+ * two passes with the help of bit vectors.
+ *
+ * First pass:
+ * for each tree:
+ *   for each row:
+ *     for each node:
+ *       if the feature is available and passes the filter, mark the corresponding decision bit
+ *       if the feature is missing, mark the missing bit
+ *
+ * Once the two bit vectors are populated, run allreduce on both, using bitwise OR for the decision
+ * bits, and bitwise AND for the missing bits.
+ *
+ * Second pass:
+ * for each tree:
+ *   for each row:
+ *     find the leaf node using the decision and missing bits, return the leaf value
+ *
+ * The size of the decision/missing bit vector is:
+ *   number of rows in a batch * sum(number of nodes in each tree)
+ */
+class ColumnSplitHelper {
+ public:
+  ColumnSplitHelper(std::int32_t n_threads, gbm::GBTreeModel const &model, uint32_t tree_begin,
+                    uint32_t tree_end)
+      : n_threads_{n_threads}, model_{model}, tree_begin_{tree_begin}, tree_end_{tree_end} {
+    auto const n_trees = tree_end_ - tree_begin_;
+    tree_sizes_.resize(n_trees);
+    tree_offsets_.resize(n_trees);
+    for (decltype(tree_begin) i = 0; i < n_trees; i++) {
+      auto const &tree = *model_.trees[tree_begin_ + i];
+      tree_sizes_[i] = tree.GetNodes().size();
+    }
+    // std::exclusive_scan (only available in c++17) equivalent to get tree offsets.
+    tree_offsets_[0] = 0;
+    for (decltype(tree_begin) i = 1; i < n_trees; i++) {
+      tree_offsets_[i] = tree_offsets_[i - 1] + tree_sizes_[i - 1];
+    }
+    bits_per_row_ = tree_offsets_.back() + tree_sizes_.back();
+
+    InitThreadTemp(n_threads_ * kBlockOfRowsSize, &feat_vecs_);
+  }
+
+  // Disable copy (and move) semantics.
+  ColumnSplitHelper(ColumnSplitHelper const &) = delete;
+  ColumnSplitHelper &operator=(ColumnSplitHelper const &) = delete;
+  ColumnSplitHelper(ColumnSplitHelper &&) noexcept = delete;
+  ColumnSplitHelper &operator=(ColumnSplitHelper &&) noexcept = delete;
+
+  void PredictDMatrix(Context const *ctx, DMatrix *p_fmat, std::vector<bst_float> *out_preds) {
+    CHECK(xgboost::collective::IsDistributed())
+        << "column-split prediction is only supported for distributed training";
+
+    for (auto const &batch : p_fmat->GetBatches<SparsePage>()) {
+      CHECK_EQ(out_preds->size(),
+               p_fmat->Info().num_row_ * model_.learner_model_param->num_output_group);
+      PredictBatchKernel<SparsePageView, kBlockOfRowsSize>(ctx, SparsePageView{&batch}, out_preds);
+    }
+  }
+
+  void PredictInstance(Context const *ctx, SparsePage::Inst const &inst,
+                       std::vector<bst_float> *out_preds) {
+    CHECK(xgboost::collective::IsDistributed())
+        << "column-split prediction is only supported for distributed training";
+
+    PredictBatchKernel<SingleInstanceView, 1>(ctx, SingleInstanceView{inst}, out_preds);
+  }
+
+  void PredictLeaf(Context const* ctx, DMatrix *p_fmat, std::vector<bst_float> *out_preds) {
+    CHECK(xgboost::collective::IsDistributed())
+        << "column-split prediction is only supported for distributed training";
+
+    for (auto const &batch : p_fmat->GetBatches<SparsePage>()) {
+      CHECK_EQ(out_preds->size(), p_fmat->Info().num_row_ * (tree_end_ - tree_begin_));
+      PredictBatchKernel<SparsePageView, kBlockOfRowsSize, true>(ctx, SparsePageView{&batch},
+                                                                 out_preds);
+    }
+  }
+
+ private:
+  using BitVector = RBitField8;
+
+  void InitBitVectors(std::size_t n_rows) {
+    n_rows_ = n_rows;
+    auto const size = BitVector::ComputeStorageSize(bits_per_row_ * n_rows_);
+    decision_storage_.resize(size);
+    decision_bits_ = BitVector(common::Span<BitVector::value_type>(decision_storage_));
+    missing_storage_.resize(size);
+    missing_bits_ = BitVector(common::Span<BitVector::value_type>(missing_storage_));
+  }
+
+  void ClearBitVectors() {
+    std::fill(decision_storage_.begin(), decision_storage_.end(), 0);
+    std::fill(missing_storage_.begin(), missing_storage_.end(), 0);
+  }
+
+  [[nodiscard]] std::size_t BitIndex(std::size_t tree_id, std::size_t row_id,
+                                     std::size_t node_id) const {
+    size_t tree_index = tree_id - tree_begin_;
+    return tree_offsets_[tree_index] * n_rows_ + row_id * tree_sizes_[tree_index] + node_id;
+  }
+
+  void AllreduceBitVectors(Context const *ctx) {
+    auto rc = collective::Success() << [&] {
+      return collective::Allreduce(
+          ctx, linalg::MakeVec(decision_storage_.data(), decision_storage_.size()),
+          collective::Op::kBitwiseOR);
+    } << [&] {
+      return collective::Allreduce(
+          ctx, linalg::MakeVec(missing_storage_.data(), missing_storage_.size()),
+          collective::Op::kBitwiseAND);
+    };
+    collective::SafeColl(rc);
+  }
+
+  void MaskOneTree(RegTree::FVec const &feat, std::size_t tree_id, std::size_t row_id) {
+    auto const &tree = *model_.trees[tree_id];
+    auto const &cats = tree.GetCategoriesMatrix();
+    bst_node_t n_nodes = tree.GetNodes().size();
+
+    for (bst_node_t nid = 0; nid < n_nodes; nid++) {
+      auto const &node = tree[nid];
+      if (node.IsDeleted() || node.IsLeaf()) {
+        continue;
+      }
+
+      auto const bit_index = BitIndex(tree_id, row_id, nid);
+      unsigned split_index = node.SplitIndex();
+      if (feat.IsMissing(split_index)) {
+        missing_bits_.Set(bit_index);
+        continue;
+      }
+
+      auto const fvalue = feat.GetFvalue(split_index);
+      auto const decision = tree.HasCategoricalSplit()
+                                ? GetDecision<true>(node, nid, fvalue, cats)
+                                : GetDecision<false>(node, nid, fvalue, cats);
+      if (decision) {
+        decision_bits_.Set(bit_index);
+      }
+    }
+  }
+
+  void MaskAllTrees(std::size_t batch_offset, std::size_t fvec_offset, std::size_t block_size) {
+    for (auto tree_id = tree_begin_; tree_id < tree_end_; ++tree_id) {
+      for (size_t i = 0; i < block_size; ++i) {
+        MaskOneTree(feat_vecs_[fvec_offset + i], tree_id, batch_offset + i);
+      }
+    }
+  }
+
+  bst_node_t GetNextNode(RegTree::Node const &node, std::size_t bit_index) {
+    if (missing_bits_.Check(bit_index)) {
+      return node.DefaultChild();
+    } else {
+      return node.LeftChild() + !decision_bits_.Check(bit_index);
+    }
+  }
+
+  bst_node_t GetLeafIndex(RegTree const &tree, std::size_t tree_id, std::size_t row_id) {
+    bst_node_t nid = 0;
+    while (!tree[nid].IsLeaf()) {
+      auto const bit_index = BitIndex(tree_id, row_id, nid);
+      nid = GetNextNode(tree[nid], bit_index);
+    }
+    return nid;
+  }
+
+  template <bool predict_leaf = false>
+  bst_float PredictOneTree(std::size_t tree_id, std::size_t row_id) {
+    auto const &tree = *model_.trees[tree_id];
+    auto const leaf = GetLeafIndex(tree, tree_id, row_id);
+    if constexpr (predict_leaf) {
+      return static_cast<bst_float>(leaf);
+    } else {
+      return tree[leaf].LeafValue();
+    }
+  }
+
+  template <bool predict_leaf = false>
+  void PredictAllTrees(std::vector<bst_float> *out_preds, std::size_t batch_offset,
+                       std::size_t predict_offset, std::size_t num_group, std::size_t block_size) {
+    auto &preds = *out_preds;
+    for (size_t tree_id = tree_begin_; tree_id < tree_end_; ++tree_id) {
+      auto const gid = model_.tree_info[tree_id];
+      for (size_t i = 0; i < block_size; ++i) {
+        auto const result = PredictOneTree<predict_leaf>(tree_id, batch_offset + i);
+        if constexpr (predict_leaf) {
+          preds[(predict_offset + i) * (tree_end_ - tree_begin_) + tree_id] = result;
+        } else {
+          preds[(predict_offset + i) * num_group + gid] += result;
+        }
+      }
+    }
+  }
+
+  template <typename DataView, size_t block_of_rows_size, bool predict_leaf = false>
+  void PredictBatchKernel(Context const* ctx, DataView batch, std::vector<bst_float> *out_preds) {
+    auto const num_group = model_.learner_model_param->num_output_group;
+
+    // parallel over local batch
+    auto const nsize = batch.Size();
+    auto const num_feature = model_.learner_model_param->num_feature;
+    auto const n_blocks = common::DivRoundUp(nsize, block_of_rows_size);
+    InitBitVectors(nsize);
+
+    // auto block_id has the same type as `n_blocks`.
+    common::ParallelFor(n_blocks, n_threads_, [&](auto block_id) {
+      auto const batch_offset = block_id * block_of_rows_size;
+      auto const block_size = std::min(static_cast<std::size_t>(nsize - batch_offset),
+                                       static_cast<std::size_t>(block_of_rows_size));
+      auto const fvec_offset = omp_get_thread_num() * block_of_rows_size;
+
+      FVecFill(block_size, batch_offset, num_feature, &batch, fvec_offset, &feat_vecs_);
+      MaskAllTrees(batch_offset, fvec_offset, block_size);
+      FVecDrop(block_size, fvec_offset, &feat_vecs_);
+    });
+
+    AllreduceBitVectors(ctx);
+
+    // auto block_id has the same type as `n_blocks`.
+    common::ParallelFor(n_blocks, n_threads_, [&](auto block_id) {
+      auto const batch_offset = block_id * block_of_rows_size;
+      auto const block_size = std::min(static_cast<std::size_t>(nsize - batch_offset),
+                                       static_cast<std::size_t>(block_of_rows_size));
+      PredictAllTrees<predict_leaf>(out_preds, batch_offset, batch_offset + batch.base_rowid,
+                                    num_group, block_size);
+    });
+
+    ClearBitVectors();
+  }
+
+  static std::size_t constexpr kBlockOfRowsSize = 64;
+
+  std::int32_t const n_threads_;
+  gbm::GBTreeModel const &model_;
+  uint32_t const tree_begin_;
+  uint32_t const tree_end_;
+
+  std::vector<std::size_t> tree_sizes_{};
+  std::vector<std::size_t> tree_offsets_{};
+  std::size_t bits_per_row_{};
+  std::vector<RegTree::FVec> feat_vecs_{};
+
+  std::size_t n_rows_;
+  /**
+   * @brief Stores decision bit for each split node.
+   *
+   * Conceptually it's a 3-dimensional bit matrix:
+   *   - 1st dimension is the tree index, from `tree_begin_` to `tree_end_`.
+   *   - 2nd dimension is the row index, for each row in the batch.
+   *   - 3rd dimension is the node id, for each node in the tree.
+   *
+   * Since we have to ship the whole thing over the wire to do an allreduce, the matrix is flattened
+   * into a 1-dimensional array.
+   *
+   * First, it's divided by the tree index:
+   *
+   * [ tree 0 ] [ tree 1 ] ...
+   *
+   * Then each tree is divided by row:
+   *
+   * [             tree 0              ] [           tree 1     ] ...
+   * [ row 0 ] [ row 1 ] ... [ row n-1 ] [ row 0 ] ...
+   *
+   * Finally, each row is divided by the node id:
+   *
+   * [                             tree 0                                         ]
+   * [              row 0                 ] [        row 1           ] ...
+   * [ node 0 ] [ node 1 ] ... [ node n-1 ] [ node 0 ] ...
+   *
+   * The first two dimensions are fixed length, while the last dimension is variable length since
+   * each tree may have a different number of nodes. We precompute the tree offsets, which are the
+   * cumulative sums of tree sizes. The index of tree t, row r, node n is:
+   *   index(t, r, n) = tree_offsets[t] * n_rows + r * tree_sizes[t] + n
+   */
+  std::vector<BitVector::value_type> decision_storage_{};
+  BitVector decision_bits_{};
+  /**
+   * @brief Stores whether the feature is missing for each split node.
+   *
+   * See above for the storage layout.
+   */
+  std::vector<BitVector::value_type> missing_storage_{};
+  BitVector missing_bits_{};
+};
+
 class CPUPredictor : public Predictor {
  protected:
-  // init thread buffers
-  static void InitThreadTemp(int nthread, int num_feature, std::vector<RegTree::FVec>* out) {
-    int prev_thread_temp_size = out->size();
-    if (prev_thread_temp_size < nthread) {
-      out->resize(nthread, RegTree::FVec());
-    }
-  }
-
   void PredictDMatrix(DMatrix *p_fmat, std::vector<bst_float> *out_preds,
-                      gbm::GBTreeModel const &model, int32_t tree_begin,
-                      int32_t tree_end) const {
-    const int threads = omp_get_max_threads();
+                      gbm::GBTreeModel const &model, int32_t tree_begin, int32_t tree_end) const {
+    if (p_fmat->Info().IsColumnSplit()) {
+      CHECK(!model.learner_model_param->IsVectorLeaf())
+          << "Predict DMatrix with column split" << MTNotImplemented();
+
+      ColumnSplitHelper helper(this->ctx_->Threads(), model, tree_begin, tree_end);
+      helper.PredictDMatrix(ctx_, p_fmat, out_preds);
+      return;
+    }
+
+    auto const n_threads = this->ctx_->Threads();
+    constexpr double kDensityThresh = .5;
+    size_t total =
+        std::max(p_fmat->Info().num_row_ * p_fmat->Info().num_col_, static_cast<uint64_t>(1));
+    double density = static_cast<double>(p_fmat->Info().num_nonzero_) / static_cast<double>(total);
+    bool blocked = density > kDensityThresh;
+
     std::vector<RegTree::FVec> feat_vecs;
-    InitThreadTemp(threads * kBlockOfRowsSize,
-                   model.learner_model_param->num_feature, &feat_vecs);
-    for (auto const& batch : p_fmat->GetBatches<SparsePage>()) {
-      CHECK_EQ(out_preds->size(),
-               p_fmat->Info().num_row_ * model.learner_model_param->num_output_group);
-      size_t constexpr kUnroll = 8;
-      PredictBatchByBlockOfRowsKernel<SparsePageView<kUnroll>,
-                          kBlockOfRowsSize>(SparsePageView<kUnroll>{&batch},
-                                              out_preds, model, tree_begin,
-                                              tree_end, &feat_vecs);
+    InitThreadTemp(n_threads * (blocked ? kBlockOfRowsSize : 1), &feat_vecs);
+
+    std::size_t n_samples = p_fmat->Info().num_row_;
+    std::size_t n_groups = model.learner_model_param->OutputLength();
+    CHECK_EQ(out_preds->size(), n_samples * n_groups);
+    auto out_predt = linalg::MakeTensorView(ctx_, *out_preds, n_samples, n_groups);
+
+    if (!p_fmat->PageExists<SparsePage>()) {
+      std::vector<Entry> workspace(p_fmat->Info().num_col_ * kUnroll * n_threads);
+      auto ft = p_fmat->Info().feature_types.ConstHostVector();
+      for (auto const &batch : p_fmat->GetBatches<GHistIndexMatrix>(ctx_, {})) {
+        if (blocked) {
+          PredictBatchByBlockOfRowsKernel<GHistIndexMatrixView, kBlockOfRowsSize>(
+              GHistIndexMatrixView{batch, p_fmat->Info().num_col_, ft, workspace, n_threads}, model,
+              tree_begin, tree_end, &feat_vecs, n_threads, out_predt);
+        } else {
+          PredictBatchByBlockOfRowsKernel<GHistIndexMatrixView, 1>(
+              GHistIndexMatrixView{batch, p_fmat->Info().num_col_, ft, workspace, n_threads}, model,
+              tree_begin, tree_end, &feat_vecs, n_threads, out_predt);
+        }
+      }
+    } else {
+      for (auto const &batch : p_fmat->GetBatches<SparsePage>()) {
+        if (blocked) {
+          PredictBatchByBlockOfRowsKernel<SparsePageView, kBlockOfRowsSize>(
+              SparsePageView{&batch}, model, tree_begin, tree_end, &feat_vecs, n_threads,
+              out_predt);
+
+        } else {
+          PredictBatchByBlockOfRowsKernel<SparsePageView, 1>(SparsePageView{&batch}, model,
+                                                             tree_begin, tree_end, &feat_vecs,
+                                                             n_threads, out_predt);
+        }
+      }
     }
   }
 
-  void InitOutPredictions(const MetaInfo& info,
-                          HostDeviceVector<bst_float>* out_preds,
-                          const gbm::GBTreeModel& model) const override {
-    CHECK_NE(model.learner_model_param->num_output_group, 0);
-    size_t n = model.learner_model_param->num_output_group * info.num_row_;
-    const auto& base_margin = info.base_margin_.HostVector();
-    out_preds->Resize(n);
-    std::vector<bst_float>& out_preds_h = out_preds->HostVector();
-    if (base_margin.size() == n) {
-      CHECK_EQ(out_preds->Size(), n);
-      std::copy(base_margin.begin(), base_margin.end(), out_preds_h.begin());
-    } else {
-      if (!base_margin.empty()) {
-        std::ostringstream oss;
-        oss << "Ignoring the base margin, since it has incorrect length. "
-            << "The base margin must be an array of length ";
-        if (model.learner_model_param->num_output_group > 1) {
-          oss << "[num_class] * [number of data points], i.e. "
-              << model.learner_model_param->num_output_group << " * " << info.num_row_
-              << " = " << n << ". ";
-        } else {
-          oss << "[number of data points], i.e. " << info.num_row_ << ". ";
-        }
-        oss << "Instead, all data points will use "
-            << "base_score = " << model.learner_model_param->base_score;
-        LOG(WARNING) << oss.str();
+  template <typename DataView>
+  void PredictContributionKernel(DataView batch, const MetaInfo& info,
+                                 const gbm::GBTreeModel& model,
+                                 const std::vector<bst_float>* tree_weights,
+                                 std::vector<std::vector<float>>* mean_values,
+                                 std::vector<RegTree::FVec>* feat_vecs,
+                                 std::vector<bst_float>* contribs, uint32_t ntree_limit,
+                                 bool approximate, int condition,
+                                 unsigned condition_feature) const {
+    const int num_feature = model.learner_model_param->num_feature;
+    const int ngroup = model.learner_model_param->num_output_group;
+    CHECK_NE(ngroup, 0);
+    size_t const ncolumns = num_feature + 1;
+    CHECK_NE(ncolumns, 0);
+    auto base_margin = info.base_margin_.View(ctx_->Device());
+    auto base_score = model.learner_model_param->BaseScore(ctx_->Device())(0);
+
+    // parallel over local batch
+    common::ParallelFor(batch.Size(), this->ctx_->Threads(), [&](auto i) {
+      auto row_idx = batch.base_rowid + i;
+      RegTree::FVec &feats = (*feat_vecs)[omp_get_thread_num()];
+      if (feats.Size() == 0) {
+        feats.Init(num_feature);
       }
-      std::fill(out_preds_h.begin(), out_preds_h.end(),
-                model.learner_model_param->base_score);
-    }
+      std::vector<bst_float> this_tree_contribs(ncolumns);
+      // loop over all classes
+      for (int gid = 0; gid < ngroup; ++gid) {
+        bst_float* p_contribs = &(*contribs)[(row_idx * ngroup + gid) * ncolumns];
+        feats.Fill(batch[i]);
+        // calculate contributions
+        for (unsigned j = 0; j < ntree_limit; ++j) {
+          auto *tree_mean_values = &mean_values->at(j);
+          std::fill(this_tree_contribs.begin(), this_tree_contribs.end(), 0);
+          if (model.tree_info[j] != gid) {
+            continue;
+          }
+          if (!approximate) {
+            CalculateContributions(*model.trees[j], feats, tree_mean_values,
+                                   &this_tree_contribs[0], condition, condition_feature);
+          } else {
+            model.trees[j]->CalculateContributionsApprox(
+                feats, tree_mean_values, &this_tree_contribs[0]);
+          }
+          for (size_t ci = 0; ci < ncolumns; ++ci) {
+            p_contribs[ci] +=
+                this_tree_contribs[ci] *
+                (tree_weights == nullptr ? 1 : (*tree_weights)[j]);
+          }
+        }
+        feats.Drop();
+        // add base margin to BIAS
+        if (base_margin.Size() != 0) {
+          CHECK_EQ(base_margin.Shape(1), ngroup);
+          p_contribs[ncolumns - 1] += base_margin(row_idx, gid);
+        } else {
+          p_contribs[ncolumns - 1] += base_score;
+        }
+      }
+    });
   }
 
  public:
-  explicit CPUPredictor(GenericParameter const* generic_param) :
-      Predictor::Predictor{generic_param} {}
+  explicit CPUPredictor(Context const *ctx) : Predictor::Predictor{ctx} {}
 
-  void PredictBatch(DMatrix *dmat, PredictionCacheEntry *predts,
-                    const gbm::GBTreeModel &model, uint32_t tree_begin,
-                    uint32_t tree_end = 0) const override {
-    auto* out_preds = &predts->predictions;
+  void PredictBatch(DMatrix *dmat, PredictionCacheEntry *predts, const gbm::GBTreeModel &model,
+                    uint32_t tree_begin, uint32_t tree_end = 0) const override {
+    auto *out_preds = &predts->predictions;
     // This is actually already handled in gbm, but large amount of tests rely on the
     // behaviour.
     if (tree_end == 0) {
       tree_end = model.trees.size();
     }
-    this->PredictDMatrix(dmat, &out_preds->HostVector(), model, tree_begin,
-                         tree_end);
+    this->PredictDMatrix(dmat, &out_preds->HostVector(), model, tree_begin, tree_end);
   }
 
-  template <typename Adapter>
-  void DispatchedInplacePredict(dmlc::any const &x, std::shared_ptr<DMatrix> p_m,
+  template <typename Adapter, size_t kBlockSize>
+  void DispatchedInplacePredict(std::any const &x, std::shared_ptr<DMatrix> p_m,
                                 const gbm::GBTreeModel &model, float missing,
-                                PredictionCacheEntry *out_preds,
-                                uint32_t tree_begin, uint32_t tree_end) const {
-    auto threads = omp_get_max_threads();
-    auto m = dmlc::get<std::shared_ptr<Adapter>>(x);
+                                PredictionCacheEntry *out_preds, uint32_t tree_begin,
+                                uint32_t tree_end) const {
+    auto const n_threads = this->ctx_->Threads();
+    auto m = std::any_cast<std::shared_ptr<Adapter>>(x);
     CHECK_EQ(m->NumColumns(), model.learner_model_param->num_feature)
         << "Number of columns in data must equal to trained model.";
     if (p_m) {
@@ -333,31 +796,40 @@ class CPUPredictor : public Predictor {
       info.num_row_ = m->NumRows();
       this->InitOutPredictions(info, &(out_preds->predictions), model);
     }
-    std::vector<Entry> workspace(m->NumColumns() * 8 * threads);
+
+    std::vector<Entry> workspace(m->NumColumns() * kUnroll * n_threads);
     auto &predictions = out_preds->predictions.HostVector();
     std::vector<RegTree::FVec> thread_temp;
-    InitThreadTemp(threads * kBlockOfRowsSize,
-                   model.learner_model_param->num_feature, &thread_temp);
-    PredictBatchByBlockOfRowsKernel<AdapterView<Adapter>, kBlockOfRowsSize>(
-        AdapterView<Adapter>(m.get(), missing, common::Span<Entry>{workspace}),
-        &predictions, model, tree_begin, tree_end, &thread_temp);
+    InitThreadTemp(n_threads * kBlockSize, &thread_temp);
+    std::size_t n_groups = model.learner_model_param->OutputLength();
+    auto out_predt = linalg::MakeTensorView(ctx_, predictions, m->NumRows(), n_groups);
+    PredictBatchByBlockOfRowsKernel<AdapterView<Adapter>, kBlockSize>(
+        AdapterView<Adapter>(m.get(), missing, common::Span<Entry>{workspace}, n_threads), model,
+        tree_begin, tree_end, &thread_temp, n_threads, out_predt);
   }
 
-  bool InplacePredict(dmlc::any const &x, std::shared_ptr<DMatrix> p_m,
-                      const gbm::GBTreeModel &model, float missing,
+  bool InplacePredict(std::shared_ptr<DMatrix> p_m, const gbm::GBTreeModel &model, float missing,
                       PredictionCacheEntry *out_preds, uint32_t tree_begin,
                       unsigned tree_end) const override {
+    auto proxy = dynamic_cast<data::DMatrixProxy *>(p_m.get());
+    CHECK(proxy)<< error::InplacePredictProxy();
+    CHECK(!p_m->Info().IsColumnSplit())
+        << "Inplace predict support for column-wise data split is not yet implemented.";
+    auto x = proxy->Adapter();
     if (x.type() == typeid(std::shared_ptr<data::DenseAdapter>)) {
-      this->DispatchedInplacePredict<data::DenseAdapter>(
+      this->DispatchedInplacePredict<data::DenseAdapter, kBlockOfRowsSize>(
           x, p_m, model, missing, out_preds, tree_begin, tree_end);
     } else if (x.type() == typeid(std::shared_ptr<data::CSRAdapter>)) {
-      this->DispatchedInplacePredict<data::CSRAdapter>(
-          x, p_m, model, missing, out_preds, tree_begin, tree_end);
+      this->DispatchedInplacePredict<data::CSRAdapter, 1>(x, p_m, model, missing, out_preds,
+                                                          tree_begin, tree_end);
     } else if (x.type() == typeid(std::shared_ptr<data::ArrayAdapter>)) {
-      this->DispatchedInplacePredict<data::ArrayAdapter> (
+      this->DispatchedInplacePredict<data::ArrayAdapter, kBlockOfRowsSize>(
           x, p_m, model, missing, out_preds, tree_begin, tree_end);
     } else if (x.type() == typeid(std::shared_ptr<data::CSRArrayAdapter>)) {
-      this->DispatchedInplacePredict<data::CSRArrayAdapter> (
+      this->DispatchedInplacePredict<data::CSRArrayAdapter, 1>(x, p_m, model, missing, out_preds,
+                                                               tree_begin, tree_end);
+    } else if (x.type() == typeid(std::shared_ptr<data::ColumnarAdapter>)) {
+      this->DispatchedInplacePredict<data::ColumnarAdapter, kBlockOfRowsSize>(
           x, p_m, model, missing, out_preds, tree_begin, tree_end);
     } else {
       return false;
@@ -365,45 +837,65 @@ class CPUPredictor : public Predictor {
     return true;
   }
 
-  void PredictInstance(const SparsePage::Inst& inst,
-                       std::vector<bst_float>* out_preds,
-                       const gbm::GBTreeModel& model, unsigned ntree_limit) const override {
-    std::vector<RegTree::FVec> feat_vecs;
-    feat_vecs.resize(1, RegTree::FVec());
-    feat_vecs[0].Init(model.learner_model_param->num_feature);
+  void PredictInstance(const SparsePage::Inst &inst, std::vector<bst_float> *out_preds,
+                       const gbm::GBTreeModel &model, unsigned ntree_limit,
+                       bool is_column_split) const override {
+    CHECK(!model.learner_model_param->IsVectorLeaf()) << "predict instance" << MTNotImplemented();
     ntree_limit *= model.learner_model_param->num_output_group;
     if (ntree_limit == 0 || ntree_limit > model.trees.size()) {
       ntree_limit = static_cast<unsigned>(model.trees.size());
     }
-    out_preds->resize(model.learner_model_param->num_output_group *
-                      (model.param.size_leaf_vector + 1));
+    out_preds->resize(model.learner_model_param->num_output_group);
+
+    if (is_column_split) {
+      CHECK(!model.learner_model_param->IsVectorLeaf())
+          << "Predict instance with column split" << MTNotImplemented();
+
+      ColumnSplitHelper helper(this->ctx_->Threads(), model, 0, ntree_limit);
+      helper.PredictInstance(ctx_, inst, out_preds);
+      return;
+    }
+
+    std::vector<RegTree::FVec> feat_vecs;
+    feat_vecs.resize(1, RegTree::FVec());
+    feat_vecs[0].Init(model.learner_model_param->num_feature);
+    auto base_score = model.learner_model_param->BaseScore(ctx_)(0);
     // loop over output groups
     for (uint32_t gid = 0; gid < model.learner_model_param->num_output_group; ++gid) {
-      (*out_preds)[gid] = PredValue(inst, model.trees, model.tree_info, gid,
-                                    &feat_vecs[0], 0, ntree_limit) +
-                          model.learner_model_param->base_score;
+      (*out_preds)[gid] = scalar::PredValue(inst, model.trees, model.tree_info, gid, &feat_vecs[0],
+                                            0, ntree_limit) +
+                          base_score;
     }
   }
 
-  void PredictLeaf(DMatrix* p_fmat, HostDeviceVector<bst_float>* out_preds,
-                   const gbm::GBTreeModel& model, unsigned ntree_limit) const override {
-    const int nthread = omp_get_max_threads();
-    std::vector<RegTree::FVec> feat_vecs;
-    const int num_feature = model.learner_model_param->num_feature;
-    InitThreadTemp(nthread, num_feature, &feat_vecs);
-    const MetaInfo& info = p_fmat->Info();
+  void PredictLeaf(DMatrix *p_fmat, HostDeviceVector<bst_float> *out_preds,
+                   const gbm::GBTreeModel &model, unsigned ntree_limit) const override {
+    auto const n_threads = this->ctx_->Threads();
     // number of valid trees
     if (ntree_limit == 0 || ntree_limit > model.trees.size()) {
       ntree_limit = static_cast<unsigned>(model.trees.size());
     }
-    std::vector<bst_float>& preds = out_preds->HostVector();
+    const MetaInfo &info = p_fmat->Info();
+    std::vector<bst_float> &preds = out_preds->HostVector();
     preds.resize(info.num_row_ * ntree_limit);
+
+    if (p_fmat->Info().IsColumnSplit()) {
+      CHECK(!model.learner_model_param->IsVectorLeaf())
+          << "Predict leaf with column split" << MTNotImplemented();
+
+      ColumnSplitHelper helper(n_threads, model, 0, ntree_limit);
+      helper.PredictLeaf(ctx_, p_fmat, &preds);
+      return;
+    }
+
+    std::vector<RegTree::FVec> feat_vecs;
+    const int num_feature = model.learner_model_param->num_feature;
+    InitThreadTemp(n_threads, &feat_vecs);
     // start collecting the prediction
     for (const auto &batch : p_fmat->GetBatches<SparsePage>()) {
       // parallel over local batch
       auto page = batch.GetView();
-      const auto nsize = static_cast<bst_omp_uint>(batch.Size());
-      common::ParallelFor(nsize, [&](bst_omp_uint i) {
+      common::ParallelFor(page.Size(), n_threads, [&](auto i) {
         const int tid = omp_get_thread_num();
         auto ridx = static_cast<size_t>(batch.base_rowid + i);
         RegTree::FVec &feats = feat_vecs[tid];
@@ -411,36 +903,39 @@ class CPUPredictor : public Predictor {
           feats.Init(num_feature);
         }
         feats.Fill(page[i]);
-        for (unsigned j = 0; j < ntree_limit; ++j) {
-          auto const& tree = *model.trees[j];
-          auto const& cats = tree.GetCategoriesMatrix();
-          bst_node_t tid = GetLeafIndex<true, true>(tree, feats, cats);
-          preds[ridx * ntree_limit + j] = static_cast<bst_float>(tid);
+        for (std::uint32_t j = 0; j < ntree_limit; ++j) {
+          auto const &tree = *model.trees[j];
+          auto const &cats = tree.GetCategoriesMatrix();
+          bst_node_t nidx;
+          if (tree.IsMultiTarget()) {
+            nidx = multi::GetLeafIndex<true, true>(*tree.GetMultiTargetTree(), feats, cats);
+          } else {
+            nidx = scalar::GetLeafIndex<true, true>(tree, feats, cats);
+          }
+          preds[ridx * ntree_limit + j] = static_cast<bst_float>(nidx);
         }
-        feats.Drop(page[i]);
+        feats.Drop();
       });
     }
   }
 
-  void PredictContribution(DMatrix *p_fmat,
-                           HostDeviceVector<float> *out_contribs,
+  void PredictContribution(DMatrix *p_fmat, HostDeviceVector<float> *out_contribs,
                            const gbm::GBTreeModel &model, uint32_t ntree_limit,
-                           std::vector<bst_float> const *tree_weights,
-                           bool approximate, int condition,
-                           unsigned condition_feature) const override {
-    const int nthread = omp_get_max_threads();
-    const int num_feature = model.learner_model_param->num_feature;
+                           std::vector<bst_float> const *tree_weights, bool approximate,
+                           int condition, unsigned condition_feature) const override {
+    CHECK(!model.learner_model_param->IsVectorLeaf())
+        << "Predict contribution" << MTNotImplemented();
+    CHECK(!p_fmat->Info().IsColumnSplit())
+        << "Predict contribution support for column-wise data split is not yet implemented.";
+    auto const n_threads = this->ctx_->Threads();
     std::vector<RegTree::FVec> feat_vecs;
-    InitThreadTemp(nthread,  num_feature, &feat_vecs);
+    InitThreadTemp(n_threads, &feat_vecs);
     const MetaInfo& info = p_fmat->Info();
     // number of valid trees
     if (ntree_limit == 0 || ntree_limit > model.trees.size()) {
       ntree_limit = static_cast<unsigned>(model.trees.size());
     }
-    const int ngroup = model.learner_model_param->num_output_group;
-    CHECK_NE(ngroup, 0);
-    size_t const ncolumns = num_feature + 1;
-    CHECK_NE(ncolumns, 0);
+    size_t const ncolumns = model.learner_model_param->num_feature + 1;
     // allocate space for (number of features + bias) times the number of rows
     std::vector<bst_float>& contribs = out_contribs->HostVector();
     contribs.resize(info.num_row_ * ncolumns * model.learner_model_param->num_output_group);
@@ -449,64 +944,36 @@ class CPUPredictor : public Predictor {
     std::fill(contribs.begin(), contribs.end(), 0);
     // initialize tree node mean values
     std::vector<std::vector<float>> mean_values(ntree_limit);
-    common::ParallelFor(bst_omp_uint(ntree_limit), [&](bst_omp_uint i) {
+    common::ParallelFor(ntree_limit, n_threads, [&](bst_omp_uint i) {
       FillNodeMeanValues(model.trees[i].get(), &(mean_values[i]));
     });
-    const std::vector<bst_float>& base_margin = info.base_margin_.HostVector();
     // start collecting the contributions
-    for (const auto &batch : p_fmat->GetBatches<SparsePage>()) {
-      auto page = batch.GetView();
-      // parallel over local batch
-      const auto nsize = static_cast<bst_omp_uint>(batch.Size());
-      common::ParallelFor(nsize, [&](bst_omp_uint i) {
-        auto row_idx = static_cast<size_t>(batch.base_rowid + i);
-        RegTree::FVec &feats = feat_vecs[omp_get_thread_num()];
-        if (feats.Size() == 0) {
-          feats.Init(num_feature);
-        }
-        std::vector<bst_float> this_tree_contribs(ncolumns);
-        // loop over all classes
-        for (int gid = 0; gid < ngroup; ++gid) {
-          bst_float* p_contribs = &contribs[(row_idx * ngroup + gid) * ncolumns];
-          feats.Fill(page[i]);
-          // calculate contributions
-          for (unsigned j = 0; j < ntree_limit; ++j) {
-            auto *tree_mean_values = &mean_values.at(j);
-            std::fill(this_tree_contribs.begin(), this_tree_contribs.end(), 0);
-            if (model.tree_info[j] != gid) {
-              continue;
-            }
-            if (!approximate) {
-              model.trees[j]->CalculateContributions(
-                  feats, tree_mean_values, &this_tree_contribs[0], condition,
-                  condition_feature);
-            } else {
-              model.trees[j]->CalculateContributionsApprox(
-                  feats, tree_mean_values, &this_tree_contribs[0]);
-            }
-            for (size_t ci = 0; ci < ncolumns; ++ci) {
-              p_contribs[ci] +=
-                  this_tree_contribs[ci] *
-                  (tree_weights == nullptr ? 1 : (*tree_weights)[j]);
-            }
-          }
-          feats.Drop(page[i]);
-          // add base margin to BIAS
-          if (base_margin.size() != 0) {
-            p_contribs[ncolumns - 1] += base_margin[row_idx * ngroup + gid];
-          } else {
-            p_contribs[ncolumns - 1] += model.learner_model_param->base_score;
-          }
-        }
-      });
+    if (!p_fmat->PageExists<SparsePage>()) {
+      std::vector<Entry> workspace(info.num_col_ * kUnroll * n_threads);
+      auto ft = p_fmat->Info().feature_types.ConstHostVector();
+      for (const auto &batch : p_fmat->GetBatches<GHistIndexMatrix>(ctx_, {})) {
+        PredictContributionKernel(
+            GHistIndexMatrixView{batch, info.num_col_, ft, workspace, n_threads},
+            info, model, tree_weights, &mean_values, &feat_vecs, &contribs, ntree_limit,
+            approximate, condition, condition_feature);
+      }
+    } else {
+      for (const auto &batch : p_fmat->GetBatches<SparsePage>()) {
+        PredictContributionKernel(
+            SparsePageView{&batch}, info, model, tree_weights, &mean_values, &feat_vecs,
+            &contribs, ntree_limit, approximate, condition, condition_feature);
+      }
     }
   }
 
-  void PredictInteractionContributions(
-      DMatrix *p_fmat, HostDeviceVector<bst_float> *out_contribs,
-      const gbm::GBTreeModel &model, unsigned ntree_limit,
-      std::vector<bst_float> const *tree_weights,
-      bool approximate) const override {
+  void PredictInteractionContributions(DMatrix *p_fmat, HostDeviceVector<bst_float> *out_contribs,
+                                       const gbm::GBTreeModel &model, unsigned ntree_limit,
+                                       std::vector<bst_float> const *tree_weights,
+                                       bool approximate) const override {
+    CHECK(!model.learner_model_param->IsVectorLeaf())
+        << "Predict interaction contribution" << MTNotImplemented();
+    CHECK(!p_fmat->Info().IsColumnSplit()) << "Predict interaction contribution support for "
+                                              "column-wise data split is not yet implemented.";
     const MetaInfo& info = p_fmat->Info();
     const int ngroup = model.learner_model_param->num_output_group;
     size_t const ncolumns = model.learner_model_param->num_feature;
@@ -559,9 +1026,6 @@ class CPUPredictor : public Predictor {
 };
 
 XGBOOST_REGISTER_PREDICTOR(CPUPredictor, "cpu_predictor")
-.describe("Make predictions using CPU.")
-.set_body([](GenericParameter const* generic_param) {
-            return new CPUPredictor(generic_param);
-          });
-}  // namespace predictor
-}  // namespace xgboost
+    .describe("Make predictions using CPU.")
+    .set_body([](Context const *ctx) { return new CPUPredictor(ctx); });
+}  // namespace xgboost::predictor

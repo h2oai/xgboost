@@ -4,9 +4,10 @@
  * \brief The command line interface program of xgboost.
  *  This file is not included in dynamic library.
  */
-#define _CRT_SECURE_NO_WARNINGS
-#define _CRT_SECURE_NO_DEPRECATE
+#if !defined(NOMINMAX) && defined(_WIN32)
 #define NOMINMAX
+#endif  // !defined(NOMINMAX)
+
 #include <dmlc/timer.h>
 
 #include <xgboost/learner.h>
@@ -107,9 +108,8 @@ struct CLIParam : public XGBoostParameter<CLIParam> {
     DMLC_DECLARE_FIELD(name_pred).set_default("pred.txt")
         .describe("Name of the prediction file.");
     DMLC_DECLARE_FIELD(dsplit).set_default(0)
-        .add_enum("auto", 0)
+        .add_enum("row", 0)
         .add_enum("col", 1)
-        .add_enum("row", 2)
         .describe("Data split mode.");
     DMLC_DECLARE_FIELD(ntree_limit).set_default(0).set_lower_bound(0)
         .describe("(Deprecated) Use iteration_begin/iteration_end instead.");
@@ -152,9 +152,6 @@ struct CLIParam : public XGBoostParameter<CLIParam> {
     if (name_pred == "stdout") {
       save_period = 0;
     }
-    if (dsplit == 0 && rabit::IsDistributed()) {
-      dsplit = 2;
-    }
   }
 };
 
@@ -182,41 +179,32 @@ class CLI {
     kHelp
   } print_info_ {kNone};
 
-  int ResetLearner(std::vector<std::shared_ptr<DMatrix>> const &matrices) {
+  void ResetLearner(std::vector<std::shared_ptr<DMatrix>> const &matrices) {
     learner_.reset(Learner::Create(matrices));
-    int version = rabit::LoadCheckPoint(learner_.get());
-    if (version == 0) {
-      if (param_.model_in != CLIParam::kNull) {
-        this->LoadModel(param_.model_in, learner_.get());
-        learner_->SetParams(param_.cfg);
-      } else {
-        learner_->SetParams(param_.cfg);
-      }
+    if (param_.model_in != CLIParam::kNull) {
+      this->LoadModel(param_.model_in, learner_.get());
+      learner_->SetParams(param_.cfg);
+    } else {
+      learner_->SetParams(param_.cfg);
     }
     learner_->Configure();
-    return version;
   }
 
   void CLITrain() {
     const double tstart_data_load = dmlc::GetTime();
-    if (rabit::IsDistributed()) {
-      std::string pname = rabit::GetProcessorName();
-      LOG(CONSOLE) << "start " << pname << ":" << rabit::GetRank();
-    }
     // load in data.
     std::shared_ptr<DMatrix> dtrain(DMatrix::Load(
-        param_.train_path,
-        ConsoleLogger::GlobalVerbosity() > ConsoleLogger::DefaultVerbosity(),
-        param_.dsplit == 2));
+        param_.train_path, ConsoleLogger::GlobalVerbosity() > ConsoleLogger::DefaultVerbosity(),
+        static_cast<DataSplitMode>(param_.dsplit)));
     std::vector<std::shared_ptr<DMatrix>> deval;
     std::vector<std::shared_ptr<DMatrix>> cache_mats;
     std::vector<std::shared_ptr<DMatrix>> eval_datasets;
     cache_mats.push_back(dtrain);
     for (size_t i = 0; i < param_.eval_data_names.size(); ++i) {
-      deval.emplace_back(std::shared_ptr<DMatrix>(DMatrix::Load(
-          param_.eval_data_paths[i],
-          ConsoleLogger::GlobalVerbosity() > ConsoleLogger::DefaultVerbosity(),
-          param_.dsplit == 2)));
+      deval.emplace_back(std::shared_ptr<DMatrix>(
+          DMatrix::Load(param_.eval_data_paths[i],
+                        ConsoleLogger::GlobalVerbosity() > ConsoleLogger::DefaultVerbosity(),
+                        static_cast<DataSplitMode>(param_.dsplit))));
       eval_datasets.push_back(deval.back());
       cache_mats.push_back(deval.back());
     }
@@ -226,56 +214,38 @@ class CLI {
       eval_data_names.emplace_back("train");
     }
     // initialize the learner.
-    int32_t version = this->ResetLearner(cache_mats);
+    this->ResetLearner(cache_mats);
     LOG(INFO) << "Loading data: " << dmlc::GetTime() - tstart_data_load
               << " sec";
 
     // start training.
     const double start = dmlc::GetTime();
+    int32_t version = 0;
     for (int i = version / 2; i < param_.num_round; ++i) {
       double elapsed = dmlc::GetTime() - start;
       if (version % 2 == 0) {
         LOG(INFO) << "boosting round " << i << ", " << elapsed
                   << " sec elapsed";
         learner_->UpdateOneIter(i, dtrain);
-        if (learner_->AllowLazyCheckPoint()) {
-          rabit::LazyCheckPoint(learner_.get());
-        } else {
-          rabit::CheckPoint(learner_.get());
-        }
         version += 1;
       }
-      CHECK_EQ(version, rabit::VersionNumber());
       std::string res = learner_->EvalOneIter(i, eval_datasets, eval_data_names);
-      if (rabit::IsDistributed()) {
-        if (rabit::GetRank() == 0) {
-          LOG(TRACKER) << res;
-        }
-      } else {
-        LOG(CONSOLE) << res;
-      }
-      if (param_.save_period != 0 && (i + 1) % param_.save_period == 0 &&
-          rabit::GetRank() == 0) {
+      LOG(CONSOLE) << res;
+
+      if (param_.save_period != 0 && (i + 1) % param_.save_period == 0) {
         std::ostringstream os;
         os << param_.model_dir << '/' << std::setfill('0') << std::setw(4)
            << i + 1 << ".model";
         this->SaveModel(os.str(), learner_.get());
       }
 
-      if (learner_->AllowLazyCheckPoint()) {
-        rabit::LazyCheckPoint(learner_.get());
-      } else {
-        rabit::CheckPoint(learner_.get());
-      }
       version += 1;
-      CHECK_EQ(version, rabit::VersionNumber());
     }
     LOG(INFO) << "Complete Training loop time: " << dmlc::GetTime() - start
               << " sec";
     // always save final round
     if ((param_.save_period == 0 ||
-         param_.num_round % param_.save_period != 0) &&
-        rabit::GetRank() == 0) {
+         param_.num_round % param_.save_period != 0)) {
       std::ostringstream os;
       if (param_.model_out == CLIParam::kNull) {
         os << param_.model_dir << '/' << std::setfill('0') << std::setw(4)
@@ -334,7 +304,7 @@ class CLI {
     std::shared_ptr<DMatrix> dtest(DMatrix::Load(
         param_.test_path,
         ConsoleLogger::GlobalVerbosity() > ConsoleLogger::DefaultVerbosity(),
-        param_.dsplit == 2));
+        static_cast<DataSplitMode>(param_.dsplit)));
     // load model
     CHECK_NE(param_.model_in, CLIParam::kNull) << "Must specify model_in for predict";
     this->ResetLearner({});
@@ -363,10 +333,10 @@ class CLI {
 
   void LoadModel(std::string const& path, Learner* learner) const {
     if (common::FileExtension(path) == "json") {
-      auto str = common::LoadSequentialFile(path);
-      CHECK_GT(str.size(), 2);
-      CHECK_EQ(str[0], '{');
-      Json in{Json::Load({str.c_str(), str.size()})};
+      auto buffer = common::LoadSequentialFile(path);
+      CHECK_GT(buffer.size(), 2);
+      CHECK_EQ(buffer[0], '{');
+      Json in{Json::Load({buffer.data(), buffer.size()})};
       learner->LoadModel(in);
     } else {
       std::unique_ptr<dmlc::Stream> fi(dmlc::Stream::Create(path.c_str(), "r"));
@@ -471,7 +441,6 @@ class CLI {
       return;
     }
 
-    rabit::Init(argc, argv);
     std::string config_path = argv[1];
 
     common::ConfigParser cp(config_path);
@@ -519,14 +488,12 @@ class CLI {
     }
     return 0;
   }
-
-  ~CLI() {
-    rabit::Finalize();
-  }
 };
 }  // namespace xgboost
 
-int main(int argc, char *argv[]) {
+int main(int argc, char* argv[]) {
+  LOG(WARNING)
+      << "The command line interface is deprecated and will be removed in future releases.";
   try {
     xgboost::CLI cli(argc, argv);
     return cli.Run();

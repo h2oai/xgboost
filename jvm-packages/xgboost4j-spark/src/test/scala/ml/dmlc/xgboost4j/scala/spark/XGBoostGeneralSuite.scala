@@ -1,5 +1,5 @@
 /*
- Copyright (c) 2014 by Contributors
+ Copyright (c) 2014-2022 by Contributors
 
  Licensed under the Apache License, Version 2.0 (the "License");
  you may not use this file except in compliance with the License.
@@ -16,27 +16,29 @@
 
 package ml.dmlc.xgboost4j.scala.spark
 
-import ml.dmlc.xgboost4j.java.XGBoostError
-
 import scala.util.Random
+
 import ml.dmlc.xgboost4j.{LabeledPoint => XGBLabeledPoint}
 import ml.dmlc.xgboost4j.scala.DMatrix
-import org.apache.spark.TaskContext
-import org.scalatest.FunSuite
+
+import org.apache.spark.{SparkException, TaskContext}
+import org.scalatest.funsuite.AnyFunSuite
+
 import org.apache.spark.ml.feature.VectorAssembler
 import org.apache.spark.sql.functions.lit
 
-class XGBoostGeneralSuite extends FunSuite with TmpFolderPerSuite with PerTest {
+class XGBoostGeneralSuite extends AnyFunSuite with TmpFolderPerSuite with PerTest {
 
   test("distributed training with the specified worker number") {
     val trainingRDD = sc.parallelize(Classification.train)
+    val buildTrainingRDD = PreXGBoost.buildRDDLabeledPointToRDDWatches(trainingRDD)
     val (booster, metrics) = XGBoost.trainDistributed(
-      trainingRDD,
+      sc,
+      buildTrainingRDD,
       List("eta" -> "1", "max_depth" -> "6",
         "objective" -> "binary:logistic", "num_round" -> 5, "num_workers" -> numWorkers,
         "custom_eval" -> null, "custom_obj" -> null, "use_external_memory" -> false,
-        "missing" -> Float.NaN).toMap,
-      hasGroup = false)
+        "missing" -> Float.NaN).toMap)
     assert(booster != null)
   }
 
@@ -163,23 +165,11 @@ class XGBoostGeneralSuite extends FunSuite with TmpFolderPerSuite with PerTest {
     assert(x < 0.1)
   }
 
-  test("training with spark parallelism checks disabled") {
-    val eval = new EvalError()
-    val training = buildDataFrame(Classification.train)
-    val testDM = new DMatrix(Classification.test.iterator)
-    val paramMap = Map("eta" -> "1", "max_depth" -> "6",
-      "objective" -> "binary:logistic", "timeout_request_workers" -> 0L,
-      "num_round" -> 5, "num_workers" -> numWorkers)
-    val model = new XGBoostClassifier(paramMap).fit(training)
-    val x = eval.eval(model._booster.predict(testDM, outPutMargin = true), testDM)
-    assert(x < 0.1)
-  }
-
   test("repartitionForTrainingGroup with group data") {
     // test different splits to cover the corner cases.
     for (split <- 1 to 20) {
       val trainingRDD = sc.parallelize(Ranking.train, split)
-      val traingGroupsRDD = XGBoost.repartitionForTrainingGroup(trainingRDD, 4)
+      val traingGroupsRDD = PreXGBoost.repartitionForTrainingGroup(trainingRDD, 4)
       val trainingGroups: Array[Array[XGBLabeledPoint]] = traingGroupsRDD.collect()
       // check the the order of the groups with group id.
       // Ranking.train has 20 groups
@@ -201,18 +191,19 @@ class XGBoostGeneralSuite extends FunSuite with TmpFolderPerSuite with PerTest {
       // make one partition empty for testing
       it.filter(_ => TaskContext.getPartitionId() != 3)
     })
-    XGBoost.repartitionForTrainingGroup(trainingRDD, 4)
+    PreXGBoost.repartitionForTrainingGroup(trainingRDD, 4)
   }
 
   test("distributed training with group data") {
     val trainingRDD = sc.parallelize(Ranking.train, 5)
+    val buildTrainingRDD = PreXGBoost.buildRDDLabeledPointToRDDWatches(trainingRDD, hasGroup = true)
     val (booster, _) = XGBoost.trainDistributed(
-      trainingRDD,
+      sc,
+      buildTrainingRDD,
       List("eta" -> "1", "max_depth" -> "6",
-        "objective" -> "rank:pairwise", "num_round" -> 5, "num_workers" -> numWorkers,
+        "objective" -> "rank:ndcg", "num_round" -> 5, "num_workers" -> numWorkers,
         "custom_eval" -> null, "custom_obj" -> null, "use_external_memory" -> false,
-        "missing" -> Float.NaN).toMap,
-      hasGroup = true)
+        "missing" -> Float.NaN).toMap)
 
     assert(booster != null)
   }
@@ -277,7 +268,7 @@ class XGBoostGeneralSuite extends FunSuite with TmpFolderPerSuite with PerTest {
     val training = buildDataFrameWithGroup(Ranking.train, 5)
     val Array(train, eval1, eval2) = training.randomSplit(Array(0.6, 0.2, 0.2), 0)
     val paramMap1 = Map("eta" -> "1", "max_depth" -> "6",
-      "objective" -> "rank:pairwise",
+      "objective" -> "rank:ndcg",
       "num_round" -> 5, "num_workers" -> numWorkers, "group_col" -> "group")
     val xgb1 = new XGBoostRegressor(paramMap1).setEvalSets(Map("eval1" -> eval1, "eval2" -> eval2))
     val model1 = xgb1.fit(train)
@@ -290,7 +281,7 @@ class XGBoostGeneralSuite extends FunSuite with TmpFolderPerSuite with PerTest {
     assert(model1.summary.trainObjectiveHistory !== model1.summary.validationObjectiveHistory(1))
 
     val paramMap2 = Map("eta" -> "1", "max_depth" -> "6",
-      "objective" -> "rank:pairwise",
+      "objective" -> "rank:ndcg",
       "num_round" -> 5, "num_workers" -> numWorkers, "group_col" -> "group",
       "eval_sets" -> Map("eval1" -> eval1, "eval2" -> eval2))
     val xgb2 = new XGBoostRegressor(paramMap2)
@@ -371,13 +362,14 @@ class XGBoostGeneralSuite extends FunSuite with TmpFolderPerSuite with PerTest {
 
   test("throw exception for empty partition in trainingset") {
     val paramMap = Map("eta" -> "0.1", "max_depth" -> "6", "silent" -> "1",
-      "objective" -> "multi:softmax", "num_class" -> "2", "num_round" -> 5,
-      "num_workers" -> numWorkers, "tree_method" -> "auto")
+      "objective" -> "binary:logistic", "num_class" -> "2", "num_round" -> 5,
+      "num_workers" -> numWorkers, "tree_method" -> "auto", "allow_non_zero_for_missing" -> true)
     // The Dmatrix will be empty
-    val trainingDF = buildDataFrame(Seq(XGBLabeledPoint(1.0f, 1, Array(), Array())))
+    val trainingDF = buildDataFrame(Seq(XGBLabeledPoint(1.0f, 4,
+      Array(0, 1, 2, 3), Array(0, 1, 2, 3))))
     val xgb = new XGBoostClassifier(paramMap)
-    intercept[XGBoostError] {
-      val model = xgb.fit(trainingDF)
+    intercept[SparkException] {
+      xgb.fit(trainingDF)
     }
   }
 

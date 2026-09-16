@@ -6,8 +6,6 @@
 #' @param fname the name of the text file where to save the model text dump.
 #'        If not provided or set to \code{NULL}, the model is returned as a \code{character} vector.
 #' @param fmap feature map file representing feature types.
-#'        Detailed description could be found at
-#'        \url{https://github.com/dmlc/xgboost/wiki/Binary-Classification#dump-model}.
 #'        See demo/ for walkthrough example in R, and
 #'        \url{https://github.com/dmlc/xgboost/blob/master/demo/data/featmap.txt}
 #'        for example Format.
@@ -15,7 +13,10 @@
 #'        When this option is on, the model dump contains two additional values:
 #'        gain is the approximate loss function gain we get in each split;
 #'        cover is the sum of second order gradient in each node.
-#' @param dump_format either 'text' or 'json' format could be specified.
+#' @param dump_format either 'text', 'json', or 'dot' (graphviz) format could be specified.
+#'
+#' Format 'dot' for a single tree can be passed directly to packages that consume this format
+#' for graph visualization, such as function [DiagrammeR::grViz()]
 #' @param ... currently not used
 #'
 #' @return
@@ -23,6 +24,7 @@
 #' as a \code{character} vector. Otherwise it will return \code{TRUE}.
 #'
 #' @examples
+#' \dontshow{RhpcBLASctl::omp_set_num_threads(1)}
 #' data(agaricus.train, package='xgboost')
 #' data(agaricus.test, package='xgboost')
 #' train <- agaricus.train
@@ -39,9 +41,13 @@
 #' # print in JSON format:
 #' cat(xgb.dump(bst, with_stats = TRUE, dump_format='json'))
 #'
+#' # plot first tree leveraging the 'dot' format
+#' if (requireNamespace('DiagrammeR', quietly = TRUE)) {
+#'   DiagrammeR::grViz(xgb.dump(bst, dump_format = "dot")[[1L]])
+#' }
 #' @export
-xgb.dump <- function(model, fname = NULL, fmap = "", with_stats=FALSE,
-                     dump_format = c("text", "json"), ...) {
+xgb.dump <- function(model, fname = NULL, fmap = "", with_stats = FALSE,
+                     dump_format = c("text", "json", "dot"), ...) {
   check.deprecation(...)
   dump_format <- match.arg(dump_format)
   if (!inherits(model, "xgb.Booster"))
@@ -51,9 +57,16 @@ xgb.dump <- function(model, fname = NULL, fmap = "", with_stats=FALSE,
   if (!(is.null(fmap) || is.character(fmap)))
     stop("fmap: argument must be a character string (when provided)")
 
-  model <- xgb.Booster.complete(model)
-  model_dump <- .Call(XGBoosterDumpModel_R, model$handle, NVL(fmap, "")[1], as.integer(with_stats),
-                      as.character(dump_format))
+  model_dump <- .Call(
+    XGBoosterDumpModel_R,
+    xgb.get.handle(model),
+    NVL(fmap, "")[1],
+    as.integer(with_stats),
+    as.character(dump_format)
+  )
+  if (dump_format == "dot") {
+    return(sapply(model_dump, function(x) gsub("^booster\\[\\d+\\]\\n", "\\1", x)))
+  }
 
   if (is.null(fname))
     model_dump <- gsub('\t', '', model_dump, fixed = TRUE)

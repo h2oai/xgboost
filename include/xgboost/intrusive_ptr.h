@@ -9,6 +9,7 @@
 #include <atomic>
 #include <cinttypes>
 #include <functional>
+#include <ostream>
 
 namespace xgboost {
 /*!
@@ -18,7 +19,7 @@ namespace xgboost {
  */
 class IntrusivePtrCell {
  private:
-  std::atomic<int32_t> count_;
+  std::atomic<int32_t> count_ {0};
   template <typename T> friend class IntrusivePtr;
 
   std::int32_t IncRef() noexcept {
@@ -30,7 +31,7 @@ class IntrusivePtrCell {
   bool IsZero() const { return Count() == 0; }
 
  public:
-  IntrusivePtrCell() noexcept : count_{0} {}
+  IntrusivePtrCell() noexcept = default;
   int32_t Count() const { return count_.load(std::memory_order_relaxed); }
 };
 
@@ -126,8 +127,8 @@ template <typename T> class IntrusivePtr {
     ptr_ = nullptr;
   }
   void reset(element_type *that) { IntrusivePtr{that}.swap(*this); }  // NOLINT
-
-  element_type &operator*() const noexcept { return *ptr_; }
+  // clang-tidy might manufacture a null value, disable the check
+  element_type &operator*() const noexcept { return *ptr_; }  // NOLINT
   element_type *operator->() const noexcept { return ptr_; }
   element_type *get() const noexcept { return ptr_; }  // NOLINT
 

@@ -1,5 +1,5 @@
 /*
- Copyright (c) 2014 by Contributors
+ Copyright (c) 2014-2024 by Contributors
 
  Licensed under the Apache License, Version 2.0 (the "License");
  you may not use this file except in compliance with the License.
@@ -16,14 +16,21 @@
 
 package ml.dmlc.xgboost4j.scala.spark
 
-import ml.dmlc.xgboost4j.java.GpuTestSuite
+import java.io.{File, FileInputStream}
+
 import ml.dmlc.xgboost4j.scala.{DMatrix, XGBoost => ScalaXGBoost}
+
 import org.apache.spark.ml.linalg._
 import org.apache.spark.sql._
-import org.scalatest.FunSuite
-import org.apache.spark.Partitioner
+import org.scalatest.funsuite.AnyFunSuite
+import org.apache.commons.io.IOUtils
 
-abstract class XGBoostClassifierSuiteBase extends FunSuite with PerTest {
+import org.apache.spark.Partitioner
+import org.apache.spark.ml.feature.VectorAssembler
+import org.json4s.{DefaultFormats, Formats}
+import org.json4s.jackson.parseJson
+
+class XGBoostClassifierSuite extends AnyFunSuite with PerTest with TmpFolderPerSuite {
 
   protected val treeMethod: String = "auto"
 
@@ -103,6 +110,36 @@ abstract class XGBoostClassifierSuiteBase extends FunSuite with PerTest {
     assert(model.getEta == 0.1)
     assert(model.getMaxDepth == 6)
     assert(model.numClasses == 6)
+    val transformedDf = model.transform(trainingDF)
+    assert(!transformedDf.columns.contains("probability"))
+  }
+
+  test("objective will be set if not specifying it") {
+    val training = buildDataFrame(Classification.train)
+    val paramMap = Map("eta" -> "1", "max_depth" -> "6",
+      "num_round" -> 5, "num_workers" -> numWorkers, "tree_method" -> treeMethod)
+    val xgb = new XGBoostClassifier(paramMap)
+    assert(!xgb.isDefined(xgb.objective))
+    xgb.fit(training)
+    assert(xgb.getObjective == "binary:logistic")
+
+    val trainingDF = buildDataFrame(MultiClassification.train)
+    val paramMap1 = Map("eta" -> "0.1", "max_depth" -> "6", "silent" -> "1",
+      "num_class" -> "6", "num_round" -> 5, "num_workers" -> numWorkers,
+      "tree_method" -> treeMethod)
+    val xgb1 = new XGBoostClassifier(paramMap1)
+    assert(!xgb1.isDefined(xgb1.objective))
+    xgb1.fit(trainingDF)
+    assert(xgb1.getObjective == "multi:softprob")
+
+    // shouldn't change user's objective setting
+    val paramMap2 = Map("eta" -> "0.1", "max_depth" -> "6", "silent" -> "1",
+      "num_class" -> "6", "num_round" -> 5, "num_workers" -> numWorkers,
+      "tree_method" -> treeMethod, "objective" -> "multi:softmax")
+    val xgb2 = new XGBoostClassifier(paramMap2)
+    assert(xgb2.getObjective == "multi:softmax")
+    xgb2.fit(trainingDF)
+    assert(xgb2.getObjective == "multi:softmax")
   }
 
   test("use base margin") {
@@ -200,9 +237,6 @@ abstract class XGBoostClassifierSuiteBase extends FunSuite with PerTest {
     assert(resultDF.columns.contains("predictContrib"))
   }
 
-}
-
-class XGBoostCpuClassifierSuite extends XGBoostClassifierSuiteBase {
   test("XGBoost-Spark XGBoostClassifier output should match XGBoost4j") {
     val trainingDM = new DMatrix(Classification.train.iterator)
     val testDM = new DMatrix(Classification.test.iterator)
@@ -220,19 +254,19 @@ class XGBoostCpuClassifierSuite extends XGBoostClassifierSuiteBase {
   }
 
   private def checkResultsWithXGBoost4j(
-      trainingDM: DMatrix,
-      testDM: DMatrix,
-      trainingDF: DataFrame,
-      testDF: DataFrame,
-      round: Int = 5): Unit = {
+    trainingDM: DMatrix,
+    testDM: DMatrix,
+    trainingDF: DataFrame,
+    testDF: DataFrame,
+    round: Int = 5): Unit = {
     val paramMap = Map(
       "eta" -> "1",
       "max_depth" -> "6",
       "silent" -> "1",
+      "base_score" -> 0.5,
       "objective" -> "binary:logistic",
       "tree_method" -> treeMethod,
       "max_bin" -> 16)
-
     val model1 = ScalaXGBoost.train(trainingDM, paramMap, round)
     val prediction1 = model1.predict(testDM)
 
@@ -278,7 +312,7 @@ class XGBoostCpuClassifierSuite extends XGBoostClassifierSuiteBase {
     val paramMap = Map("eta" -> "1", "max_depth" -> "6", "silent" -> "1",
       "objective" -> "binary:logistic",
       "num_round" -> 5, "num_workers" -> 2, "missing" -> 0)
-    import DataUtils._
+    import ml.dmlc.xgboost4j.scala.spark.util.DataUtils._
     val sparkSession = SparkSession.builder().getOrCreate()
     import sparkSession.implicits._
     val repartitioned = sc.parallelize(Synthetic.train, 3).map(lp => (lp.label, lp)).partitionBy(
@@ -299,7 +333,7 @@ class XGBoostCpuClassifierSuite extends XGBoostClassifierSuiteBase {
     val paramMap = Map("eta" -> "1", "max_depth" -> "6", "silent" -> "1",
       "objective" -> "binary:logistic",
       "num_round" -> 5, "num_workers" -> 2, "use_external_memory" -> true, "missing" -> 0)
-    import DataUtils._
+    import ml.dmlc.xgboost4j.scala.spark.util.DataUtils._
     val sparkSession = SparkSession.builder().getOrCreate()
     import sparkSession.implicits._
     val repartitioned = sc.parallelize(Synthetic.train, 3).map(lp => (lp.label, lp)).partitionBy(
@@ -315,10 +349,132 @@ class XGBoostCpuClassifierSuite extends XGBoostClassifierSuiteBase {
     val xgb = new XGBoostClassifier(paramMap)
     xgb.fit(repartitioned)
   }
-}
 
-@GpuTestSuite
-class XGBoostGpuClassifierSuite extends XGBoostClassifierSuiteBase {
-  override protected val treeMethod: String = "gpu_hist"
-  override protected val numWorkers: Int = 1
+  test("featuresCols with features column can work") {
+    val spark = ss
+    import spark.implicits._
+    val xgbInput = Seq(
+      (Vectors.dense(1.0, 7.0), true, 10.1, 100.2, 0),
+      (Vectors.dense(2.0, 20.0), false, 2.1, 2.2, 1))
+      .toDF("f1", "f2", "f3", "features", "label")
+
+    val paramMap = Map("eta" -> "1", "max_depth" -> "6", "silent" -> "1",
+      "objective" -> "binary:logistic", "num_round" -> 5, "num_workers" -> 1)
+
+    val featuresName = Array("f1", "f2", "f3", "features")
+    val xgbClassifier = new XGBoostClassifier(paramMap)
+      .setFeaturesCol(featuresName)
+      .setLabelCol("label")
+
+    val model = xgbClassifier.fit(xgbInput)
+    assert(model.getFeaturesCols.sameElements(featuresName))
+
+    val df = model.transform(xgbInput)
+    assert(df.schema.fieldNames.contains("features_" + model.uid))
+    df.show()
+
+    val newFeatureName = "features_new"
+    // transform also can work for vectorized dataset
+    val vectorizedInput = new VectorAssembler()
+      .setInputCols(featuresName)
+      .setOutputCol(newFeatureName)
+      .transform(xgbInput)
+      .select(newFeatureName, "label")
+
+    val df1 = model
+      .setFeaturesCol(newFeatureName)
+      .transform(vectorizedInput)
+    assert(df1.schema.fieldNames.contains(newFeatureName))
+    df1.show()
+  }
+
+  test("featuresCols without features column can work") {
+    val spark = ss
+    import spark.implicits._
+    val xgbInput = Seq(
+      (Vectors.dense(1.0, 7.0), true, 10.1, 100.2, 0),
+      (Vectors.dense(2.0, 20.0), false, 2.1, 2.2, 1))
+      .toDF("f1", "f2", "f3", "f4", "label")
+
+    val paramMap = Map("eta" -> "1", "max_depth" -> "6", "silent" -> "1",
+      "objective" -> "binary:logistic", "num_round" -> 5, "num_workers" -> 1)
+
+    val featuresName = Array("f1", "f2", "f3", "f4")
+    val xgbClassifier = new XGBoostClassifier(paramMap)
+      .setFeaturesCol(featuresName)
+      .setLabelCol("label")
+      .setEvalSets(Map("eval" -> xgbInput))
+
+    val model = xgbClassifier.fit(xgbInput)
+    assert(model.getFeaturesCols.sameElements(featuresName))
+
+    // transform should work for the dataset which includes the feature column names.
+    val df = model.transform(xgbInput)
+    assert(df.schema.fieldNames.contains("features"))
+    df.show()
+
+    // transform also can work for vectorized dataset
+    val vectorizedInput = new VectorAssembler()
+      .setInputCols(featuresName)
+      .setOutputCol("features")
+      .transform(xgbInput)
+      .select("features", "label")
+
+    val df1 = model.transform(vectorizedInput)
+    df1.show()
+  }
+
+  test("XGBoostClassificationModel should be compatible") {
+    val paramMap = Map("eta" -> "0.1", "max_depth" -> "6", "silent" -> "1",
+      "objective" -> "multi:softprob", "num_class" -> "6", "num_round" -> 5,
+      "num_workers" -> numWorkers, "tree_method" -> treeMethod)
+    val trainingDF = buildDataFrame(MultiClassification.train)
+    val xgb = new XGBoostClassifier(paramMap)
+    val model = xgb.fit(trainingDF)
+
+    // test json
+    val modelPath = new File(tempDir.toFile, "xgbc").getPath
+    model.write.option("format", "json").save(modelPath)
+    val nativeJsonModelPath = new File(tempDir.toFile, "nativeModel.json").getPath
+    model.nativeBooster.saveModel(nativeJsonModelPath)
+    assert(compareTwoFiles(new File(modelPath, "data/XGBoostClassificationModel").getPath,
+      nativeJsonModelPath))
+
+    // test ubj
+    val modelUbjPath = new File(tempDir.toFile, "xgbcUbj").getPath
+    model.write.save(modelUbjPath)
+    val nativeUbjModelPath = new File(tempDir.toFile, "nativeModel.ubj").getPath
+    model.nativeBooster.saveModel(nativeUbjModelPath)
+    assert(compareTwoFiles(new File(modelUbjPath, "data/XGBoostClassificationModel").getPath,
+      nativeUbjModelPath))
+
+    // json file should be indifferent with ubj file
+    val modelJsonPath = new File(tempDir.toFile, "xgbcJson").getPath
+    model.write.option("format", "json").save(modelJsonPath)
+    val nativeUbjModelPath1 = new File(tempDir.toFile, "nativeModel1.ubj").getPath
+    model.nativeBooster.saveModel(nativeUbjModelPath1)
+    assert(!compareTwoFiles(new File(modelJsonPath, "data/XGBoostClassificationModel").getPath,
+      nativeUbjModelPath1))
+  }
+
+  test("native json model file should store feature_name and feature_type") {
+    val featureNames = (1 to 33).map(idx => s"feature_${idx}").toArray
+    val featureTypes = (1 to 33).map(idx => "q").toArray
+    val paramMap = Map("eta" -> "0.1", "max_depth" -> "6", "silent" -> "1",
+      "objective" -> "multi:softprob", "num_class" -> "6", "num_round" -> 5,
+      "num_workers" -> numWorkers, "tree_method" -> treeMethod
+    )
+    val trainingDF = buildDataFrame(MultiClassification.train)
+    val xgb = new XGBoostClassifier(paramMap)
+      .setFeatureNames(featureNames)
+      .setFeatureTypes(featureTypes)
+    val model = xgb.fit(trainingDF)
+    val modelStr = new String(model._booster.toByteArray("json"))
+    val jsonModel = parseJson(modelStr)
+    implicit val formats: Formats = DefaultFormats
+    val featureNamesInModel = (jsonModel \ "learner" \ "feature_names").extract[List[String]]
+    val featureTypesInModel = (jsonModel \ "learner" \ "feature_types").extract[List[String]]
+    assert(featureNamesInModel.length == 33)
+    assert(featureTypesInModel.length == 33)
+  }
 }

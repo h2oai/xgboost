@@ -1,8 +1,8 @@
-name: cpu_test
+name: macos_test
 channels:
 - conda-forge
 dependencies:
-- python=3.7
+- python=3.8
 - pip
 - wheel
 - pyyaml
@@ -10,6 +10,7 @@ dependencies:
 - pylint
 - numpy
 - scipy
+- llvm-openmp
 - scikit-learn
 - pandas
 - matplotlib
@@ -17,7 +18,7 @@ dependencies:
 - distributed
 - graphviz
 - python-graphviz
-- hypothesis
+- hypothesis<=6.112
 - astroid
 - sphinx
 - sh
@@ -31,6 +32,9 @@ dependencies:
 - jsonschema
 - boto3
 - awscli
+- cffi
+- pyarrow
+- pyspark>=3.4.0
+- cloudpickle
 - pip:
-  - guzzle_sphinx_theme
-  - datatable
+  - sphinx_rtd_theme

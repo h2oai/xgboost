@@ -1,17 +1,22 @@
-"""Demo for using `process_type` with `prune` and `refresh`.  Modifying existing trees is
-not a well established use for XGBoost, so feel free to experiment.
+"""
+Demo for using `process_type` with `prune` and `refresh`
+========================================================
+
+Modifying existing trees is not a well established use for XGBoost, so feel free to
+experiment.
 
 """
 
-import xgboost as xgb
-from sklearn.datasets import load_boston
 import numpy as np
+from sklearn.datasets import fetch_california_housing
+
+import xgboost as xgb
 
 
 def main():
     n_rounds = 32
 
-    X, y = load_boston(return_X_y=True)
+    X, y = fetch_california_housing(return_X_y=True)
 
     # Train a model first
     X_train = X[: X.shape[0] // 2]
@@ -19,7 +24,7 @@ def main():
     Xy = xgb.DMatrix(X_train, y_train)
     evals_result: xgb.callback.EvaluationMonitor.EvalsLog = {}
     booster = xgb.train(
-        {"tree_method": "gpu_hist", "max_depth": 6},
+        {"tree_method": "hist", "max_depth": 6, "device": "cuda"},
         Xy,
         num_boost_round=n_rounds,
         evals=[(Xy, "Train")],
@@ -28,8 +33,8 @@ def main():
     SHAP = booster.predict(Xy, pred_contribs=True)
 
     # Refresh the leaf value and tree statistic
-    X_refresh = X[X.shape[0] // 2:]
-    y_refresh = y[y.shape[0] // 2:]
+    X_refresh = X[X.shape[0] // 2 :]
+    y_refresh = y[y.shape[0] // 2 :]
     Xy_refresh = xgb.DMatrix(X_refresh, y_refresh)
     # The model will adapt to other half of the data by changing leaf value (no change in
     # split condition) with refresh_leaf set to True.
@@ -82,7 +87,7 @@ def main():
     np.testing.assert_allclose(
         np.array(prune_result["Original"]["rmse"]),
         np.array(prune_result["Train"]["rmse"]),
-        atol=1e-5
+        atol=1e-5,
     )
 
 

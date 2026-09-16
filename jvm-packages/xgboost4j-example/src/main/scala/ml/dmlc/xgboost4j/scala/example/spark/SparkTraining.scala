@@ -1,5 +1,5 @@
 /*
- Copyright (c) 2014 by Contributors
+ Copyright (c) 2014-2022 by Contributors
 
  Licensed under the Apache License, Version 2.0 (the "License");
  you may not use this file except in compliance with the License.
@@ -17,9 +17,8 @@
 package ml.dmlc.xgboost4j.scala.example.spark
 
 import ml.dmlc.xgboost4j.scala.spark.XGBoostClassifier
-
 import org.apache.spark.ml.feature.{StringIndexer, VectorAssembler}
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.spark.sql.types.{DoubleType, StringType, StructField, StructType}
 
 // this example works with Iris dataset (https://archive.ics.uci.edu/ml/datasets/iris)
@@ -32,12 +31,18 @@ object SparkTraining {
       sys.exit(1)
     }
 
-    val (treeMethod, numWorkers) = if (args.length == 2 && args(1) == "gpu") {
-      ("gpu_hist", 1)
-    } else ("auto", 2)
+    val (device, numWorkers) = if (args.length == 2 && args(1) == "gpu") {
+      ("cuda", 1)
+    } else ("cpu", 2)
 
     val spark = SparkSession.builder().getOrCreate()
     val inputPath = args(0)
+    val results: DataFrame = run(spark, inputPath, device, numWorkers)
+    results.show()
+  }
+
+private[spark] def run(spark: SparkSession, inputPath: String,
+                       device: String, numWorkers: Int): DataFrame =  {
     val schema = new StructType(Array(
       StructField("sepal length", DoubleType, true),
       StructField("sepal width", DoubleType, true),
@@ -62,11 +67,12 @@ object SparkTraining {
     val Array(train, eval1, eval2, test) = xgbInput.randomSplit(Array(0.6, 0.2, 0.1, 0.1))
 
     /**
-     * setup  "timeout_request_workers" -> 60000L to make this application if it cannot get enough resources
-     * to get 2 workers within 60000 ms
+     * setup spark.scheduler.barrier.maxConcurrentTasksCheck.interval and
+     * spark.scheduler.barrier.maxConcurrentTasksCheck.maxFailures to make this application
+     * if it cannot get enough resources to get 2 workers within interval * maxFailures s
      *
-     * setup "checkpoint_path" -> "/checkpoints" and "checkpoint_interval" -> 2 to save checkpoint for every
-     * two iterations
+     * setup "checkpoint_path" -> "/checkpoints" and "checkpoint_interval" -> 2 to save
+     * checkpoint for every two iterations
      */
     val xgbParam = Map("eta" -> 0.1f,
       "max_depth" -> 2,
@@ -74,13 +80,12 @@ object SparkTraining {
       "num_class" -> 3,
       "num_round" -> 100,
       "num_workers" -> numWorkers,
-      "tree_method" -> treeMethod,
+      "device" -> device,
       "eval_sets" -> Map("eval1" -> eval1, "eval2" -> eval2))
     val xgbClassifier = new XGBoostClassifier(xgbParam).
       setFeaturesCol("features").
       setLabelCol("classIndex")
     val xgbClassificationModel = xgbClassifier.fit(train)
-    val results = xgbClassificationModel.transform(test)
-    results.show()
+    xgbClassificationModel.transform(test)
   }
 }

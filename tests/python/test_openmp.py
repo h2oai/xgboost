@@ -1,13 +1,19 @@
-# -*- coding: utf-8 -*-
-import xgboost as xgb
+import os
+import subprocess
+import tempfile
+
 import numpy as np
+import pytest
+
+import xgboost as xgb
+from xgboost import testing as tm
+
+pytestmark = tm.timeout(10)
 
 
 class TestOMP:
     def test_omp(self):
-        dpath = 'demo/data/'
-        dtrain = xgb.DMatrix(dpath + 'agaricus.txt.train')
-        dtest = xgb.DMatrix(dpath + 'agaricus.txt.test')
+        dtrain, dtest = tm.load_agaricus(__file__)
 
         param = {'booster': 'gbtree',
                  'objective': 'binary:logistic',
@@ -43,14 +49,15 @@ class TestOMP:
         print('test approx ...')
         param['tree_method'] = 'approx'
 
+        n_trials = 10
         param['nthread'] = 1
-        auc_1, pred_1 = consist_test('approx_thread_1', 100)
+        auc_1, pred_1 = consist_test('approx_thread_1', n_trials)
 
         param['nthread'] = 2
-        auc_2, pred_2 = consist_test('approx_thread_2', 100)
+        auc_2, pred_2 = consist_test('approx_thread_2', n_trials)
 
         param['nthread'] = 3
-        auc_3, pred_3 = consist_test('approx_thread_3', 100)
+        auc_3, pred_3 = consist_test('approx_thread_3', n_trials)
 
         assert auc_1 == auc_2 == auc_3
         assert np.array_equal(auc_1, auc_2)
@@ -60,14 +67,42 @@ class TestOMP:
         param['tree_method'] = 'hist'
 
         param['nthread'] = 1
-        auc_1, pred_1 = consist_test('hist_thread_1', 100)
+        auc_1, pred_1 = consist_test('hist_thread_1', n_trials)
 
         param['nthread'] = 2
-        auc_2, pred_2 = consist_test('hist_thread_2', 100)
+        auc_2, pred_2 = consist_test('hist_thread_2', n_trials)
 
         param['nthread'] = 3
-        auc_3, pred_3 = consist_test('hist_thread_3', 100)
+        auc_3, pred_3 = consist_test('hist_thread_3', n_trials)
 
         assert auc_1 == auc_2 == auc_3
         assert np.array_equal(auc_1, auc_2)
         assert np.array_equal(auc_1, auc_3)
+
+    @pytest.mark.skipif(**tm.no_sklearn())
+    def test_with_omp_thread_limit(self):
+        args = [
+            "python", os.path.join(
+                os.path.dirname(tm.normpath(__file__)), "with_omp_limit.py"
+            )
+        ]
+        results = []
+        with tempfile.TemporaryDirectory() as tmpdir:
+            for i in (1, 2, 16):
+                path = os.path.join(tmpdir, str(i))
+                with open(path, "w") as fd:
+                    fd.write("\n")
+                cp = args.copy()
+                cp.append(path)
+
+                env = os.environ.copy()
+                env["OMP_THREAD_LIMIT"] = str(i)
+
+                status = subprocess.call(cp, env=env)
+                assert status == 0
+
+                with open(path, "r") as fd:
+                    results.append(float(fd.read()))
+
+        for auc in results:
+            np.testing.assert_allclose(auc, results[0])

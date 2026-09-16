@@ -1,18 +1,19 @@
-/*!
- * Copyright 2019-2021 by XGBoost Contributors
+/**
+ * Copyright 2019-2024, XGBoost Contributors
  * \file simple_dmatrix.cuh
  */
 #ifndef XGBOOST_DATA_SIMPLE_DMATRIX_CUH_
 #define XGBOOST_DATA_SIMPLE_DMATRIX_CUH_
 
 #include <thrust/copy.h>
-#include <thrust/scan.h>
 #include <thrust/execution_policy.h>
-#include "device_adapter.cuh"
-#include "../common/device_helpers.cuh"
+#include <thrust/scan.h>
 
-namespace xgboost {
-namespace data {
+#include "../common/device_helpers.cuh"
+#include "../common/error_msg.h"  // for InfInData
+#include "device_adapter.cuh"     // for NoInfInData
+
+namespace xgboost::data {
 
 template <typename AdapterBatchT>
 struct COOToEntryOp {
@@ -39,9 +40,9 @@ void CopyDataToDMatrix(AdapterBatchT batch, common::Span<Entry> data,
 }
 
 template <typename AdapterBatchT>
-void CountRowOffsets(const AdapterBatchT& batch, common::Span<bst_row_t> offset,
-                     int device_idx, float missing) {
-  dh::safe_cuda(cudaSetDevice(device_idx));
+void CountRowOffsets(const AdapterBatchT& batch, common::Span<bst_idx_t> offset, DeviceOrd device,
+                     float missing) {
+  dh::safe_cuda(cudaSetDevice(device.ordinal));
   IsValidFunctor is_valid(missing);
   // Count elements per row
   dh::LaunchN(batch.Size(), [=] __device__(size_t idx) {
@@ -54,14 +55,17 @@ void CountRowOffsets(const AdapterBatchT& batch, common::Span<bst_row_t> offset,
   });
 
   dh::XGBCachingDeviceAllocator<char> alloc;
-  thrust::exclusive_scan(thrust::cuda::par(alloc),
-      thrust::device_pointer_cast(offset.data()),
-      thrust::device_pointer_cast(offset.data() + offset.size()),
-      thrust::device_pointer_cast(offset.data()));
+  thrust::exclusive_scan(thrust::cuda::par(alloc), thrust::device_pointer_cast(offset.data()),
+                         thrust::device_pointer_cast(offset.data() + offset.size()),
+                         thrust::device_pointer_cast(offset.data()));
 }
 
 template <typename AdapterBatchT>
-size_t CopyToSparsePage(AdapterBatchT const& batch, int32_t device, float missing, SparsePage* page) {
+size_t CopyToSparsePage(AdapterBatchT const& batch, DeviceOrd device, float missing,
+                        SparsePage* page) {
+  bool valid = NoInfInData(batch, IsValidFunctor{missing});
+  CHECK(valid) << error::InfInData();
+
   page->offset.SetDevice(device);
   page->data.SetDevice(device);
   page->offset.Resize(batch.NumRows() + 1);
@@ -73,6 +77,5 @@ size_t CopyToSparsePage(AdapterBatchT const& batch, int32_t device, float missin
 
   return num_nonzero_;
 }
-}  // namespace data
-}  // namespace xgboost
+}  // namespace xgboost::data
 #endif  // XGBOOST_DATA_SIMPLE_DMATRIX_CUH_

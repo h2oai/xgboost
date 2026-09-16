@@ -1,5 +1,5 @@
-/*!
- * Copyright (c) by Contributors 2020
+/**
+ * Copyright 2020-2023, XGBoost Contributors 
  */
 #include <gtest/gtest.h>
 #include <memory>
@@ -12,12 +12,10 @@
 #include "../helpers.h"
 #include "../../../src/common/survival_util.h"
 
-namespace xgboost {
-namespace common {
-
+namespace xgboost::common {
 TEST(Objective, DeclareUnifiedTest(AFTObjConfiguration)) {
-  auto lparam = CreateEmptyGenericParam(GPUIDX);
-  std::unique_ptr<ObjFunction> objective(ObjFunction::Create("survival:aft", &lparam));
+  auto ctx = MakeCUDACtx(GPUIDX);
+  std::unique_ptr<ObjFunction> objective(ObjFunction::Create("survival:aft", &ctx));
   objective->Configure({ {"aft_loss_distribution", "logistic"},
                           {"aft_loss_distribution_scale", "5"} });
 
@@ -65,20 +63,20 @@ static inline void CheckGPairOverGridPoints(
     preds[i] = std::log(std::pow(2.0, i * (log_y_high - log_y_low) / (num_point - 1) + log_y_low));
   }
 
-  HostDeviceVector<GradientPair> out_gpair;
+  linalg::Matrix<GradientPair> out_gpair;
   obj->GetGradient(HostDeviceVector<bst_float>(preds), info, 1, &out_gpair);
-  const auto& gpair = out_gpair.HostVector();
+  const auto gpair = out_gpair.HostView();
   CHECK_EQ(num_point, expected_grad.size());
   CHECK_EQ(num_point, expected_hess.size());
   for (int i = 0; i < num_point; ++i) {
-    EXPECT_NEAR(gpair[i].GetGrad(), expected_grad[i], ftol);
-    EXPECT_NEAR(gpair[i].GetHess(), expected_hess[i], ftol);
+    EXPECT_NEAR(gpair(i).GetGrad(), expected_grad[i], ftol);
+    EXPECT_NEAR(gpair(i).GetHess(), expected_hess[i], ftol);
   }
 }
 
 TEST(Objective, DeclareUnifiedTest(AFTObjGPairUncensoredLabels)) {
-  auto lparam = CreateEmptyGenericParam(GPUIDX);
-  std::unique_ptr<ObjFunction> obj(ObjFunction::Create("survival:aft", &lparam));
+  auto ctx = MakeCUDACtx(GPUIDX);
+  std::unique_ptr<ObjFunction> obj(ObjFunction::Create("survival:aft", &ctx));
 
   CheckGPairOverGridPoints(obj.get(), 100.0f, 100.0f, "normal",
     { -3.9120f, -3.4013f, -2.8905f, -2.3798f, -1.8691f, -1.3583f, -0.8476f, -0.3368f, 0.1739f,
@@ -101,8 +99,8 @@ TEST(Objective, DeclareUnifiedTest(AFTObjGPairUncensoredLabels)) {
 }
 
 TEST(Objective, DeclareUnifiedTest(AFTObjGPairLeftCensoredLabels)) {
-  auto lparam = CreateEmptyGenericParam(GPUIDX);
-  std::unique_ptr<ObjFunction> obj(ObjFunction::Create("survival:aft", &lparam));
+  auto ctx = MakeCUDACtx(GPUIDX);
+  std::unique_ptr<ObjFunction> obj(ObjFunction::Create("survival:aft", &ctx));
 
   CheckGPairOverGridPoints(obj.get(), 0.0f, 20.0f, "normal",
     { 0.0285f, 0.0832f, 0.1951f, 0.3804f, 0.6403f, 0.9643f, 1.3379f, 1.7475f, 2.1828f, 2.6361f,
@@ -122,8 +120,8 @@ TEST(Objective, DeclareUnifiedTest(AFTObjGPairLeftCensoredLabels)) {
 }
 
 TEST(Objective, DeclareUnifiedTest(AFTObjGPairRightCensoredLabels)) {
-  auto lparam = CreateEmptyGenericParam(GPUIDX);
-  std::unique_ptr<ObjFunction> obj(ObjFunction::Create("survival:aft", &lparam));
+  auto ctx = MakeCUDACtx(GPUIDX);
+  std::unique_ptr<ObjFunction> obj(ObjFunction::Create("survival:aft", &ctx));
 
   CheckGPairOverGridPoints(obj.get(), 60.0f, std::numeric_limits<float>::infinity(), "normal",
     { -3.6583f, -3.1815f, -2.7135f, -2.2577f, -1.8190f, -1.4044f, -1.0239f, -0.6905f, -0.4190f,
@@ -146,8 +144,8 @@ TEST(Objective, DeclareUnifiedTest(AFTObjGPairRightCensoredLabels)) {
 }
 
 TEST(Objective, DeclareUnifiedTest(AFTObjGPairIntervalCensoredLabels)) {
-  auto lparam = CreateEmptyGenericParam(GPUIDX);
-  std::unique_ptr<ObjFunction> obj(ObjFunction::Create("survival:aft", &lparam));
+  auto ctx = MakeCUDACtx(GPUIDX);
+  std::unique_ptr<ObjFunction> obj(ObjFunction::Create("survival:aft", &ctx));
 
   CheckGPairOverGridPoints(obj.get(), 16.0f, 200.0f, "normal",
     { -2.4435f, -1.9965f, -1.5691f, -1.1679f, -0.7990f, -0.4649f, -0.1596f, 0.1336f, 0.4370f,
@@ -169,5 +167,4 @@ TEST(Objective, DeclareUnifiedTest(AFTObjGPairIntervalCensoredLabels)) {
       0.2757f, 0.1776f, 0.1110f, 0.0682f, 0.0415f, 0.0251f, 0.0151f, 0.0091f, 0.0055f, 0.0033f });
 }
 
-}  // namespace common
-}  // namespace xgboost
+}  // namespace xgboost::common

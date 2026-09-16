@@ -5,23 +5,36 @@
 \title{Save xgboost model to R's raw vector,
 user can call xgb.load.raw to load the model back from raw vector}
 \usage{
-xgb.save.raw(model)
+xgb.save.raw(model, raw_format = "ubj")
 }
 \arguments{
 \item{model}{the model object.}
+
+\item{raw_format}{The format for encoding the booster.  Available options are
+\itemize{
+\item \code{json}: Encode the booster into JSON text document.
+\item \code{ubj}:  Encode the booster into Universal Binary JSON.
+\item \code{deprecated}: Encode the booster into old customized binary format.
+}}
 }
 \description{
 Save xgboost model from xgboost or xgb.train
 }
 \examples{
+\dontshow{RhpcBLASctl::omp_set_num_threads(1)}
 data(agaricus.train, package='xgboost')
 data(agaricus.test, package='xgboost')
+
+## Keep the number of threads to 2 for examples
+nthread <- 2
+data.table::setDTthreads(nthread)
+
 train <- agaricus.train
 test <- agaricus.test
-bst <- xgboost(data = train$data, label = train$label, max_depth = 2,
-               eta = 1, nthread = 2, nrounds = 2,objective = "binary:logistic")
+bst <- xgb.train(data = xgb.DMatrix(train$data, label = train$label), max_depth = 2,
+                 eta = 1, nthread = nthread, nrounds = 2,objective = "binary:logistic")
+
 raw <- xgb.save.raw(bst)
 bst <- xgb.load.raw(raw)
-pred <- predict(bst, test$data)
 
 }

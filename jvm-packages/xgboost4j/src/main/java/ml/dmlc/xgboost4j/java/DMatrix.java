@@ -1,5 +1,5 @@
 /*
- Copyright (c) 2014 by Contributors
+ Copyright (c) 2014-2023 by Contributors
 
  Licensed under the Apache License, Version 2.0 (the "License");
  you may not use this file except in compliance with the License.
@@ -79,17 +79,9 @@ public class DMatrix {
    * @throws XGBoostError
    */
   @Deprecated
-  public DMatrix(long[] headers, int[] indices, float[] data, DMatrix.SparseType st)
-      throws XGBoostError {
-    long[] out = new long[1];
-    if (st == SparseType.CSR) {
-      XGBoostJNI.checkCall(XGBoostJNI.XGDMatrixCreateFromCSREx(headers, indices, data, 0, out));
-    } else if (st == SparseType.CSC) {
-      XGBoostJNI.checkCall(XGBoostJNI.XGDMatrixCreateFromCSCEx(headers, indices, data, 0, out));
-    } else {
-      throw new UnknownError("unknow sparsetype");
-    }
-    handle = out[0];
+  public DMatrix(long[] headers, int[] indices, float[] data,
+                 DMatrix.SparseType st) throws XGBoostError {
+    this(headers, indices, data, st, 0, Float.NaN, -1);
   }
 
   /**
@@ -102,15 +94,20 @@ public class DMatrix {
    *                     row number
    * @throws XGBoostError
    */
-  public DMatrix(long[] headers, int[] indices, float[] data, DMatrix.SparseType st, int shapeParam)
-          throws XGBoostError {
+  public DMatrix(long[] headers, int[] indices, float[] data, DMatrix.SparseType st,
+                 int shapeParam) throws XGBoostError {
+    this(headers, indices, data, st, shapeParam, Float.NaN, -1);
+  }
+
+  public DMatrix(long[] headers, int[] indices, float[] data, DMatrix.SparseType st, int shapeParam,
+                 float missing, int nthread) throws XGBoostError {
     long[] out = new long[1];
     if (st == SparseType.CSR) {
-      XGBoostJNI.checkCall(XGBoostJNI.XGDMatrixCreateFromCSREx(headers, indices, data,
-              shapeParam, out));
+      XGBoostJNI.checkCall(XGBoostJNI.XGDMatrixCreateFromCSR(headers, indices, data,
+                                                             shapeParam, missing, nthread, out));
     } else if (st == SparseType.CSC) {
-      XGBoostJNI.checkCall(XGBoostJNI.XGDMatrixCreateFromCSCEx(headers, indices, data,
-              shapeParam, out));
+      XGBoostJNI.checkCall(XGBoostJNI.XGDMatrixCreateFromCSC(headers, indices, data,
+                                                             shapeParam, missing, nthread, out));
     } else {
       throw new UnknownError("unknow sparsetype");
     }
@@ -124,7 +121,11 @@ public class DMatrix {
    * @param nrow number of rows
    * @param ncol number of columns
    * @throws XGBoostError native error
+   *
+   * @deprecated Please specify the missing value explicitly using
+   * {@link DMatrix(float[], int, int, float)}
    */
+  @Deprecated
   public DMatrix(float[] data, int nrow, int ncol) throws XGBoostError {
     long[] out = new long[1];
     XGBoostJNI.checkCall(XGBoostJNI.XGDMatrixCreateFromMat(data, nrow, ncol, 0.0f, out));
@@ -173,6 +174,124 @@ public class DMatrix {
     this.handle = handle;
   }
 
+  /**
+   * Create the normal DMatrix from column array interface
+   * @param columnBatch the XGBoost ColumnBatch to provide the cuda array interface
+   *                    of feature columns
+   * @param missing missing value
+   * @param nthread threads number
+   * @throws XGBoostError
+   */
+  public DMatrix(ColumnBatch columnBatch, float missing, int nthread) throws XGBoostError {
+    long[] out = new long[1];
+    String json = columnBatch.getFeatureArrayInterface();
+    if (json == null || json.isEmpty()) {
+      throw new XGBoostError("Expecting non-empty feature columns' array interface");
+    }
+    XGBoostJNI.checkCall(XGBoostJNI.XGDMatrixCreateFromArrayInterfaceColumns(
+        json, missing, nthread, out));
+    handle = out[0];
+  }
+
+  /**
+   * Set label of DMatrix from cuda array interface
+   *
+   * @param column the XGBoost Column to provide the cuda array interface
+   *               of label column
+   * @throws XGBoostError native error
+   */
+  public void setLabel(Column column) throws XGBoostError {
+    setXGBDMatrixInfo("label", column.getArrayInterfaceJson());
+  }
+
+  /**
+   * Set weight of DMatrix from cuda array interface
+   *
+   * @param column the XGBoost Column to provide the cuda array interface
+   *               of weight column
+   * @throws XGBoostError native error
+   */
+  public void setWeight(Column column) throws XGBoostError {
+    setXGBDMatrixInfo("weight", column.getArrayInterfaceJson());
+  }
+
+  /**
+   * Set base margin of DMatrix from cuda array interface
+   *
+   * @param column the XGBoost Column to provide the cuda array interface
+   *               of base margin column
+   * @throws XGBoostError native error
+   */
+  public void setBaseMargin(Column column) throws XGBoostError {
+    setXGBDMatrixInfo("base_margin", column.getArrayInterfaceJson());
+  }
+
+  private void setXGBDMatrixInfo(String type, String json) throws XGBoostError {
+    if (json == null || json.isEmpty()) {
+      throw new XGBoostError("Empty " + type + " columns' array interface");
+    }
+    XGBoostJNI.checkCall(XGBoostJNI.XGDMatrixSetInfoFromInterface(handle, type, json));
+  }
+
+  private void setXGBDMatrixFeatureInfo(String type, String[] values) throws XGBoostError {
+    if (type == null || type.isEmpty()) {
+      throw new XGBoostError("Found empty type");
+    }
+    if (values == null || values.length == 0) {
+      throw new XGBoostError("Found empty values");
+    }
+    XGBoostJNI.checkCall(XGBoostJNI.XGDMatrixSetStrFeatureInfo(handle, type, values));
+  }
+
+  private String[] getXGBDMatrixFeatureInfo(String type) throws XGBoostError {
+    if (type == null || type.isEmpty()) {
+      throw new XGBoostError("Found empty type");
+    }
+    long[] outLen = new long[1];
+    String[][] outValue = new String[1][];
+    XGBoostJNI.checkCall(XGBoostJNI.XGDMatrixGetStrFeatureInfo(handle, type, outLen, outValue));
+
+    if (outLen[0] != outValue[0].length) {
+      throw new RuntimeException("Failed to get " + type);
+    }
+    return outValue[0];
+  }
+
+  /**
+   * Set feature names
+   * @param values feature names to be set
+   * @throws XGBoostError
+   */
+  public void setFeatureNames(String[] values) throws XGBoostError {
+    setXGBDMatrixFeatureInfo("feature_name", values);
+  }
+
+  /**
+   * Get feature names
+   * @return an array of feature names to be returned
+   * @throws XGBoostError
+   */
+  public String[] getFeatureNames() throws XGBoostError {
+    return getXGBDMatrixFeatureInfo("feature_name");
+  }
+
+  /**
+   * Set feature types
+   * @param values feature types to be set
+   * @throws XGBoostError
+   */
+  public void setFeatureTypes(String[] values) throws XGBoostError {
+    setXGBDMatrixFeatureInfo("feature_type", values);
+  }
+
+  /**
+   * Get feature types
+   * @return an array of feature types to be returned
+   * @throws XGBoostError
+   */
+  public String[] getFeatureTypes() throws XGBoostError {
+    return getXGBDMatrixFeatureInfo("feature_type");
+  }
 
   /**
    * set label of dmatrix
@@ -301,6 +420,18 @@ public class DMatrix {
     long[] rowNum = new long[1];
     XGBoostJNI.checkCall(XGBoostJNI.XGDMatrixNumRow(handle, rowNum));
     return rowNum[0];
+  }
+
+  /**
+   * Get the number of non-missing values of DMatrix.
+   *
+   * @return The number of non-missing values
+   * @throws XGBoostError native error
+   */
+  public long nonMissingNum() throws XGBoostError {
+    long[] n = new long[1];
+    XGBoostJNI.checkCall(XGBoostJNI.XGDMatrixNumNonMissing(handle, n));
+    return n[0];
   }
 
   /**

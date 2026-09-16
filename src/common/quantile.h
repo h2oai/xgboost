@@ -1,5 +1,5 @@
-/*!
- * Copyright 2014 by Contributors
+/**
+ * Copyright 2014-2024, XGBoost Contributors
  * \file quantile.h
  * \brief util to compute quantiles
  * \author Tianqi Chen
@@ -7,19 +7,24 @@
 #ifndef XGBOOST_COMMON_QUANTILE_H_
 #define XGBOOST_COMMON_QUANTILE_H_
 
-#include <dmlc/base.h>
-#include <xgboost/logging.h>
 #include <xgboost/data.h>
-#include <cmath>
-#include <vector>
-#include <cstring>
-#include <algorithm>
-#include <iostream>
+#include <xgboost/logging.h>
 
+#include <algorithm>
+#include <cmath>
+#include <cstring>
+#include <iostream>
+#include <set>
+#include <vector>
+
+#include "categorical.h"
+#include "common.h"
+#include "error_msg.h"        // GroupWeight
+#include "optional_weight.h"  // OptionalWeights
+#include "threading_utils.h"
 #include "timer.h"
 
-namespace xgboost {
-namespace common {
+namespace xgboost::common {
 /*!
  * \brief experimental wsummary
  * \tparam DType type of data content
@@ -30,13 +35,13 @@ struct WQSummary {
   /*! \brief an entry in the sketch summary */
   struct Entry {
     /*! \brief minimum rank */
-    RType rmin;
+    RType rmin{};
     /*! \brief maximum rank */
-    RType rmax;
+    RType rmax{};
     /*! \brief maximum weight */
-    RType wmin;
+    RType wmin{};
     /*! \brief the value of data */
-    DType value;
+    DType value{};
     // constructor
     XGBOOST_DEVICE Entry() {}  // NOLINT
     // constructor
@@ -346,19 +351,6 @@ struct WQSummary {
       }
       prev_rmax = data[i].rmax;
     }
-  }
-  // check consistency of the summary
-  inline bool Check(const char *msg) const {
-    const float tol = 10.0f;
-    for (size_t i = 0; i < this->size; ++i) {
-      if (data[i].rmin + data[i].wmin > data[i].rmax + tol ||
-          data[i].rmin < -1e-6f || data[i].rmax < -1e-6f) {
-        LOG(INFO) << "---------- WQSummary::Check did not pass ----------";
-        this->Print();
-        return false;
-      }
-    }
-    return true;
   }
 };
 
@@ -696,21 +688,114 @@ class WXQuantileSketch :
       public QuantileSketchTemplate<DType, RType, WXQSummary<DType, RType> > {
 };
 
+namespace detail {
+inline std::vector<float> UnrollGroupWeights(MetaInfo const &info) {
+  std::vector<float> const &group_weights = info.weights_.HostVector();
+  if (group_weights.empty()) {
+    return group_weights;
+  }
+
+  auto const &group_ptr = info.group_ptr_;
+  CHECK_GE(group_ptr.size(), 2);
+
+  auto n_groups = group_ptr.size() - 1;
+  CHECK_EQ(info.weights_.Size(), n_groups) << error::GroupWeight();
+
+  bst_idx_t n_samples = info.num_row_;
+  std::vector<float> results(n_samples);
+  CHECK_EQ(group_ptr.back(), n_samples)
+      << error::GroupSize() << " the number of rows from the data.";
+  size_t cur_group = 0;
+  for (bst_idx_t i = 0; i < n_samples; ++i) {
+    results[i] = group_weights[cur_group];
+    if (i == group_ptr[cur_group + 1]) {
+      cur_group++;
+    }
+  }
+  return results;
+}
+}  // namespace detail
+
 class HistogramCuts;
+
+template <typename Batch, typename IsValid>
+std::vector<bst_idx_t> CalcColumnSize(Batch const &batch, bst_feature_t const n_columns,
+                                      size_t const n_threads, IsValid &&is_valid) {
+  std::vector<std::vector<bst_idx_t>> column_sizes_tloc(n_threads);
+  for (auto &column : column_sizes_tloc) {
+    column.resize(n_columns, 0);
+  }
+
+  ParallelFor(batch.Size(), n_threads, [&](omp_ulong i) {
+    auto &local_column_sizes = column_sizes_tloc.at(omp_get_thread_num());
+    auto const &line = batch.GetLine(i);
+    for (size_t j = 0; j < line.Size(); ++j) {
+      auto elem = line.GetElement(j);
+      if (is_valid(elem)) {
+        local_column_sizes[elem.column_idx]++;
+      }
+    }
+  });
+  // reduce to first thread
+  auto &entries_per_columns = column_sizes_tloc.front();
+  CHECK_EQ(entries_per_columns.size(), static_cast<size_t>(n_columns));
+  for (size_t i = 1; i < n_threads; ++i) {
+    CHECK_EQ(column_sizes_tloc[i].size(), static_cast<size_t>(n_columns));
+    for (size_t j = 0; j < n_columns; ++j) {
+      entries_per_columns[j] += column_sizes_tloc[i][j];
+    }
+  }
+  return entries_per_columns;
+}
+
+template <typename Batch, typename IsValid>
+std::vector<bst_feature_t> LoadBalance(Batch const &batch, size_t nnz, bst_feature_t n_columns,
+                                       size_t const nthreads, IsValid&& is_valid) {
+  /* Some sparse datasets have their mass concentrating on small number of features.  To
+   * avoid waiting for a few threads running forever, we here distribute different number
+   * of columns to different threads according to number of entries.
+   */
+  size_t const total_entries = nnz;
+  size_t const entries_per_thread = DivRoundUp(total_entries, nthreads);
+
+  // Need to calculate the size for each batch.
+  std::vector<bst_idx_t> entries_per_columns = CalcColumnSize(batch, n_columns, nthreads, is_valid);
+  std::vector<bst_feature_t> cols_ptr(nthreads + 1, 0);
+  size_t count{0};
+  size_t current_thread{1};
+
+  for (auto col : entries_per_columns) {
+    cols_ptr.at(current_thread)++;  // add one column to thread
+    count += col;
+    CHECK_LE(count, total_entries);
+    if (count > entries_per_thread) {
+      current_thread++;
+      count = 0;
+      cols_ptr.at(current_thread) = cols_ptr[current_thread - 1];
+    }
+  }
+  // Idle threads.
+  for (; current_thread < cols_ptr.size() - 1; ++current_thread) {
+    cols_ptr[current_thread + 1] = cols_ptr[current_thread];
+  }
+  return cols_ptr;
+}
 
 /*!
  * A sketch matrix storing sketches for each feature.
  */
-class HostSketchContainer {
- public:
-  using WQSketch = WQuantileSketch<float, float>;
-
- private:
+template <typename WQSketch>
+class SketchContainerImpl {
+ protected:
   std::vector<WQSketch> sketches_;
-  std::vector<bst_row_t> columns_size_;
-  int32_t max_bins_;
+  std::vector<std::set<float>> categories_;
+  std::vector<FeatureType> const feature_types_;
+
+  std::vector<bst_idx_t> columns_size_;
+  bst_bin_t max_bins_;
   bool use_group_ind_{false};
   int32_t n_threads_;
+  bool has_categorical_{false};
   Monitor monitor_;
 
  public:
@@ -720,8 +805,8 @@ class HostSketchContainer {
    * \param max_bins maximum number of bins for each feature.
    * \param use_group whether is assigned to group to data instance.
    */
-  HostSketchContainer(std::vector<bst_row_t> columns_size, int32_t max_bins,
-                      bool use_group, int32_t n_threads);
+  SketchContainerImpl(Context const *ctx, std::vector<bst_idx_t> columns_size, bst_bin_t max_bins,
+                      common::Span<FeatureType const> feature_types, bool use_group);
 
   static bool UseGroup(MetaInfo const &info) {
     size_t const num_groups =
@@ -731,14 +816,6 @@ class HostSketchContainer {
         num_groups != 0 && (info.weights_.Size() != info.num_row_);
     return use_group_ind;
   }
-
-  static std::vector<bst_row_t> CalcColumnSize(SparsePage const &page,
-                                               bst_feature_t const n_columns,
-                                               size_t const nthreads);
-
-  static std::vector<bst_feature_t> LoadBalance(SparsePage const &page,
-                                                bst_feature_t n_columns,
-                                                size_t const nthreads);
 
   static uint32_t SearchGroupIndFromRow(std::vector<bst_uint> const &group_ptr,
                                         size_t const base_rowid) {
@@ -750,20 +827,194 @@ class HostSketchContainer {
     return group_ind;
   }
   // Gather sketches from all workers.
-  void GatherSketchInfo(std::vector<WQSketch::SummaryContainer> const &reduced,
-                        std::vector<bst_row_t> *p_worker_segments,
-                        std::vector<bst_row_t> *p_sketches_scan,
-                        std::vector<WQSketch::Entry> *p_global_sketches);
+  void GatherSketchInfo(Context const *ctx, MetaInfo const &info,
+                        std::vector<typename WQSketch::SummaryContainer> const &reduced,
+                        std::vector<bst_idx_t> *p_worker_segments,
+                        std::vector<bst_idx_t> *p_sketches_scan,
+                        std::vector<typename WQSketch::Entry> *p_global_sketches);
   // Merge sketches from all workers.
-  void AllReduce(std::vector<WQSketch::SummaryContainer> *p_reduced,
-                 std::vector<int32_t>* p_num_cuts);
+  void AllReduce(Context const *ctx, MetaInfo const &info,
+                 std::vector<typename WQSketch::SummaryContainer> *p_reduced,
+                 std::vector<int32_t> *p_num_cuts);
+
+  template <typename Batch, typename IsValid>
+  void PushRowPageImpl(Batch const &batch, size_t base_rowid, OptionalWeights weights, size_t nnz,
+                       size_t n_features, bool is_dense, IsValid is_valid) {
+    auto thread_columns_ptr = LoadBalance(batch, nnz, n_features, n_threads_, is_valid);
+
+    dmlc::OMPException exc;
+#pragma omp parallel num_threads(n_threads_)
+    {
+      exc.Run([&]() {
+        auto tid = static_cast<uint32_t>(omp_get_thread_num());
+        auto const begin = thread_columns_ptr[tid];
+        auto const end = thread_columns_ptr[tid + 1];
+
+        // do not iterate if no columns are assigned to the thread
+        if (begin < end && end <= n_features) {
+          for (size_t ridx = 0; ridx < batch.Size(); ++ridx) {
+            auto const &line = batch.GetLine(ridx);
+            auto w = weights[ridx + base_rowid];
+            if (is_dense) {
+              for (size_t ii = begin; ii < end; ii++) {
+                auto elem = line.GetElement(ii);
+                if (is_valid(elem)) {
+                  if (IsCat(feature_types_, ii)) {
+                    categories_[ii].emplace(elem.value);
+                  } else {
+                    sketches_[ii].Push(elem.value, w);
+                  }
+                }
+              }
+            } else {
+              for (size_t i = 0; i < line.Size(); ++i) {
+                auto const &elem = line.GetElement(i);
+                if (is_valid(elem) && elem.column_idx >= begin && elem.column_idx < end) {
+                  if (IsCat(feature_types_, elem.column_idx)) {
+                    categories_[elem.column_idx].emplace(elem.value);
+                  } else {
+                    sketches_[elem.column_idx].Push(elem.value, w);
+                  }
+                }
+              }
+            }
+          }
+        }
+      });
+    }
+    exc.Rethrow();
+  }
 
   /* \brief Push a CSR matrix. */
-  void PushRowPage(SparsePage const &page, MetaInfo const &info,
-                   std::vector<float> const &hessian = {});
+  void PushRowPage(SparsePage const &page, MetaInfo const &info, Span<float const> hessian = {});
 
-  void MakeCuts(HistogramCuts* cuts);
+  void MakeCuts(Context const *ctx, MetaInfo const &info, HistogramCuts *cuts);
+
+ private:
+  // Merge all categories from other workers.
+  void AllreduceCategories(Context const* ctx, MetaInfo const& info);
 };
-}  // namespace common
-}  // namespace xgboost
+
+class HostSketchContainer : public SketchContainerImpl<WQuantileSketch<float, float>> {
+ public:
+  using WQSketch = WQuantileSketch<float, float>;
+
+ public:
+  HostSketchContainer(Context const *ctx, bst_bin_t max_bins, common::Span<FeatureType const> ft,
+                      std::vector<bst_idx_t> columns_size, bool use_group);
+
+  template <typename Batch>
+  void PushAdapterBatch(Batch const &batch, size_t base_rowid, MetaInfo const &info, float missing);
+};
+
+/**
+ * \brief Quantile structure accepts sorted data, extracted from histmaker.
+ */
+struct SortedQuantile {
+  /*! \brief total sum of amount to be met */
+  double sum_total{0.0};
+  /*! \brief statistics used in the sketch */
+  double rmin, wmin;
+  /*! \brief last seen feature value */
+  bst_float last_fvalue;
+  /*! \brief current size of sketch */
+  double next_goal;
+  // pointer to the sketch to put things in
+  common::WXQuantileSketch<bst_float, bst_float>* sketch;
+  // initialize the space
+  inline void Init(unsigned max_size) {
+    next_goal = -1.0f;
+    rmin = wmin = 0.0f;
+    sketch->temp.Reserve(max_size + 1);
+    sketch->temp.size = 0;
+  }
+  /*!
+   * \brief push a new element to sketch
+   * \param fvalue feature value, comes in sorted ascending order
+   * \param w weight
+   * \param max_size
+   */
+  inline void Push(bst_float fvalue, bst_float w, unsigned max_size) {
+    if (next_goal == -1.0f) {
+      next_goal = 0.0f;
+      last_fvalue = fvalue;
+      wmin = w;
+      return;
+    }
+    if (last_fvalue != fvalue) {
+      double rmax = rmin + wmin;
+      if (rmax >= next_goal && sketch->temp.size != max_size) {
+        if (sketch->temp.size == 0 ||
+            last_fvalue > sketch->temp.data[sketch->temp.size - 1].value) {
+          // push to sketch
+          sketch->temp.data[sketch->temp.size] =
+              common::WXQuantileSketch<bst_float, bst_float>::Entry(
+                  static_cast<bst_float>(rmin), static_cast<bst_float>(rmax),
+                  static_cast<bst_float>(wmin), last_fvalue);
+          CHECK_LT(sketch->temp.size, max_size) << "invalid maximum size max_size=" << max_size
+                                                << ", stemp.size" << sketch->temp.size;
+          ++sketch->temp.size;
+        }
+        if (sketch->temp.size == max_size) {
+          next_goal = sum_total * 2.0f + 1e-5f;
+        } else {
+          next_goal = static_cast<bst_float>(sketch->temp.size * sum_total / max_size);
+        }
+      } else {
+        if (rmax >= next_goal) {
+          LOG(DEBUG) << "INFO: rmax=" << rmax << ", sum_total=" << sum_total
+                     << ", naxt_goal=" << next_goal << ", size=" << sketch->temp.size;
+        }
+      }
+      rmin = rmax;
+      wmin = w;
+      last_fvalue = fvalue;
+    } else {
+      wmin += w;
+    }
+  }
+
+  /*! \brief push final unfinished value to the sketch */
+  inline void Finalize(unsigned max_size) {
+    double rmax = rmin + wmin;
+    if (sketch->temp.size == 0 || last_fvalue > sketch->temp.data[sketch->temp.size - 1].value) {
+      CHECK_LE(sketch->temp.size, max_size)
+          << "Finalize: invalid maximum size, max_size=" << max_size
+          << ", stemp.size=" << sketch->temp.size;
+      // push to sketch
+      sketch->temp.data[sketch->temp.size] = common::WXQuantileSketch<bst_float, bst_float>::Entry(
+          static_cast<bst_float>(rmin), static_cast<bst_float>(rmax), static_cast<bst_float>(wmin),
+          last_fvalue);
+      ++sketch->temp.size;
+    }
+    sketch->PushTemp();
+  }
+};
+
+class SortedSketchContainer : public SketchContainerImpl<WXQuantileSketch<float, float>> {
+  std::vector<SortedQuantile> sketches_;
+  using Super = SketchContainerImpl<WXQuantileSketch<float, float>>;
+
+ public:
+  explicit SortedSketchContainer(Context const *ctx, int32_t max_bins,
+                                 common::Span<FeatureType const> ft,
+                                 std::vector<bst_idx_t> columns_size, bool use_group)
+      : SketchContainerImpl{ctx, columns_size, max_bins, ft, use_group} {
+    monitor_.Init(__func__);
+    sketches_.resize(columns_size.size());
+    size_t i = 0;
+    for (auto &sketch : sketches_) {
+      sketch.sketch = &Super::sketches_[i];
+      sketch.Init(max_bins_);
+      auto eps = 2.0 / max_bins;
+      sketch.sketch->Init(columns_size_[i], eps);
+      ++i;
+    }
+  }
+  /**
+   * \brief Push a sorted CSC page.
+   */
+  void PushColPage(SparsePage const &page, MetaInfo const &info, Span<float const> hessian);
+};
+}  // namespace xgboost::common
 #endif  // XGBOOST_COMMON_QUANTILE_H_

@@ -1,15 +1,19 @@
+/**
+ * Copyright 2019-2023 by XGBoost Contributors
+ */
 #include <gtest/gtest.h>
-#include <dmlc/filesystem.h>
+
 #include <fstream>
 #include <memory>
 #include <vector>
 
-#include "xgboost/data.h"
+#include "../filesystem.h"  // dmlc::TemporaryDirectory
 #include "../helpers.h"
+#include "xgboost/data.h"
 
 namespace xgboost {
 TEST(SparsePage, PushCSC) {
-  std::vector<bst_row_t> offset {0};
+  std::vector<bst_idx_t> offset {0};
   std::vector<Entry> data;
   SparsePage batch;
   batch.offset.HostVector() = offset;
@@ -17,7 +21,7 @@ TEST(SparsePage, PushCSC) {
 
   offset = {0, 1, 4};
   for (size_t i = 0; i < offset.back(); ++i) {
-    data.emplace_back(Entry(i, 0.1f));
+    data.emplace_back(i, 0.1f);
   }
 
   SparsePage other;
@@ -66,14 +70,14 @@ TEST(SparsePage, PushCSCAfterTranspose) {
   SparsePage page; // Consolidated sparse page
   for (const auto &batch : dmat->GetBatches<xgboost::SparsePage>()) {
     // Transpose each batch and push
-    SparsePage tmp = batch.GetTranspose(ncols);
+    SparsePage tmp = batch.GetTranspose(ncols, AllThreadsForTest());
     page.PushCSC(tmp);
   }
 
   // Make sure that the final sparse page has the right number of entries
   ASSERT_EQ(kEntries, page.data.Size());
 
-  page.SortRows();
+  page.SortRows(AllThreadsForTest());
   auto v = page.GetView();
   for (size_t i = 0; i < v.Size(); ++i) {
     auto column = v[i];
@@ -83,39 +87,44 @@ TEST(SparsePage, PushCSCAfterTranspose) {
   }
 }
 
-TEST(DMatrix, Uri) {
-  size_t constexpr kRows {16};
-  size_t constexpr kCols {8};
-  std::vector<float> data (kRows * kCols);
-
-  for (size_t i = 0; i < kRows * kCols; ++i) {
-    data[i] = i;
+TEST(SparsePage, SortIndices) {
+  auto p_fmat = RandomDataGenerator{100, 10, 0.6}.GenerateDMatrix();
+  auto n_threads = AllThreadsForTest();
+  SparsePage copy;
+  for (auto const& page : p_fmat->GetBatches<SparsePage>()) {
+    ASSERT_TRUE(page.IsIndicesSorted(n_threads));
+    copy.Push(page);
   }
+  ASSERT_TRUE(copy.IsIndicesSorted(n_threads));
+
+  for (size_t ridx = 0; ridx < copy.Size(); ++ridx) {
+    auto beg = copy.offset.HostVector()[ridx];
+    auto end = copy.offset.HostVector()[ridx + 1];
+    auto& h_data = copy.data.HostVector();
+    if (end - beg >= 2) {
+      std::swap(h_data[beg], h_data[end - 1]);
+    }
+  }
+  ASSERT_FALSE(copy.IsIndicesSorted(n_threads));
+
+  copy.SortIndices(n_threads);
+  ASSERT_TRUE(copy.IsIndicesSorted(n_threads));
+}
+
+TEST(DMatrix, Uri) {
+  auto constexpr kRows {16};
+  auto constexpr kCols {8};
 
   dmlc::TemporaryDirectory tmpdir;
-  std::string path = tmpdir.path + "/small.csv";
-
-  std::ofstream fout(path);
-  size_t i = 0;
-  for (size_t r = 0; r < kRows; ++r) {
-    for (size_t c = 0; c < kCols; ++c) {
-      fout << data[i];
-      i++;
-      if (c != kCols - 1) {
-        fout << ",";
-      }
-    }
-    fout << "\n";
-  }
-  fout.flush();
-  fout.close();
+  auto const path = tmpdir.path + "/small.csv";
+  CreateTestCSV(path, kRows, kCols);
 
   std::unique_ptr<DMatrix> dmat;
   // FIXME(trivialfis): Enable the following test by restricting csv parser in dmlc-core.
   // EXPECT_THROW(dmat.reset(DMatrix::Load(path, false, true)), dmlc::Error);
 
   std::string uri = path + "?format=csv";
-  dmat.reset(DMatrix::Load(uri, false, true));
+  dmat.reset(DMatrix::Load(uri, false));
 
   ASSERT_EQ(dmat->Info().num_col_, kCols);
   ASSERT_EQ(dmat->Info().num_row_, kRows);

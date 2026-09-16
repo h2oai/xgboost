@@ -1,0 +1,43 @@
+name: linux_cpu_test
+channels:
+- conda-forge
+dependencies:
+- python=3.8
+- cmake
+- c-compiler
+- cxx-compiler
+- ninja
+- pip
+- wheel
+- pyyaml
+- cpplint
+- pylint
+- numpy
+- scipy
+- scikit-learn
+- pandas
+- matplotlib
+- dask
+- distributed
+- python-graphviz
+- hypothesis<=6.112
+- astroid
+- sh
+- mock
+- pytest
+- pytest-timeout
+- pytest-cov
+- python-kubernetes
+- urllib3
+- jsonschema
+- boto3
+- awscli
+- py-ubjson
+- cffi
+- pyarrow
+- protobuf
+- cloudpickle
+- modin
+- pyspark>=3.4.0
+- pip:
+  - datatable

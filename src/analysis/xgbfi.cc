@@ -2,12 +2,15 @@
 * Copyright 2017 by Contributors
 * \file xgbfi.cc
 * \brief xgb feature interactions (xgbfi)
-* \author Mathias M�ller (Far0n)
+* \author Mathias Mueller (Far0n)
 */
 #include "xgbfi.h"
+#include <dmlc/omp.h>
+#include <xgboost/feature_map.h>  // FeatureMap (2.1.x split it out of learner.h)
 #include <xgboost/logging.h>
 #include <iostream>
 #include <cstdio>
+#include <cstring>
 #include <fstream>
 #include <sstream>
 #include <memory>
@@ -16,7 +19,6 @@
 #include <cctype>
 #include <unordered_set>
 #include <set>
-// #include <omp.h>
 // #include <regex>
 
 namespace xgbfi {

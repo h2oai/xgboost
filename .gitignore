@@ -48,10 +48,13 @@ Debug
 *.Rproj
 ./xgboost.mpi
 ./xgboost.mock
+*.bak
 #.Rbuildignore
 R-package.Rproj
 *.cache*
 .mypy_cache/
+doxygen
+
 # java
 java/xgboost4j/target
 java/xgboost4j/tmp
@@ -63,6 +66,7 @@ nb-configuration*
 # Eclipse
 .project
 .cproject
+.classpath
 .pydevproject
 .settings/
 build
@@ -96,8 +100,11 @@ metastore_db
 R-package/src/Makevars
 *.lib
 
-# Visual Studio Code
-/.vscode/
+# Visual Studio
+.vs/
+CMakeSettings.json
+*.ilk
+*.pdb
 
 # IntelliJ/CLion
 .idea
@@ -125,3 +132,25 @@ credentials.csv
 *.pub
 *.rdp
 *_rsa
+
+# Visual Studio code + extensions
+.vscode
+.metals
+.bloop
+
+# python tests
+*.bin
+demo/**/*.txt
+*.dmatrix
+.hypothesis
+__MACOSX/
+model*.json
+/tests/python/models/models/
+
+# R tests
+*.htm
+*.html
+*.libsvm
+*.rds
+Rplots.pdf
+*.zip

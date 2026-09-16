@@ -98,6 +98,7 @@ void DataIterator_Free(DataIter *self) {
   }
   free(self->data);
   free(self->lengths);
+  free(self->labels);
   safe_xgboost(XGDMatrixFree(self->_proxy));
 };
 
@@ -138,8 +139,8 @@ void TrainModel(DMatrix Xy) {
   Booster booster;
   DMatrix cache[] = {Xy};
   safe_xgboost(XGBoosterCreate(cache, 1, &booster));
-  /* Use approx for external memory training. */
-  safe_xgboost(XGBoosterSetParam(booster, "tree_method", "approx"));
+  /* Use approx or hist for external memory training. */
+  safe_xgboost(XGBoosterSetParam(booster, "tree_method", "hist"));
   safe_xgboost(XGBoosterSetParam(booster, "objective", "reg:squarederror"));
 
   /* Start training. */

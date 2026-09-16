@@ -1,21 +1,17 @@
-/*!
- * Copyright by Contributors 2019
+/**
+ * Copyright 2019-2024, XGBoost Contributors
  */
-#include <rabit/rabit.h>
-#include <algorithm>
-#include <type_traits>
-#include <utility>
-#include <vector>
-#include <sstream>
 #include "timer.h"
 
+#include <utility>
+
+#include "../collective/communicator-inl.h"
+
 #if defined(XGBOOST_USE_NVTX)
-#include <nvToolsExt.h>
+#include <nvtx3/nvToolsExt.h>
 #endif  // defined(XGBOOST_USE_NVTX)
 
-namespace xgboost {
-namespace common {
-
+namespace xgboost::common {
 void Monitor::Start(std::string const &name) {
   if (ConsoleLogger::ShouldLog(ConsoleLogger::LV::kDebug)) {
     auto &stats = statistics_map_[name];
@@ -54,7 +50,7 @@ void Monitor::PrintStatistics(StatMap const& statistics) const {
 
 void Monitor::Print() const {
   if (!ConsoleLogger::ShouldLog(ConsoleLogger::LV::kDebug)) { return; }
-  auto rank = rabit::GetRank();
+  auto rank = collective::GetRank();
   StatMap stat_map;
   for (auto const &kv : statistics_map_) {
     stat_map[kv.first] = std::make_pair(
@@ -62,9 +58,10 @@ void Monitor::Print() const {
                              kv.second.timer.elapsed)
                              .count());
   }
+  if (stat_map.empty()) {
+    return;
+  }
   LOG(CONSOLE) << "======== Monitor (" << rank << "): " << label_ << " ========";
   this->PrintStatistics(stat_map);
 }
-
-}  // namespace common
-}  // namespace xgboost
+}  // namespace xgboost::common

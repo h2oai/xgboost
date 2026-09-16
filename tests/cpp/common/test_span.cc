@@ -1,15 +1,16 @@
-/*!
- * Copyright 2018 XGBoost contributors
+/**
+ * Copyright 2018-2023, XGBoost contributors
  */
-#include <gtest/gtest.h>
-#include <vector>
-
-#include <xgboost/span.h>
 #include "test_span.h"
 
-namespace xgboost {
-namespace common {
+#include <gtest/gtest.h>
+#include <xgboost/span.h>
 
+#include <vector>
+
+#include "../../../src/common/transform_iterator.h"  // for MakeIndexTransformIter
+
+namespace xgboost::common {
 TEST(Span, TestStatus) {
   int status = 1;
   TestTestStatus {&status}();
@@ -522,9 +523,21 @@ TEST(Span, Empty) {
 TEST(SpanDeathTest, Empty) {
   std::vector<float> data(1, 0);
   ASSERT_TRUE(data.data());
-  Span<float> s{data.data(), Span<float>::index_type(0)};  // ok to define 0 size span.
+  // ok to define 0 size span.
+  Span<float> s{data.data(), static_cast<Span<float>::index_type>(0)};
   EXPECT_DEATH(s[0], "");  // not ok to use it.
 }
 
-}  // namespace common
-}  // namespace xgboost
+TEST(IterSpan, Basic) {
+  auto iter = common::MakeIndexTransformIter([](std::size_t i) { return i; });
+  std::size_t n = 13;
+  auto span = IterSpan{iter, n};
+  ASSERT_EQ(span.size(), n);
+  for (std::size_t i = 0; i < n; ++i) {
+    ASSERT_EQ(span[i], i);
+  }
+  ASSERT_EQ(span.subspan(1).size(), n - 1);
+  ASSERT_EQ(span.subspan(1)[0], 1);
+  ASSERT_EQ(span.subspan(1, 2)[1], 2);
+}
+}  // namespace xgboost::common

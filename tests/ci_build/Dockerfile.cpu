@@ -1,4 +1,4 @@
-FROM ubuntu:18.04
+FROM ubuntu:22.04
 
 # Environment
 ENV DEBIAN_FRONTEND noninteractive
@@ -10,28 +10,38 @@ RUN \
     apt-get install -y software-properties-common && \
     add-apt-repository ppa:ubuntu-toolchain-r/test && \
     apt-get update && \
-    apt-get install -y tar unzip wget git build-essential doxygen graphviz llvm libasan2 libidn11 ninja-build gcc-8 g++-8 && \
-    # CMake
-    wget -nv -nc https://cmake.org/files/v3.14/cmake-3.14.0-Linux-x86_64.sh --no-check-certificate && \
-    bash cmake-3.14.0-Linux-x86_64.sh --skip-license --prefix=/usr && \
+    apt-get install -y tar unzip wget git build-essential doxygen graphviz llvm libidn12 cmake ninja-build gcc-10 g++-10 openjdk-8-jdk-headless && \
     # Python
-    wget -O Miniconda3.sh https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh && \
-    bash Miniconda3.sh -b -p /opt/python
+    wget -nv -O conda.sh https://github.com/conda-forge/miniforge/releases/download/24.3.0-0/Miniforge3-24.3.0-0-Linux-x86_64.sh && \
+    bash conda.sh -b -p /opt/miniforge
 
-ENV PATH=/opt/python/bin:$PATH
-ENV CC=gcc-8
-ENV CXX=g++-8
-ENV CPP=cpp-8
+ENV PATH=/opt/miniforge/bin:$PATH
+ENV CC=gcc-10
+ENV CXX=g++-10
+ENV CPP=cpp-10
 
 ENV GOSU_VERSION 1.10
+ENV JAVA_HOME /usr/lib/jvm/java-8-openjdk-amd64/
+
+# Install gRPC
+RUN git clone -b v1.49.1 https://github.com/grpc/grpc.git \
+      --recurse-submodules --depth 1 --shallow-submodules && \
+    pushd grpc && \
+    cmake -S . -B build -GNinja -DCMAKE_INSTALL_PREFIX=/opt/grpc -DCMAKE_CXX_VISIBILITY_PRESET=hidden && \
+    cmake --build build --target install && \
+    popd && \
+    rm -rf grpc
 
 # Create new Conda environment
-COPY conda_env/cpu_test.yml /scripts/
-RUN conda env create -n cpu_test --file=/scripts/cpu_test.yml
+COPY conda_env/linux_cpu_test.yml /scripts/
+RUN mamba create -n linux_cpu_test && \
+    mamba env update -n linux_cpu_test --file=/scripts/linux_cpu_test.yml && \
+    mamba clean --all && \
+    conda run --no-capture-output -n linux_cpu_test pip install buildkite-test-collector
 
 # Install lightweight sudo (not bound to TTY)
 RUN set -ex; \
-    wget -O /usr/local/bin/gosu "https://github.com/tianon/gosu/releases/download/$GOSU_VERSION/gosu-amd64" && \
+    wget -nv -O /usr/local/bin/gosu "https://github.com/tianon/gosu/releases/download/$GOSU_VERSION/gosu-amd64" && \
     chmod +x /usr/local/bin/gosu && \
     gosu nobody true
 

@@ -1,17 +1,18 @@
-/*!
- * Copyright 2019 by XGBoost Contributors
+/**
+ * Copyright 2019-2023, XGBoost Contributors
  */
 
-#ifndef XGBOOST_DATA_ELLPACK_PAGE_H_
-#define XGBOOST_DATA_ELLPACK_PAGE_H_
+#ifndef XGBOOST_DATA_ELLPACK_PAGE_CUH_
+#define XGBOOST_DATA_ELLPACK_PAGE_CUH_
 
+#include <thrust/binary_search.h>
 #include <xgboost/data.h>
 
+#include "../common/categorical.h"
 #include "../common/compressed_iterator.h"
 #include "../common/device_helpers.cuh"
 #include "../common/hist_util.h"
-#include "../common/categorical.h"
-#include <thrust/binary_search.h>
+#include "ellpack_page.h"
 
 namespace xgboost {
 /** \brief Struct for accessing and manipulating an ELLPACK matrix on the
@@ -34,25 +35,32 @@ struct EllpackDeviceAccessor {
 
   common::Span<const FeatureType> feature_types;
 
-  EllpackDeviceAccessor(int device, const common::HistogramCuts& cuts,
-                        bool is_dense, size_t row_stride, size_t base_rowid,
-                        size_t n_rows,common::CompressedIterator<uint32_t> gidx_iter,
+  EllpackDeviceAccessor(DeviceOrd device, const common::HistogramCuts& cuts, bool is_dense,
+                        size_t row_stride, size_t base_rowid, size_t n_rows,
+                        common::CompressedIterator<uint32_t> gidx_iter,
                         common::Span<FeatureType const> feature_types)
       : is_dense(is_dense),
         row_stride(row_stride),
         base_rowid(base_rowid),
-        n_rows(n_rows) ,gidx_iter(gidx_iter),
+        n_rows(n_rows),
+        gidx_iter(gidx_iter),
         feature_types{feature_types} {
-    cuts.cut_values_.SetDevice(device);
-    cuts.cut_ptrs_.SetDevice(device);
-    cuts.min_vals_.SetDevice(device);
-    gidx_fvalue_map = cuts.cut_values_.ConstDeviceSpan();
-    feature_segments = cuts.cut_ptrs_.ConstDeviceSpan();
-    min_fvalue = cuts.min_vals_.ConstDeviceSpan();
+    if (device.IsCPU()) {
+      gidx_fvalue_map = cuts.cut_values_.ConstHostSpan();
+      feature_segments = cuts.cut_ptrs_.ConstHostSpan();
+      min_fvalue = cuts.min_vals_.ConstHostSpan();
+    } else {
+      cuts.cut_values_.SetDevice(device);
+      cuts.cut_ptrs_.SetDevice(device);
+      cuts.min_vals_.SetDevice(device);
+      gidx_fvalue_map = cuts.cut_values_.ConstDeviceSpan();
+      feature_segments = cuts.cut_ptrs_.ConstDeviceSpan();
+      min_fvalue = cuts.min_vals_.ConstDeviceSpan();
+    }
   }
   // Get a matrix element, uses binary search for look up Return NaN if missing
   // Given a row index and a feature index, returns the corresponding cut value
-  __device__ int32_t GetBinIndex(size_t ridx, size_t fidx) const {
+  [[nodiscard]] __device__ int32_t GetBinIndex(size_t ridx, size_t fidx) const {
     ridx -= base_rowid;
     auto row_begin = row_stride * ridx;
     auto row_end = row_begin + row_stride;
@@ -70,7 +78,7 @@ struct EllpackDeviceAccessor {
   }
 
   template <bool is_cat>
-  __device__ uint32_t SearchBin(float value, size_t column_id) const {
+  [[nodiscard]] __device__ uint32_t SearchBin(float value, size_t column_id) const {
     auto beg = feature_segments[column_id];
     auto end = feature_segments[column_id + 1];
     uint32_t idx = 0;
@@ -92,7 +100,7 @@ struct EllpackDeviceAccessor {
     return idx;
   }
 
-  __device__ bst_float GetFvalue(size_t ridx, size_t fidx) const {
+  [[nodiscard]] __device__ bst_float GetFvalue(size_t ridx, size_t fidx) const {
     auto gidx = GetBinIndex(ridx, fidx);
     if (gidx == -1) {
       return nan("");
@@ -101,20 +109,22 @@ struct EllpackDeviceAccessor {
   }
 
   // Check if the row id is withing range of the current batch.
-  __device__ bool IsInRange(size_t row_id) const {
+  [[nodiscard]] __device__ bool IsInRange(size_t row_id) const {
     return row_id >= base_rowid && row_id < base_rowid + n_rows;
   }
   /*! \brief Return the total number of symbols (total number of bins plus 1 for
    * not found). */
-  XGBOOST_DEVICE size_t NumSymbols() const { return gidx_fvalue_map.size() + 1; }
+  [[nodiscard]] XGBOOST_DEVICE size_t NumSymbols() const { return gidx_fvalue_map.size() + 1; }
 
-  XGBOOST_DEVICE size_t NullValue() const { return gidx_fvalue_map.size(); }
+  [[nodiscard]] XGBOOST_DEVICE size_t NullValue() const { return gidx_fvalue_map.size(); }
 
-  XGBOOST_DEVICE size_t NumBins() const { return gidx_fvalue_map.size(); }
+  [[nodiscard]] XGBOOST_DEVICE size_t NumBins() const { return gidx_fvalue_map.size(); }
 
-  XGBOOST_DEVICE size_t NumFeatures() const { return min_fvalue.size(); }
+  [[nodiscard]] XGBOOST_DEVICE size_t NumFeatures() const { return min_fvalue.size(); }
 };
 
+
+class GHistIndexMatrix;
 
 class EllpackPageImpl {
  public:
@@ -132,14 +142,13 @@ class EllpackPageImpl {
    * This is used in the sampling case. The ELLPACK page is constructed from an existing EllpackInfo
    * and the given number of rows.
    */
-  EllpackPageImpl(int device, common::HistogramCuts cuts, bool is_dense,
-                  size_t row_stride, size_t n_rows);
+  EllpackPageImpl(DeviceOrd device, common::HistogramCuts cuts, bool is_dense, size_t row_stride,
+                  size_t n_rows);
   /*!
    * \brief Constructor used for external memory.
    */
-  EllpackPageImpl(int device, common::HistogramCuts cuts,
-                  const SparsePage &page, bool is_dense, size_t row_stride,
-                  common::Span<FeatureType const> feature_types);
+  EllpackPageImpl(DeviceOrd device, common::HistogramCuts cuts, const SparsePage& page,
+                  bool is_dense, size_t row_stride, common::Span<FeatureType const> feature_types);
 
   /*!
    * \brief Constructor from an existing DMatrix.
@@ -147,15 +156,18 @@ class EllpackPageImpl {
    * This is used in the in-memory case. The ELLPACK page is constructed from an existing DMatrix
    * in CSR format.
    */
-  explicit EllpackPageImpl(DMatrix* dmat, const BatchParam& parm);
+  explicit EllpackPageImpl(Context const* ctx, DMatrix* dmat, const BatchParam& parm);
 
   template <typename AdapterBatch>
-  explicit EllpackPageImpl(AdapterBatch batch, float missing, int device,
-                           bool is_dense, int nthread,
+  explicit EllpackPageImpl(AdapterBatch batch, float missing, DeviceOrd device, bool is_dense,
                            common::Span<size_t> row_counts_span,
-                           common::Span<FeatureType const> feature_types,
-                           size_t row_stride, size_t n_rows, size_t n_cols,
-                           common::HistogramCuts const &cuts);
+                           common::Span<FeatureType const> feature_types, size_t row_stride,
+                           size_t n_rows, common::HistogramCuts const& cuts);
+  /**
+   * \brief Constructor from an existing CPU gradient index.
+   */
+  explicit EllpackPageImpl(Context const* ctx, GHistIndexMatrix const& page,
+                           common::Span<FeatureType const> ft);
 
   /*! \brief Copy the elements of the given ELLPACK page into this page.
    *
@@ -164,7 +176,7 @@ class EllpackPageImpl {
    * @param offset The number of elements to skip before copying.
    * @returns The number of elements copied.
    */
-  size_t Copy(int device, EllpackPageImpl const *page, size_t offset);
+  size_t Copy(DeviceOrd device, EllpackPageImpl const *page, size_t offset);
 
   /*! \brief Compact the given ELLPACK page into the current page.
    *
@@ -172,19 +184,18 @@ class EllpackPageImpl {
    * @param page The ELLPACK page to compact from.
    * @param row_indexes Row indexes for the compacted page.
    */
-  void Compact(int device, EllpackPageImpl const* page, common::Span<size_t> row_indexes);
-
+  void Compact(DeviceOrd device, EllpackPageImpl const* page, common::Span<size_t> row_indexes);
 
   /*! \return Number of instances in the page. */
-  size_t Size() const;
+  [[nodiscard]] size_t Size() const;
 
   /*! \brief Set the base row id for this page. */
-  void SetBaseRowId(size_t row_id) {
+  void SetBaseRowId(std::size_t row_id) {
     base_rowid = row_id;
   }
 
-  common::HistogramCuts& Cuts() { return cuts_; }
-  common::HistogramCuts const& Cuts() const { return cuts_; }
+  [[nodiscard]] common::HistogramCuts& Cuts() { return cuts_; }
+  [[nodiscard]] common::HistogramCuts const& Cuts() const { return cuts_; }
 
   /*! \return Estimation of memory cost of this page. */
   static size_t MemCostBytes(size_t num_rows, size_t row_stride, const common::HistogramCuts&cuts) ;
@@ -192,11 +203,12 @@ class EllpackPageImpl {
 
   /*! \brief Return the total number of symbols (total number of bins plus 1 for
    * not found). */
-  size_t NumSymbols() const { return cuts_.TotalBins() + 1; }
+  [[nodiscard]] std::size_t NumSymbols() const { return cuts_.TotalBins() + 1; }
 
-  EllpackDeviceAccessor
-  GetDeviceAccessor(int device,
-                    common::Span<FeatureType const> feature_types = {}) const;
+  [[nodiscard]] EllpackDeviceAccessor GetDeviceAccessor(
+      DeviceOrd device, common::Span<FeatureType const> feature_types = {}) const;
+  [[nodiscard]] EllpackDeviceAccessor GetHostAccessor(
+      common::Span<FeatureType const> feature_types = {}) const;
 
  private:
   /*!
@@ -205,13 +217,13 @@ class EllpackPageImpl {
    * @param device The GPU device to use.
    * @param row_batch The CSR page.
    */
-  void CreateHistIndices(int device,
+  void CreateHistIndices(DeviceOrd device,
                          const SparsePage& row_batch,
                          common::Span<FeatureType const> feature_types);
   /*!
    * \brief Initialize the buffer to store compressed features.
    */
-  void InitCompressedData(int device);
+  void InitCompressedData(DeviceOrd device);
 
 
 public:
@@ -244,4 +256,4 @@ inline size_t GetRowStride(DMatrix* dmat) {
 }
 }  // namespace xgboost
 
-#endif  // XGBOOST_DATA_ELLPACK_PAGE_H_
+#endif  // XGBOOST_DATA_ELLPACK_PAGE_CUH_

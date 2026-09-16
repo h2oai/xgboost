@@ -1,5 +1,5 @@
 /*
- Copyright (c) 2014 by Contributors
+ Copyright (c) 2014-2022 by Contributors
 
  Licensed under the Apache License, Version 2.0 (the "License");
  you may not use this file except in compliance with the License.
@@ -17,11 +17,13 @@
 package ml.dmlc.xgboost4j.scala.spark
 
 import org.apache.spark.ml.linalg.Vectors
-import org.scalatest.FunSuite
+import org.scalatest.funsuite.AnyFunSuite
+import ml.dmlc.xgboost4j.scala.spark.util.DataUtils
+import ml.dmlc.xgboost4j.scala.spark.util.DataUtils.PackedParams
 
 import org.apache.spark.sql.functions._
 
-class DeterministicPartitioningSuite extends FunSuite with TmpFolderPerSuite with PerTest {
+class DeterministicPartitioningSuite extends AnyFunSuite with TmpFolderPerSuite with PerTest {
 
   test("perform deterministic partitioning when checkpointInternal and" +
     " checkpointPath is set (Classifier)") {
@@ -55,13 +57,13 @@ class DeterministicPartitioningSuite extends FunSuite with TmpFolderPerSuite wit
       resultDF
     })
     val transformedRDDs = transformedDFs.map(df => DataUtils.convertDataFrameToXGBLabeledPointRDDs(
-      col("label"),
-      col("features"),
-      lit(1.0),
-      lit(Float.NaN),
-      None,
-      numWorkers,
-      deterministicPartition = true,
+      PackedParams(col("label"),
+        col("features"),
+        lit(1.0),
+        lit(Float.NaN),
+        None,
+        numWorkers,
+        deterministicPartition = true),
       df
     ).head)
     val resultsMaps = transformedRDDs.map(rdd => rdd.mapPartitionsWithIndex {
@@ -90,14 +92,13 @@ class DeterministicPartitioningSuite extends FunSuite with TmpFolderPerSuite wit
     val df = ss.createDataFrame(sc.parallelize(dataset)).toDF("id", "label", "features")
 
     val dfRepartitioned = DataUtils.convertDataFrameToXGBLabeledPointRDDs(
-      col("label"),
-      col("features"),
-      lit(1.0),
-      lit(Float.NaN),
-      None,
-      10,
-      deterministicPartition = true,
-      df
+      PackedParams(col("label"),
+        col("features"),
+        lit(1.0),
+        lit(Float.NaN),
+        None,
+        10,
+        deterministicPartition = true), df
     ).head
 
     val partitionsSizes = dfRepartitioned

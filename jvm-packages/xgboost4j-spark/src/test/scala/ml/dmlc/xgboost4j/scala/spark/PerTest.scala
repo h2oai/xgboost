@@ -1,5 +1,5 @@
 /*
- Copyright (c) 2014 by Contributors
+ Copyright (c) 2014-2022 by Contributors
 
  Licensed under the Apache License, Version 2.0 (the "License");
  you may not use this file except in compliance with the License.
@@ -16,17 +16,20 @@
 
 package ml.dmlc.xgboost4j.scala.spark
 
-import java.io.File
+import java.io.{File, FileInputStream}
 
 import ml.dmlc.xgboost4j.{LabeledPoint => XGBLabeledPoint}
-import org.apache.spark.{SparkConf, SparkContext, TaskFailedListener}
-import org.apache.spark.sql._
-import org.scalatest.{BeforeAndAfterEach, FunSuite}
 
+import org.apache.spark.SparkContext
+import org.apache.spark.sql._
+import org.scalatest.BeforeAndAfterEach
+import org.scalatest.funsuite.AnyFunSuite
 import scala.math.min
 import scala.util.Random
 
-trait PerTest extends BeforeAndAfterEach { self: FunSuite =>
+import org.apache.commons.io.IOUtils
+
+trait PerTest extends BeforeAndAfterEach { self: AnyFunSuite =>
 
   protected val numWorkers: Int = min(Runtime.getRuntime.availableProcessors(), 4)
 
@@ -40,32 +43,16 @@ trait PerTest extends BeforeAndAfterEach { self: FunSuite =>
       .appName("XGBoostSuite")
       .config("spark.ui.enabled", false)
       .config("spark.driver.memory", "512m")
+      .config("spark.barrier.sync.timeout", 10)
       .config("spark.task.cpus", 1)
 
   override def beforeEach(): Unit = getOrCreateSession
 
   override def afterEach() {
-    TaskFailedListener.sparkContextShutdownLock.synchronized {
-      if (currentSession != null) {
-        // this synchronization is mostly for the tests involving SparkContext shutdown
-        // for unit test involving the sparkContext shutdown there are two different events sequence
-        // 1. SparkContext killer is executed before afterEach, in this case, before SparkContext
-        // is fully stopped, afterEach() will block at the following code block
-        // 2. SparkContext killer is executed afterEach, in this case, currentSession.stop() in will
-        // block to wait for all msgs in ListenerBus get processed. Because currentSession.stop()
-        // has been called, SparkContext killer will not take effect
-        while (TaskFailedListener.killerStarted) {
-          TaskFailedListener.sparkContextShutdownLock.wait()
-        }
-        currentSession.stop()
-        cleanExternalCache(currentSession.sparkContext.appName)
-        currentSession = null
-      }
-      if (TaskFailedListener.sparkContextKiller != null) {
-        TaskFailedListener.sparkContextKiller.interrupt()
-        TaskFailedListener.sparkContextKiller = null
-      }
-      TaskFailedListener.killerStarted = false
+    if (currentSession != null) {
+      currentSession.stop()
+      cleanExternalCache(currentSession.sparkContext.appName)
+      currentSession = null
     }
   }
 
@@ -87,7 +74,7 @@ trait PerTest extends BeforeAndAfterEach { self: FunSuite =>
   protected def buildDataFrame(
       labeledPoints: Seq[XGBLabeledPoint],
       numPartitions: Int = numWorkers): DataFrame = {
-    import DataUtils._
+    import ml.dmlc.xgboost4j.scala.spark.util.DataUtils._
     val it = labeledPoints.iterator.zipWithIndex
       .map { case (labeledPoint: XGBLabeledPoint, id: Int) =>
         (id, labeledPoint.label, labeledPoint.features)
@@ -112,7 +99,7 @@ trait PerTest extends BeforeAndAfterEach { self: FunSuite =>
   protected def buildDataFrameWithGroup(
       labeledPoints: Seq[XGBLabeledPoint],
       numPartitions: Int = numWorkers): DataFrame = {
-    import DataUtils._
+    import ml.dmlc.xgboost4j.scala.spark.util.DataUtils._
     val it = labeledPoints.iterator.zipWithIndex
       .map { case (labeledPoint: XGBLabeledPoint, id: Int) =>
         (id, labeledPoint.label, labeledPoint.features, labeledPoint.group)
@@ -120,5 +107,23 @@ trait PerTest extends BeforeAndAfterEach { self: FunSuite =>
 
     ss.createDataFrame(sc.parallelize(it.toList, numPartitions))
       .toDF("id", "label", "features", "group")
+  }
+
+
+  protected def compareTwoFiles(lhs: String, rhs: String): Boolean = {
+    withResource(new FileInputStream(lhs)) { lfis =>
+      withResource(new FileInputStream(rhs)) { rfis =>
+        IOUtils.contentEquals(lfis, rfis)
+      }
+    }
+  }
+
+  /** Executes the provided code block and then closes the resource */
+  protected def withResource[T <: AutoCloseable, V](r: T)(block: T => V): V = {
+    try {
+      block(r)
+    } finally {
+      r.close()
+    }
   }
 }

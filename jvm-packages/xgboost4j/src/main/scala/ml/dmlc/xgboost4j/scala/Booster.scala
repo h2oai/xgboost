@@ -1,5 +1,5 @@
 /*
- Copyright (c) 2014 by Contributors
+ Copyright (c) 2014-2022 by Contributors
 
  Licensed under the Apache License, Version 2.0 (the "License");
  you may not use this file except in compliance with the License.
@@ -106,27 +106,41 @@ class Booster private[xgboost4j](private[xgboost4j] var booster: JBooster)
     booster.update(dtrain.jDMatrix, iter)
   }
 
+  @throws(classOf[XGBoostError])
+  @deprecated
+  def update(dtrain: DMatrix, obj: ObjectiveTrait): Unit = {
+    booster.update(dtrain.jDMatrix, obj)
+  }
+
   /**
    * update with customize obj func
    *
    * @param dtrain training data
+   * @param iter   The current training iteration
    * @param obj    customized objective class
    */
   @throws(classOf[XGBoostError])
-  def update(dtrain: DMatrix, obj: ObjectiveTrait): Unit = {
-    booster.update(dtrain.jDMatrix, obj)
+  def update(dtrain: DMatrix, iter: Int, obj: ObjectiveTrait): Unit = {
+    booster.update(dtrain.jDMatrix, iter, obj)
+  }
+
+  @throws(classOf[XGBoostError])
+  @deprecated
+  def boost(dtrain: DMatrix, grad: Array[Float], hess: Array[Float]): Unit = {
+    booster.boost(dtrain.jDMatrix, grad, hess)
   }
 
   /**
    * update with give grad and hess
    *
    * @param dtrain training data
+   * @param iter   The current training iteration
    * @param grad   first order of gradient
    * @param hess   seconde order of gradient
    */
   @throws(classOf[XGBoostError])
-  def boost(dtrain: DMatrix, grad: Array[Float], hess: Array[Float]): Unit = {
-    booster.boost(dtrain.jDMatrix, grad, hess)
+  def boost(dtrain: DMatrix, iter: Int, grad: Array[Float], hess: Array[Float]): Unit = {
+    booster.boost(dtrain.jDMatrix, iter, grad, hess)
   }
 
   /**
@@ -207,6 +221,7 @@ class Booster private[xgboost4j](private[xgboost4j] var booster: JBooster)
   def saveModel(modelPath: String): Unit = {
     booster.saveModel(modelPath)
   }
+
   /**
     * save model to Output stream
     *
@@ -216,6 +231,18 @@ class Booster private[xgboost4j](private[xgboost4j] var booster: JBooster)
   def saveModel(out: java.io.OutputStream): Unit = {
     booster.saveModel(out)
   }
+
+  /**
+   * save model to Output stream
+   * @param out output stream
+   * @param format the supported model format, (json, ubj, deprecated)
+   * @throws ml.dmlc.xgboost4j.java.XGBoostError
+   */
+  @throws(classOf[XGBoostError])
+  def saveModel(out: java.io.OutputStream, format: String): Unit = {
+    booster.saveModel(out, format)
+  }
+
   /**
    * Dump model as Array of string
    *
@@ -299,10 +326,22 @@ class Booster private[xgboost4j](private[xgboost4j] var booster: JBooster)
   @throws(classOf[XGBoostError])
   def getNumFeature: Long = booster.getNumFeature
 
-  def getVersion: Int = booster.getVersion
+  def getNumBoostedRound: Long = booster.getNumBoostedRound
 
+  /**
+    * Save model into a raw byte array.  Available options are "json", "ubj" and "deprecated".
+    */
+  @throws(classOf[XGBoostError])
+  def toByteArray(format: String): Array[Byte] = {
+    booster.toByteArray(format)
+  }
+
+  /**
+    * Save model into a raw byte array in the UBJSON ("ubj") format.
+    */
+  @throws(classOf[XGBoostError])
   def toByteArray: Array[Byte] = {
-    booster.toByteArray
+    booster.toByteArray()
   }
 
   /**

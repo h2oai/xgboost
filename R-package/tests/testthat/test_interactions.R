@@ -1,8 +1,7 @@
 context('Test prediction of feature interactions')
 
-require(xgboost)
-
 set.seed(123)
+n_threads <- 2
 
 test_that("predict feature interactions works", {
   # simulate some binary data and a linear outcome with an interaction term
@@ -21,8 +20,10 @@ test_that("predict feature interactions works", {
 
   y <- f_int(X)
 
-  dm <- xgb.DMatrix(X, label = y)
-  param <- list(eta = 0.1, max_depth = 4, base_score = mean(y), lambda = 0, nthread = 2)
+  dm <- xgb.DMatrix(X, label = y, nthread = n_threads)
+  param <- list(
+    eta = 0.1, max_depth = 4, base_score = mean(y), lambda = 0, nthread = n_threads
+  )
   b <- xgb.train(param, dm, 100)
 
   pred <- predict(b, dm, outputmargin = TRUE)
@@ -97,15 +98,16 @@ test_that("SHAP contribution values are not NAN", {
 
   ivs <- c("x1", "x2")
 
-  fit <- xgboost(
+  fit <- xgb.train(
     verbose = 0,
     params = list(
       objective = "reg:squarederror",
-      eval_metric = "rmse"),
-    data = as.matrix(subset(d, fold == 2)[, ivs]),
-    label = subset(d, fold == 2)$y,
-    nthread = 1,
-    nrounds = 3)
+      eval_metric = "rmse",
+      nthread = n_threads
+    ),
+    data = xgb.DMatrix(as.matrix(subset(d, fold == 2)[, ivs]), label = subset(d, fold == 2)$y),
+    nrounds = 3
+  )
 
   shaps <- as.data.frame(predict(fit,
     newdata = as.matrix(subset(d, fold == 1)[, ivs]),
@@ -118,8 +120,12 @@ test_that("SHAP contribution values are not NAN", {
 
 
 test_that("multiclass feature interactions work", {
-  dm <- xgb.DMatrix(as.matrix(iris[, -5]), label = as.numeric(iris$Species) - 1)
-  param <- list(eta = 0.1, max_depth = 4, objective = 'multi:softprob', num_class = 3)
+  dm <- xgb.DMatrix(
+    as.matrix(iris[, -5]), label = as.numeric(iris$Species) - 1, nthread = n_threads
+  )
+  param <- list(
+    eta = 0.1, max_depth = 4, objective = 'multi:softprob', num_class = 3, nthread = n_threads
+  )
   b <- xgb.train(param, dm, 40)
   pred <- t(
     array(
@@ -156,4 +162,29 @@ test_that("multiclass feature interactions work", {
   expect_lt(max(abs(aperm(intr, c(1, 2, 4, 3)) - intr)), 0.00001)
   # sums WRT columns must be close to feature contributions
   expect_lt(max(abs(apply(intr, c(1, 2, 3), sum) - aperm(cont, c(3, 1, 2)))), 0.00001)
+})
+
+
+test_that("SHAP single sample works", {
+  train <- agaricus.train
+  test <- agaricus.test
+  booster <- xgb.train(
+    data = xgb.DMatrix(train$data, label = train$label),
+    max_depth = 2,
+    nrounds = 4,
+    objective = "binary:logistic",
+    nthread = n_threads
+  )
+
+  predt <- predict(
+    booster,
+    newdata = train$data[1, , drop = FALSE], predcontrib = TRUE
+  )
+  expect_equal(dim(predt), c(1, dim(train$data)[2] + 1))
+
+  predt <- predict(
+    booster,
+    newdata = train$data[1, , drop = FALSE], predinteraction = TRUE
+  )
+  expect_equal(dim(predt), c(1, dim(train$data)[2] + 1, dim(train$data)[2] + 1))
 })

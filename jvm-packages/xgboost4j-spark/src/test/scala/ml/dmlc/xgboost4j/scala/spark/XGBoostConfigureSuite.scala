@@ -1,5 +1,5 @@
 /*
- Copyright (c) 2014 by Contributors
+ Copyright (c) 2014-2022 by Contributors
 
  Licensed under the Apache License, Version 2.0 (the "License");
  you may not use this file except in compliance with the License.
@@ -16,14 +16,12 @@
 
 package ml.dmlc.xgboost4j.scala.spark
 
-import ml.dmlc.xgboost4j.java.Rabit
 import ml.dmlc.xgboost4j.scala.{Booster, DMatrix}
 
-import scala.collection.JavaConverters._
 import org.apache.spark.sql._
-import org.scalatest.FunSuite
+import org.scalatest.funsuite.AnyFunSuite
 
-class XGBoostConfigureSuite extends FunSuite with PerTest {
+class XGBoostConfigureSuite extends AnyFunSuite with PerTest {
 
   override def sparkSessionBuilder: SparkSession.Builder = super.sparkSessionBuilder
       .config("spark.serializer", "org.apache.spark.serializer.KryoSerializer")

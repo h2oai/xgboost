@@ -1,12 +1,22 @@
 ###########################
 Python Package Introduction
 ###########################
-This document gives a basic walkthrough of the xgboost package for Python.
+
+This document gives a basic walkthrough of the xgboost package for Python.  The Python
+package is consisted of 3 different interfaces, including native interface, scikit-learn
+interface and dask interface.  For introduction to dask interface please see
+:doc:`/tutorials/dask`.
 
 **List of other Helpful Links**
 
-* `Python walkthrough code collections <https://github.com/tqchen/xgboost/blob/master/demo/guide-python>`_
+* :doc:`/python/examples/index`
 * :doc:`Python API Reference <python_api>`
+
+**Contents**
+
+.. contents::
+  :backlinks: none
+  :local:
 
 Install XGBoost
 ---------------
@@ -22,44 +32,9 @@ To verify your installation, run the following in Python:
 
 Data Interface
 --------------
-The XGBoost python module is able to load data from:
+The XGBoost Python module is able to load data from many different types of data format including both CPU and GPU data structures. For a complete list of supported data types, please reference the :ref:`py-data`. For a detailed description of text input formats, please visit :doc:`/tutorials/input_format`.
 
-- LIBSVM text format file
-- Comma-separated values (CSV) file
-- NumPy 2D array
-- SciPy 2D sparse array
-- cuDF DataFrame
-- Pandas data frame, and
-- XGBoost binary buffer file.
-
-(See :doc:`/tutorials/input_format` for detailed description of text input format.)
-
-The data is stored in a :py:class:`DMatrix <xgboost.DMatrix>` object.
-
-* To load a LIBSVM text file or a XGBoost binary file into :py:class:`DMatrix <xgboost.DMatrix>`:
-
-  .. code-block:: python
-
-    dtrain = xgb.DMatrix('train.svm.txt')
-    dtest = xgb.DMatrix('test.svm.buffer')
-
-* To load a CSV file into :py:class:`DMatrix <xgboost.DMatrix>`:
-
-  .. code-block:: python
-
-    # label_column specifies the index of the column containing the true label
-    dtrain = xgb.DMatrix('train.csv?format=csv&label_column=0')
-    dtest = xgb.DMatrix('test.csv?format=csv&label_column=0')
-
-  .. note:: Categorical features not supported
-
-    Note that XGBoost does not provide specialization for categorical features; if your data contains
-    categorical features, load it as a NumPy array first and then perform corresponding preprocessing steps like
-    `one-hot encoding <http://scikit-learn.org/stable/modules/generated/sklearn.preprocessing.OneHotEncoder.html>`_.
-
-  .. note:: Use Pandas to load CSV files with headers
-
-    Currently, the DMLC data parser cannot parse CSV files with headers. Use Pandas (see below) to read CSV files with headers.
+The input data is stored in a :py:class:`DMatrix <xgboost.DMatrix>` object. For the sklearn estimator interface, a :py:class:`DMatrix` or a :py:class:`QuantileDMatrix` is created depending on the chosen algorithm and the input, see the sklearn API reference for details. We will illustrate some of the basic input types with the ``DMatrix`` here.
 
 * To load a NumPy array into :py:class:`DMatrix <xgboost.DMatrix>`:
 
@@ -88,25 +63,123 @@ The data is stored in a :py:class:`DMatrix <xgboost.DMatrix>` object.
 
   .. code-block:: python
 
-    dtrain = xgb.DMatrix('train.svm.txt')
+    dtrain = xgb.DMatrix('train.svm.txt?format=libsvm')
     dtrain.save_binary('train.buffer')
 
 * Missing values can be replaced by a default value in the :py:class:`DMatrix <xgboost.DMatrix>` constructor:
 
   .. code-block:: python
 
-    dtrain = xgb.DMatrix(data, label=label, missing=-999.0)
+    dtrain = xgb.DMatrix(data, label=label, missing=np.NaN)
 
 * Weights can be set when needed:
 
   .. code-block:: python
 
     w = np.random.rand(5, 1)
-    dtrain = xgb.DMatrix(data, label=label, missing=-999.0, weight=w)
+    dtrain = xgb.DMatrix(data, label=label, missing=np.NaN, weight=w)
 
 When performing ranking tasks, the number of weights should be equal
 to number of groups.
 
+* To load a LIBSVM text file or a XGBoost binary file into :py:class:`DMatrix <xgboost.DMatrix>`:
+
+  .. code-block:: python
+
+    dtrain = xgb.DMatrix('train.svm.txt?format=libsvm')
+    dtest = xgb.DMatrix('test.svm.buffer')
+
+  The parser in XGBoost has limited functionality. When using Python interface, it's
+  recommended to use sklearn ``load_svmlight_file`` or other similar utilites than
+  XGBoost's builtin parser.
+
+* To load a CSV file into :py:class:`DMatrix <xgboost.DMatrix>`:
+
+  .. code-block:: python
+
+    # label_column specifies the index of the column containing the true label
+    dtrain = xgb.DMatrix('train.csv?format=csv&label_column=0')
+    dtest = xgb.DMatrix('test.csv?format=csv&label_column=0')
+
+  The parser in XGBoost has limited functionality. When using Python interface, it's
+  recommended to use pandas ``read_csv`` or other similar utilites than XGBoost's builtin
+  parser.
+
+.. _py-data:
+
+Supported data structures for various XGBoost functions
+=======================================================
+
+*******
+Markers
+*******
+
+- T: Supported.
+- F: Not supported.
+- NE: Invalid type for the use case. For instance, `pd.Series` can not be multi-target label.
+- NPA: Support with the help of numpy array.
+- CPA: Support with the help of cupy array.
+- SciCSR: Support with the help of scripy sparse CSR. The conversion to scipy CSR may or may not be possible. Raise a type error if conversion fails.
+- FF: We can look forward to having its support in recent future if requested.
+- empty: To be filled in.
+
+************
+Table Header
+************
+- `X` means predictor matrix.
+- Meta info: label, weight, etc.
+- Multi Label: 2-dim label for multi-target.
+- Others: Anything else that we don't list here explicitly including formats like `lil`, `dia`, `bsr`. XGBoost will try to convert it into scipy csr.
+
+**************
+Support Matrix
+**************
+
++-------------------------+-----------+-------------------+-----------+-----------+--------------------+-------------+
+| Name                    | DMatrix X | QuantileDMatrix X | Sklearn X | Meta Info | Inplace prediction | Multi Label |
++=========================+===========+===================+===========+===========+====================+=============+
+| numpy.ndarray           | T         | T                 | T         | T         | T                  | T           |
++-------------------------+-----------+-------------------+-----------+-----------+--------------------+-------------+
+| scipy.sparse.csr        | T         | T                 | T         | NE        | T                  | F           |
++-------------------------+-----------+-------------------+-----------+-----------+--------------------+-------------+
+| scipy.sparse.csc        | T         | F                 | T         | NE        | F                  | F           |
++-------------------------+-----------+-------------------+-----------+-----------+--------------------+-------------+
+| scipy.sparse.coo        | SciCSR    | F                 | SciCSR    | NE        | F                  | F           |
++-------------------------+-----------+-------------------+-----------+-----------+--------------------+-------------+
+| uri                     | T         | F                 | F         | F         | NE                 | F           |
++-------------------------+-----------+-------------------+-----------+-----------+--------------------+-------------+
+| list                    | NPA       | NPA               | NPA       | NPA       | NPA                | T           |
++-------------------------+-----------+-------------------+-----------+-----------+--------------------+-------------+
+| tuple                   | NPA       | NPA               | NPA       | NPA       | NPA                | T           |
++-------------------------+-----------+-------------------+-----------+-----------+--------------------+-------------+
+| pandas.DataFrame        | NPA       | NPA               | NPA       | NPA       | NPA                | NPA         |
++-------------------------+-----------+-------------------+-----------+-----------+--------------------+-------------+
+| pandas.Series           | NPA       | NPA               | NPA       | NPA       | NPA                | NE          |
++-------------------------+-----------+-------------------+-----------+-----------+--------------------+-------------+
+| cudf.DataFrame          | T         | T                 | T         | T         | T                  | T           |
++-------------------------+-----------+-------------------+-----------+-----------+--------------------+-------------+
+| cudf.Series             | T         | T                 | T         | T         | FF                 | NE          |
++-------------------------+-----------+-------------------+-----------+-----------+--------------------+-------------+
+| cupy.ndarray            | T         | T                 | T         | T         | T                  | T           |
++-------------------------+-----------+-------------------+-----------+-----------+--------------------+-------------+
+| torch.Tensor            | T         | T                 | T         | T         | T                  | T           |
++-------------------------+-----------+-------------------+-----------+-----------+--------------------+-------------+
+| dlpack                  | CPA       | CPA               |           | CPA       | FF                 | FF          |
++-------------------------+-----------+-------------------+-----------+-----------+--------------------+-------------+
+| datatable.Frame         | T         | FF                |           | NPA       | FF                 |             |
++-------------------------+-----------+-------------------+-----------+-----------+--------------------+-------------+
+| datatable.Table         | T         | FF                |           | NPA       | FF                 |             |
++-------------------------+-----------+-------------------+-----------+-----------+--------------------+-------------+
+| modin.DataFrame         | NPA       | FF                | NPA       | NPA       | FF                 |             |
++-------------------------+-----------+-------------------+-----------+-----------+--------------------+-------------+
+| modin.Series            | NPA       | FF                | NPA       | NPA       | FF                 |             |
++-------------------------+-----------+-------------------+-----------+-----------+--------------------+-------------+
+| pyarrow.Table           | NPA       | NPA               | NPA       | NPA       | NPA                | NPA         |
++-------------------------+-----------+-------------------+-----------+-----------+--------------------+-------------+
+| _\_array\_\_            | NPA       | F                 | NPA       | NPA       | H                  |             |
++-------------------------+-----------+-------------------+-----------+-----------+--------------------+-------------+
+| Others                  | SciCSR    | F                 |           | F         | F                  |             |
++-------------------------+-----------+-------------------+-----------+-----------+--------------------+-------------+
 
 Setting Parameters
 ------------------
@@ -134,7 +207,7 @@ XGBoost can use either a list of pairs or a dictionary to set :doc:`parameters <
 
   .. code-block:: python
 
-    evallist = [(dtest, 'eval'), (dtrain, 'train')]
+    evallist = [(dtrain, 'train'), (dtest, 'eval')]
 
 Training
 --------
@@ -166,7 +239,7 @@ A saved model can be loaded as follows:
 .. code-block:: python
 
   bst = xgb.Booster({'nthread': 4})  # init model
-  bst.load_model('model.bin')  # load data
+  bst.load_model('model.bin')  # load model data
 
 Methods including `update` and `boost` from `xgboost.Booster` are designed for
 internal usage only.  The wrapper function `xgboost.train` does some
@@ -202,7 +275,7 @@ If early stopping is enabled during training, you can get predictions from the b
 
 .. code-block:: python
 
-  ypred = bst.predict(dtest, iteration_range=(0, bst.best_iteration))
+  ypred = bst.predict(dtest, iteration_range=(0, bst.best_iteration + 1))
 
 Plotting
 --------
@@ -226,3 +299,26 @@ When you use ``IPython``, you can use the :py:meth:`xgboost.to_graphviz` functio
 .. code-block:: python
 
   xgb.to_graphviz(bst, num_trees=2)
+
+
+Scikit-Learn interface
+----------------------
+
+XGBoost provides an easy to use scikit-learn interface for some pre-defined models
+including regression, classification and ranking. See :doc:`/python/sklearn_estimator`
+for more info.
+
+.. code-block:: python
+
+  # Use "hist" for training the model.
+  reg = xgb.XGBRegressor(tree_method="hist", device="cuda")
+  # Fit the model using predictor X and response y.
+  reg.fit(X, y)
+  # Save model into JSON format.
+  reg.save_model("regressor.json")
+
+User can still access the underlying booster model when needed:
+
+.. code-block:: python
+
+   booster: xgb.Booster = reg.get_booster()

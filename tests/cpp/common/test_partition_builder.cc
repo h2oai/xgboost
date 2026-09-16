@@ -1,15 +1,17 @@
+/**
+ * Copyright 2020-2023 by XGBoost contributors
+ */
 #include <gtest/gtest.h>
-#include <vector>
+
 #include <string>
 #include <utility>
+#include <vector>
 
-#include "../../../src/common/row_set.h"
 #include "../../../src/common/partition_builder.h"
+#include "../../../src/common/row_set.h"
 #include "../helpers.h"
 
-namespace xgboost {
-namespace common {
-
+namespace xgboost::common {
 TEST(PartitionBuilder, BasicTest) {
   constexpr size_t kBlockSize = 16;
   constexpr size_t kNodes = 5;
@@ -50,8 +52,8 @@ TEST(PartitionBuilder, BasicTest) {
         right[i] = left_total + value_right++;
       }
 
-      builder.SetNLeftElems(nid, begin, end, n_left);
-      builder.SetNRightElems(nid, begin, end, n_right);
+      builder.SetNLeftElems(nid, begin, n_left);
+      builder.SetNRightElems(nid, begin, n_right);
     }
   }
   builder.CalculateRowOffsets();
@@ -74,6 +76,4 @@ TEST(PartitionBuilder, BasicTest) {
     ASSERT_EQ(n_right, (kBlockSize - rows_for_left_node[nid]) * tasks[nid]);
   }
 }
-
-}  // namespace common
-}  // namespace xgboost
+}  // namespace xgboost::common

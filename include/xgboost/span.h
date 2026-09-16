@@ -1,5 +1,5 @@
-/*!
- * Copyright 2018 XGBoost contributors
+/**
+ * Copyright 2018-2023, XGBoost contributors
  * \brief span class based on ISO++20 span
  *
  * About NOLINTs in this file:
@@ -30,13 +30,13 @@
 #define XGBOOST_SPAN_H_
 
 #include <xgboost/base.h>
-#include <xgboost/logging.h>
 
-#include <cinttypes>          // size_t
-#include <limits>             // numeric_limits
-#include <iterator>
-#include <type_traits>
+#include <cstddef>  // size_t
 #include <cstdio>
+#include <iterator>
+#include <limits>  // numeric_limits
+#include <type_traits>
+#include <utility>  // for move
 
 #if defined(__CUDACC__)
 #include <cuda_runtime.h>
@@ -72,8 +72,7 @@
 
 #endif  // defined(_MSC_VER) && _MSC_VER < 1910
 
-namespace xgboost {
-namespace common {
+namespace xgboost::common {
 
 #if defined(__CUDA_ARCH__)
 // Usual logging facility is not available inside device code.
@@ -81,41 +80,47 @@ namespace common {
 #if defined(_MSC_VER)
 
 // Windows CUDA doesn't have __assert_fail.
-#define KERNEL_CHECK(cond)                                                     \
-  do {                                                                         \
-    if (XGBOOST_EXPECT(!(cond), false)) {                                      \
-      asm("trap;");                                                            \
-    }                                                                          \
+#define CUDA_KERNEL_CHECK(cond)           \
+  do {                                    \
+    if (XGBOOST_EXPECT(!(cond), false)) { \
+      asm("trap;");                       \
+    }                                     \
   } while (0)
 
 #else  // defined(_MSC_VER)
 
 #define __ASSERT_STR_HELPER(x) #x
 
-#define KERNEL_CHECK(cond)                                                     \
-  (XGBOOST_EXPECT((cond), true)                                                \
-       ? static_cast<void>(0)                                                  \
-       : __assert_fail(__ASSERT_STR_HELPER((cond)), __FILE__, __LINE__,        \
-                       __PRETTY_FUNCTION__))
+#define CUDA_KERNEL_CHECK(cond) \
+  (XGBOOST_EXPECT((cond), true) \
+       ? static_cast<void>(0)   \
+       : __assert_fail(__ASSERT_STR_HELPER((cond)), __FILE__, __LINE__, __PRETTY_FUNCTION__))
 
 #endif  // defined(_MSC_VER)
 
+#define KERNEL_CHECK CUDA_KERNEL_CHECK
+
 #define SPAN_CHECK KERNEL_CHECK
 
-#else  // not CUDA
+#else  // ------------------------------ not CUDA ----------------------------
 
-#define KERNEL_CHECK(cond)                                                     \
-  (XGBOOST_EXPECT((cond), true) ? static_cast<void>(0) : std::terminate())
+#if defined(XGBOOST_STRICT_R_MODE) && XGBOOST_STRICT_R_MODE == 1
+
+#define KERNEL_CHECK(cond)
 
 #define SPAN_CHECK(cond) KERNEL_CHECK(cond)
 
+#else
+
+#define KERNEL_CHECK(cond) (XGBOOST_EXPECT((cond), true) ? static_cast<void>(0) : std::terminate())
+
+#define SPAN_CHECK(cond) KERNEL_CHECK(cond)
+
+#endif  // defined(XGBOOST_STRICT_R_MODE)
+
 #endif  // __CUDA_ARCH__
 
-#if defined(__CUDA_ARCH__)
-#define SPAN_LT(lhs, rhs) KERNEL_CHECK((lhs) < (rhs))
-#else
-#define SPAN_LT(lhs, rhs) KERNEL_CHECK((lhs) < (rhs))
-#endif  // defined(__CUDA_ARCH__)
+#define SPAN_LT(lhs, rhs) SPAN_CHECK((lhs) < (rhs))
 
 namespace detail {
 /*!
@@ -423,10 +428,10 @@ class Span {
   using pointer = T*;                                   // NOLINT
   using reference = T&;                                 // NOLINT
 
-  using iterator = detail::SpanIterator<Span<T, Extent>, false>;             // NOLINT
-  using const_iterator = const detail::SpanIterator<Span<T, Extent>, true>;  // NOLINT
-  using reverse_iterator = detail::SpanIterator<Span<T, Extent>, false>;     // NOLINT
-  using const_reverse_iterator = const detail::SpanIterator<Span<T, Extent>, true>;  // NOLINT
+  using iterator = detail::SpanIterator<Span<T, Extent>, false>;               // NOLINT
+  using const_iterator = const detail::SpanIterator<Span<T, Extent>, true>;    // NOLINT
+  using reverse_iterator = std::reverse_iterator<iterator>;                    // NOLINT
+  using const_reverse_iterator = const std::reverse_iterator<const_iterator>;  // NOLINT
 
   // constructors
   constexpr Span() __span_noexcept = default;
@@ -504,11 +509,11 @@ class Span {
     return {this, size()};
   }
 
-  XGBOOST_DEVICE constexpr reverse_iterator rbegin() const __span_noexcept {  // NOLINT
+  constexpr reverse_iterator rbegin() const __span_noexcept {  // NOLINT
     return reverse_iterator{end()};
   }
 
-  XGBOOST_DEVICE constexpr reverse_iterator rend() const __span_noexcept {    // NOLINT
+  constexpr reverse_iterator rend() const __span_noexcept {  // NOLINT
     return reverse_iterator{begin()};
   }
 
@@ -663,8 +668,45 @@ XGBOOST_DEVICE auto as_writable_bytes(Span<T, E> s) __span_noexcept ->  // NOLIN
   return {reinterpret_cast<byte*>(s.data()), s.size_bytes()};
 }
 
-}  // namespace common
-}  // namespace xgboost
+/**
+ * \brief A simple custom Span type that uses general iterator instead of pointer.
+ */
+template <typename It>
+class IterSpan {
+ public:
+  using value_type = typename std::iterator_traits<It>::value_type;  // NOLINT
+  using index_type = std::size_t;                                    // NOLINT
+  using iterator = It;                                               // NOLINT
+
+ private:
+  It it_;
+  index_type size_{0};
+
+ public:
+  IterSpan() = default;
+  XGBOOST_DEVICE IterSpan(It it, index_type size) : it_{std::move(it)}, size_{size} {}
+  XGBOOST_DEVICE explicit IterSpan(common::Span<It, dynamic_extent> span)
+      : it_{span.data()}, size_{span.size()} {}
+
+  [[nodiscard]] XGBOOST_DEVICE index_type size() const noexcept { return size_; }  // NOLINT
+  [[nodiscard]] XGBOOST_DEVICE decltype(auto) operator[](index_type i) const { return it_[i]; }
+  [[nodiscard]] XGBOOST_DEVICE decltype(auto) operator[](index_type i) { return it_[i]; }
+  [[nodiscard]] XGBOOST_DEVICE bool empty() const noexcept { return size() == 0; }  // NOLINT
+  [[nodiscard]] XGBOOST_DEVICE It data() const noexcept { return it_; }             // NOLINT
+  [[nodiscard]] XGBOOST_DEVICE IterSpan<It> subspan(                                // NOLINT
+      index_type _offset, index_type _count = dynamic_extent) const {
+    SPAN_CHECK((_count == dynamic_extent) ? (_offset <= size()) : (_offset + _count <= size()));
+    return {data() + _offset, _count == dynamic_extent ? size() - _offset : _count};
+  }
+  [[nodiscard]] XGBOOST_DEVICE constexpr iterator begin() const noexcept {  // NOLINT
+    return it_;
+  }
+  [[nodiscard]] XGBOOST_DEVICE constexpr iterator end() const noexcept {  // NOLINT
+    return it_ + size();
+  }
+};
+}  // namespace xgboost::common
+
 
 #if defined(_MSC_VER) &&_MSC_VER < 1910
 #undef constexpr

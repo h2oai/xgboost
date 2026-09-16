@@ -1,69 +1,50 @@
-import xgboost as xgb
-import testing as tm
 import numpy as np
 import pytest
+
+import xgboost as xgb
+from xgboost import testing as tm
+from xgboost.testing.updater import get_basescore
 
 rng = np.random.RandomState(1994)
 
 
 class TestEarlyStopping:
-
     @pytest.mark.skipif(**tm.no_sklearn())
     def test_early_stopping_nonparallel(self):
         from sklearn.datasets import load_digits
-        try:
-            from sklearn.model_selection import train_test_split
-        except ImportError:
-            from sklearn.cross_validation import train_test_split
+        from sklearn.model_selection import train_test_split
 
         digits = load_digits(n_class=2)
-        X = digits['data']
-        y = digits['target']
-        X_train, X_test, y_train, y_test = train_test_split(X, y,
-                                                            random_state=0)
-        clf1 = xgb.XGBClassifier(learning_rate=0.1)
-        clf1.fit(X_train, y_train, early_stopping_rounds=5, eval_metric="auc",
-                 eval_set=[(X_test, y_test)])
-        clf2 = xgb.XGBClassifier(learning_rate=0.1)
-        clf2.fit(X_train, y_train, early_stopping_rounds=4, eval_metric="auc",
-                 eval_set=[(X_test, y_test)])
-        # should be the same
-        assert clf1.best_score == clf2.best_score
-        assert clf1.best_score != 1
-        # check overfit
-        clf3 = xgb.XGBClassifier(learning_rate=0.1)
-        clf3.fit(X_train, y_train, early_stopping_rounds=10, eval_metric="auc",
-                 eval_set=[(X_test, y_test)])
-        print("A clf3.best_ntree_limit=%d" % clf3.best_ntree_limit)
-        assert clf3.best_score == 1
-
-    def test_early_stopping_nonparallel2(self):
-        tm._skip_if_no_sklearn()
-        from sklearn.datasets import load_digits
-        try:
-            from sklearn.model_selection import train_test_split
-        except:
-            from sklearn.cross_validation import train_test_split
-
-        digits = load_digits(2)
-        X = digits['data']
-        y = digits['target']
+        X = digits["data"]
+        y = digits["target"]
         X_train, X_test, y_train, y_test = train_test_split(X, y, random_state=0)
-        clf1 = xgb.XGBClassifier()
-        clf1.fit(X_train, y_train, early_stopping_rounds=5, eval_metric="auc",
-                 eval_set=[(X_test, y_test)])
-        clf2 = xgb.XGBClassifier()
-        clf2.fit(X_train, y_train, early_stopping_rounds=4, eval_metric="auc",
-                 eval_set=[(X_test, y_test)])
+        clf1 = xgb.XGBClassifier(
+            learning_rate=0.1, early_stopping_rounds=5, eval_metric="auc"
+        )
+        clf1.fit(X_train, y_train, eval_set=[(X_test, y_test)])
+        clf2 = xgb.XGBClassifier(
+            learning_rate=0.1, early_stopping_rounds=4, eval_metric="auc"
+        )
+        clf2.fit(X_train, y_train, eval_set=[(X_test, y_test)])
         # should be the same
         assert clf1.best_score == clf2.best_score
         assert clf1.best_score != 1
         # check overfit
-        clf3 = xgb.XGBClassifier()
-        clf3.fit(X_train, y_train, early_stopping_rounds=10, eval_metric="auc",
-                 eval_set=[(X_test, y_test)])
-        print("B clf3.best_score=%g" % clf3.best_score)
-        print("B clf3.best_ntree_limit=%d" % clf3.best_ntree_limit)
+        clf3 = xgb.XGBClassifier(
+            learning_rate=0.1, eval_metric="auc", early_stopping_rounds=10
+        )
+        clf3.fit(X_train, y_train, eval_set=[(X_test, y_test)])
+        base_score = get_basescore(clf3)
+        assert 0.53 > base_score > 0.5
+
+        clf3 = xgb.XGBClassifier(
+            learning_rate=0.1,
+            base_score=0.5,
+            eval_metric="auc",
+            early_stopping_rounds=10,
+        )
+        clf3.fit(X_train, y_train, eval_set=[(X_test, y_test)])
+
         assert clf3.best_score == 1
 
     def evalerror(self, preds, dtrain):
@@ -86,8 +67,10 @@ class TestEarlyStopping:
         X = digits['data']
         y = digits['target']
         dm = xgb.DMatrix(X, label=y)
-        params = {'max_depth': 2, 'eta': 1, 'verbosity': 0,
-                  'objective': 'binary:logistic', 'eval_metric': 'error'}
+        params = {
+            'max_depth': 2, 'eta': 1, 'objective': 'binary:logistic',
+            'eval_metric': 'error'
+        }
 
         cv = xgb.cv(params, dm, num_boost_round=10, nfold=10,
                     early_stopping_rounds=10)

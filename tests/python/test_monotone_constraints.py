@@ -1,7 +1,8 @@
 import numpy as np
-import xgboost as xgb
-import testing as tm
 import pytest
+
+import xgboost as xgb
+from xgboost import testing as tm
 
 dpath = 'demo/data/'
 
@@ -63,7 +64,6 @@ training_dset = xgb.DMatrix(x, label=y)
 
 
 class TestMonotoneConstraints:
-
     def test_monotone_constraints_for_exact_tree_method(self):
 
         # first check monotonicity for the 'exact' tree method
@@ -76,39 +76,35 @@ class TestMonotoneConstraints:
         )
         assert is_correctly_constrained(constrained_exact_method)
 
-    def test_monotone_constraints_for_depthwise_hist_tree_method(self):
-
-        # next check monotonicity for the 'hist' tree method
-        params_for_constrained_hist_method = {
-            'tree_method': 'hist', 'verbosity': 1,
-            'monotone_constraints': '(1, -1)'
+    @pytest.mark.parametrize(
+        "tree_method,policy",
+        [
+            ("hist", "depthwise"),
+            ("approx", "depthwise"),
+            ("hist", "lossguide"),
+            ("approx", "lossguide"),
+        ],
+    )
+    def test_monotone_constraints(self, tree_method: str, policy: str) -> None:
+        params_for_constrained = {
+            "tree_method": tree_method,
+            "grow_policy": policy,
+            "monotone_constraints": "(1, -1)",
         }
-        constrained_hist_method = xgb.train(
-            params_for_constrained_hist_method, training_dset
-        )
+        constrained = xgb.train(params_for_constrained, training_dset)
+        assert is_correctly_constrained(constrained)
 
-        assert is_correctly_constrained(constrained_hist_method)
-
-    def test_monotone_constraints_for_lossguide_hist_tree_method(self):
-
-        # next check monotonicity for the 'hist' tree method
-        params_for_constrained_hist_method = {
-            'tree_method': 'hist', 'verbosity': 1,
-            'grow_policy': 'lossguide',
-            'monotone_constraints': '(1, -1)'
-        }
-        constrained_hist_method = xgb.train(
-            params_for_constrained_hist_method, training_dset
-        )
-
-        assert is_correctly_constrained(constrained_hist_method)
+    def test_monotone_constraints_tuple(self) -> None:
+        params_for_constrained = {"monotone_constraints": (1, -1)}
+        constrained = xgb.train(params_for_constrained, training_dset)
+        assert is_correctly_constrained(constrained)
 
     @pytest.mark.parametrize('format', [dict, list])
     def test_monotone_constraints_feature_names(self, format):
 
         # next check monotonicity when initializing monotone_constraints by feature names
         params = {
-            'tree_method': 'hist', 'verbosity': 1,
+            'tree_method': 'hist',
             'grow_policy': 'lossguide',
             'monotone_constraints': {'feature_0': 1, 'feature_1': -1}
         }
@@ -138,8 +134,8 @@ class TestMonotoneConstraints:
     @pytest.mark.skipif(**tm.no_sklearn())
     def test_training_accuracy(self):
         from sklearn.metrics import accuracy_score
-        dtrain = xgb.DMatrix(dpath + 'agaricus.txt.train?indexing_mode=1')
-        dtest = xgb.DMatrix(dpath + 'agaricus.txt.test?indexing_mode=1')
+        dtrain = xgb.DMatrix(dpath + "agaricus.txt.train?indexing_mode=1&format=libsvm")
+        dtest = xgb.DMatrix(dpath + "agaricus.txt.test?indexing_mode=1&format=libsvm")
         params = {'eta': 1, 'max_depth': 6, 'objective': 'binary:logistic',
                   'tree_method': 'hist', 'monotone_constraints': '(1, 0)'}
         num_boost_round = 5

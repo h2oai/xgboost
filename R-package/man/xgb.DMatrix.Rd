@@ -2,33 +2,199 @@
 % Please edit documentation in R/xgb.DMatrix.R
 \name{xgb.DMatrix}
 \alias{xgb.DMatrix}
+\alias{xgb.QuantileDMatrix}
 \title{Construct xgb.DMatrix object}
 \usage{
-xgb.DMatrix(data, info = list(), missing = NA, silent = FALSE, ...)
+xgb.DMatrix(
+  data,
+  label = NULL,
+  weight = NULL,
+  base_margin = NULL,
+  missing = NA,
+  silent = FALSE,
+  feature_names = colnames(data),
+  feature_types = NULL,
+  nthread = NULL,
+  group = NULL,
+  qid = NULL,
+  label_lower_bound = NULL,
+  label_upper_bound = NULL,
+  feature_weights = NULL,
+  data_split_mode = "row"
+)
+
+xgb.QuantileDMatrix(
+  data,
+  label = NULL,
+  weight = NULL,
+  base_margin = NULL,
+  missing = NA,
+  feature_names = colnames(data),
+  feature_types = NULL,
+  nthread = NULL,
+  group = NULL,
+  qid = NULL,
+  label_lower_bound = NULL,
+  label_upper_bound = NULL,
+  feature_weights = NULL,
+  ref = NULL,
+  max_bin = NULL
+)
 }
 \arguments{
-\item{data}{a \code{matrix} object (either numeric or integer), a \code{dgCMatrix} object, or a character
-string representing a filename.}
+\item{data}{Data from which to create a DMatrix, which can then be used for fitting models or
+for getting predictions out of a fitted model.
 
-\item{info}{a named list of additional information to store in the \code{xgb.DMatrix} object.
-See \code{\link{setinfo}} for the specific allowed kinds of}
+Supported input types are as follows:\itemize{
+\item \code{matrix} objects, with types \code{numeric}, \code{integer}, or \code{logical}.
+\item \code{data.frame} objects, with columns of types \code{numeric}, \code{integer}, \code{logical}, or \code{factor}.
 
-\item{missing}{a float value to represents missing values in data (used only when input is a dense matrix).
-It is useful when a 0 or some other extreme value represents missing values in data.}
+Note that xgboost uses base-0 encoding for categorical types, hence \code{factor} types (which use base-1
+encoding') will be converted inside the function call. Be aware that the encoding used for \code{factor}
+types is not kept as part of the model, so in subsequent calls to \code{predict}, it is the user's
+responsibility to ensure that factor columns have the same levels as the ones from which the DMatrix
+was constructed.
+
+Other column types are not supported.
+\item CSR matrices, as class \code{dgRMatrix} from package \code{Matrix}.
+\item CSC matrices, as class \code{dgCMatrix} from package \code{Matrix}. These are \bold{not} supported for
+'xgb.QuantileDMatrix'.
+\item Single-row CSR matrices, as class \code{dsparseVector} from package \code{Matrix}, which is interpreted
+as a single row (only when making predictions from a fitted model).
+\item Text files in a supported format, passed as a \code{character} variable containing the URI path to
+the file, with an optional format specifier.
+
+These are \bold{not} supported for \code{xgb.QuantileDMatrix}. Supported formats are:\itemize{
+\item XGBoost's own binary format for DMatrices, as produced by \link{xgb.DMatrix.save}.
+\item SVMLight (a.k.a. LibSVM) format for CSR matrices. This format can be signaled by suffix
+\code{?format=libsvm} at the end of the file path. It will be the default format if not
+otherwise specified.
+\item CSV files (comma-separated values). This format can be specified by adding suffix
+\code{?format=csv} at the end ofthe file path. It will \bold{not} be auto-deduced from file extensions.
+}
+
+Be aware that the format of the file will not be auto-deduced - for example, if a file is named 'file.csv',
+it will not look at the extension or file contents to determine that it is a comma-separated value.
+Instead, the format must be specified following the URI format, so the input to \code{data} should be passed
+like this: \code{"file.csv?format=csv"} (or \code{"file.csv?format=csv&label_column=0"} if the first column
+corresponds to the labels).
+
+For more information about passing text files as input, see the articles
+\href{https://xgboost.readthedocs.io/en/stable/tutorials/input_format.html}{Text Input Format of DMatrix} and
+\href{https://xgboost.readthedocs.io/en/stable/python/python_intro.html#python-data-interface}{Data Interface}.
+}}
+
+\item{label}{Label of the training data. For classification problems, should be passed encoded as
+integers with numeration starting at zero.}
+
+\item{weight}{Weight for each instance.
+
+Note that, for ranking task, weights are per-group.  In ranking task, one weight
+is assigned to each group (not each data point). This is because we
+only care about the relative ordering of data points within each group,
+so it doesn't make sense to assign weights to individual data points.}
+
+\item{base_margin}{Base margin used for boosting from existing model.
+
+\if{html}{\out{<div class="sourceCode">}}\preformatted{   In the case of multi-output models, one can also pass multi-dimensional base_margin.
+}\if{html}{\out{</div>}}}
+
+\item{missing}{A float value to represents missing values in data (not used when creating DMatrix
+from text files).
+It is useful to change when a zero, infinite, or some other extreme value represents missing
+values in data.}
 
 \item{silent}{whether to suppress printing an informational message after loading from a file.}
 
-\item{...}{the \code{info} data could be passed directly as parameters, without creating an \code{info} list.}
+\item{feature_names}{Set names for features. Overrides column names in data
+frame and matrix.
+
+\if{html}{\out{<div class="sourceCode">}}\preformatted{   Note: columns are not referenced by name when calling `predict`, so the column order there
+   must be the same as in the DMatrix construction, regardless of the column names.
+}\if{html}{\out{</div>}}}
+
+\item{feature_types}{Set types for features.
+
+If \code{data} is a \code{data.frame} and passing \code{feature_types} is not supplied, feature types will be deduced
+automatically from the column types.
+
+Otherwise, one can pass a character vector with the same length as number of columns in \code{data},
+with the following possible values:\itemize{
+\item "c", which represents categorical columns.
+\item "q", which represents numeric columns.
+\item "int", which represents integer columns.
+\item "i", which represents logical (boolean) columns.
+}
+
+Note that, while categorical types are treated differently from the rest for model fitting
+purposes, the other types do not influence the generated model, but have effects in other
+functionalities such as feature importances.
+
+\bold{Important}: categorical features, if specified manually through \code{feature_types}, must
+be encoded as integers with numeration starting at zero, and the same encoding needs to be
+applied when passing data to \code{predict}. Even if passing \code{factor} types, the encoding will
+not be saved, so make sure that \code{factor} columns passed to \code{predict} have the same \code{levels}.}
+
+\item{nthread}{Number of threads used for creating DMatrix.}
+
+\item{group}{Group size for all ranking group.}
+
+\item{qid}{Query ID for data samples, used for ranking.}
+
+\item{label_lower_bound}{Lower bound for survival training.}
+
+\item{label_upper_bound}{Upper bound for survival training.}
+
+\item{feature_weights}{Set feature weights for column sampling.}
+
+\item{data_split_mode}{When passing a URI (as R \code{character}) as input, this signals
+whether to split by row or column. Allowed values are \code{"row"} and \code{"col"}.
+
+In distributed mode, the file is split accordingly; otherwise this is only an indicator on
+how the file was split beforehand. Default to row.
+
+This is not used when \code{data} is not a URI.}
+
+\item{ref}{The training dataset that provides quantile information, needed when creating
+validation/test dataset with \code{xgb.QuantileDMatrix}. Supplying the training DMatrix
+as a reference means that the same quantisation applied to the training data is
+applied to the validation/test data}
+
+\item{max_bin}{The number of histogram bin, should be consistent with the training parameter
+\code{max_bin}.
+
+This is only supported when constructing a QuantileDMatrix.}
+}
+\value{
+An 'xgb.DMatrix' object. If calling 'xgb.QuantileDMatrix', it will have additional
+subclass 'xgb.QuantileDMatrix'.
 }
 \description{
-Construct xgb.DMatrix object from either a dense matrix, a sparse matrix, or a local file.
-Supported input file formats are either a LIBSVM text file or a binary file that was created previously by
-\code{\link{xgb.DMatrix.save}}).
+Construct an 'xgb.DMatrix' object from a given data source, which can then be passed to functions
+such as \link{xgb.train} or \link{predict.xgb.Booster}.
+}
+\details{
+Function 'xgb.QuantileDMatrix' will construct a DMatrix with quantization for the histogram
+method already applied to it, which can be used to reduce memory usage (compared to using a
+a regular DMatrix first and then creating a quantization out of it) when using the histogram
+method (\code{tree_method = "hist"}, which is the default algorithm), but is not usable for the
+sorted-indices method (\code{tree_method = "exact"}), nor for the approximate method
+(\code{tree_method = "approx"}).
+
+Note that DMatrix objects are not serializable through R functions such as \code{saveRDS} or \code{save}.
+If a DMatrix gets serialized and then de-serialized (for example, when saving data in an R session or caching
+chunks in an Rmd file), the resulting object will not be usable anymore and will need to be reconstructed
+from the original source of data.
 }
 \examples{
 data(agaricus.train, package='xgboost')
-dtrain <- with(agaricus.train, xgb.DMatrix(data, label = label))
-xgb.DMatrix.save(dtrain, 'xgb.DMatrix.data')
-dtrain <- xgb.DMatrix('xgb.DMatrix.data')
-if (file.exists('xgb.DMatrix.data')) file.remove('xgb.DMatrix.data')
+## Keep the number of threads to 1 for examples
+nthread <- 1
+data.table::setDTthreads(nthread)
+dtrain <- with(
+  agaricus.train, xgb.DMatrix(data, label = label, nthread = nthread)
+)
+fname <- file.path(tempdir(), "xgb.DMatrix.data")
+xgb.DMatrix.save(dtrain, fname)
+dtrain <- xgb.DMatrix(fname)
 }

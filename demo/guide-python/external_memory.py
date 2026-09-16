@@ -1,35 +1,49 @@
-"""Experimental support for external memory.  This is similar to the one in
-`quantile_data_iterator.py`, but for external memory instead of Quantile DMatrix.  The
-feature is not ready for production use yet.
+"""
+Experimental support for external memory
+========================================
+
+This is similar to the one in `quantile_data_iterator.py`, but for external memory
+instead of Quantile DMatrix.  The feature is not ready for production use yet.
 
     .. versionadded:: 1.5.0
 
+
+See :doc:`the tutorial </tutorials/external_memory>` for more details.
+
 """
+
 import os
-import xgboost
-from typing import Callable, List, Tuple
 import tempfile
+from typing import Callable, List, Tuple
+
 import numpy as np
+from sklearn.datasets import make_regression
+
+import xgboost
 
 
 def make_batches(
-    n_samples_per_batch: int, n_features: int, n_batches: int
-) -> Tuple[List[np.ndarray], List[np.ndarray]]:
-    """Generate random batches."""
-    X = []
-    y = []
+    n_samples_per_batch: int,
+    n_features: int,
+    n_batches: int,
+    tmpdir: str,
+) -> List[Tuple[str, str]]:
+    files: List[Tuple[str, str]] = []
     rng = np.random.RandomState(1994)
     for i in range(n_batches):
-        _X = rng.randn(n_samples_per_batch, n_features)
-        _y = rng.randn(n_samples_per_batch)
-        X.append(_X)
-        y.append(_y)
-    return X, y
+        X, y = make_regression(n_samples_per_batch, n_features, random_state=rng)
+        X_path = os.path.join(tmpdir, "X-" + str(i) + ".npy")
+        y_path = os.path.join(tmpdir, "y-" + str(i) + ".npy")
+        np.save(X_path, X)
+        np.save(y_path, y)
+        files.append((X_path, y_path))
+    return files
 
 
 class Iterator(xgboost.DataIter):
     """A custom iterator for loading files in batches."""
-    def __init__(self, file_paths: List[Tuple[str, str]]):
+
+    def __init__(self, file_paths: List[Tuple[str, str]]) -> None:
         self._file_paths = file_paths
         self._it = 0
         # XGBoost will generate some cache files under current directory with the prefix
@@ -38,8 +52,8 @@ class Iterator(xgboost.DataIter):
 
     def load_file(self) -> Tuple[np.ndarray, np.ndarray]:
         X_path, y_path = self._file_paths[self._it]
-        X = np.loadtxt(X_path)
-        y = np.loadtxt(y_path)
+        X = np.load(X_path)
+        y = np.load(y_path)
         assert X.shape[0] == y.shape[0]
         return X, y
 
@@ -66,24 +80,22 @@ class Iterator(xgboost.DataIter):
 
 def main(tmpdir: str) -> xgboost.Booster:
     # generate some random data for demo
-    batches = make_batches(1024, 17, 31)
-    files = []
-    for i, (X, y) in enumerate(zip(*batches)):
-        X_path = os.path.join(tmpdir, "X-" + str(i) + ".txt")
-        np.savetxt(X_path, X)
-        y_path = os.path.join(tmpdir, "y-" + str(i) + ".txt")
-        np.savetxt(y_path, y)
-        files.append((X_path, y_path))
-
+    files = make_batches(1024, 17, 31, tmpdir)
     it = Iterator(files)
     # For non-data arguments, specify it here once instead of passing them by the `next`
     # method.
-    missing = np.NaN
+    missing = np.nan
     Xy = xgboost.DMatrix(it, missing=missing, enable_categorical=False)
 
-    # Other tree methods including ``hist`` and ``gpu_hist`` also work, but has some
-    # caveats.  This is still an experimental feature.
-    booster = xgboost.train({"tree_method": "approx"}, Xy)
+    # ``approx`` is also supported, but less efficient due to sketching. GPU behaves
+    # differently than CPU tree methods as it uses a hybrid approach. See tutorial in
+    # doc for details.
+    booster = xgboost.train(
+        {"tree_method": "hist", "max_depth": 4},
+        Xy,
+        evals=[(Xy, "Train")],
+        num_boost_round=10,
+    )
     return booster
 
 

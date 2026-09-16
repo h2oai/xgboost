@@ -1,39 +1,47 @@
-/*!
- * Copyright (c) by Contributors 2019-2021
+/**
+ * Copyright 2019-2024, XGBoost Contributors
  */
-#include <cctype>
-#include <cstddef>
-#include <iterator>
-#include <locale>
-#include <sstream>
-#include <limits>
-#include <cmath>
-
-#include "charconv.h"
-#include "xgboost/base.h"
-#include "xgboost/logging.h"
 #include "xgboost/json.h"
-#include "xgboost/json_io.h"
+
+#include <array>             // for array
+#include <cctype>            // for isdigit
+#include <cmath>             // for isinf, isnan
+#include <cstdint>           // for uint8_t, uint16_t, uint32_t
+#include <cstdio>            // for EOF
+#include <cstdlib>           // for size_t, strtof
+#include <cstring>           // for memcpy
+#include <initializer_list>  // for initializer_list
+#include <iterator>          // for distance
+#include <limits>            // for numeric_limits
+#include <memory>            // for allocator
+#include <sstream>           // for operator<<, basic_ostream, operator&, ios, stringstream
+#include <system_error>      // for errc
+
+#include "./math.h"                 // for CheckNAN
+#include "charconv.h"               // for to_chars, NumericLimits, from_chars, to_chars_result
+#include "common.h"                 // for EscapeU8
+#include "xgboost/base.h"           // for XGBOOST_EXPECT
+#include "xgboost/intrusive_ptr.h"  // for IntrusivePtr
+#include "xgboost/json_io.h"        // for JsonReader, UBJReader, UBJWriter, JsonWriter, ToBigEn...
+#include "xgboost/logging.h"        // for LOG, LOG_FATAL, LogMessageFatal, LogCheck_NE, CHECK
+#include "xgboost/string_view.h"    // for StringView, operator<<
 
 namespace xgboost {
 
-void JsonWriter::Save(Json json) {
-  json.ptr_->Save(this);
-}
+void JsonWriter::Save(Json json) { json.Ptr()->Save(this); }
 
 void JsonWriter::Visit(JsonArray const* arr) {
-  stream_->emplace_back('[');
-  auto const& vec = arr->GetArray();
-  size_t size = vec.size();
-  for (size_t i = 0; i < size; ++i) {
-    auto const& value = vec[i];
-    this->Save(value);
-    if (i != size - 1) {
-      stream_->emplace_back(',');
-    }
-  }
-  stream_->emplace_back(']');
+  this->WriteArray(arr, [](auto const& v) { return v; });
 }
+void JsonWriter::Visit(F32Array const* arr) {
+  this->WriteArray(arr, [](float v) { return Json{v}; });
+}
+namespace {
+auto to_i64 = [](auto v) { return Json{static_cast<int64_t>(v)}; };
+}  // anonymous namespace
+void JsonWriter::Visit(U8Array const* arr) { this->WriteArray(arr, to_i64); }
+void JsonWriter::Visit(I32Array const* arr) { this->WriteArray(arr, to_i64); }
+void JsonWriter::Visit(I64Array const* arr) { this->WriteArray(arr, to_i64); }
 
 void JsonWriter::Visit(JsonObject const* obj) {
   stream_->emplace_back('{');
@@ -56,24 +64,25 @@ void JsonWriter::Visit(JsonObject const* obj) {
 }
 
 void JsonWriter::Visit(JsonNumber const* num) {
-  char number[NumericLimits<float>::kToCharsSize];
-  auto res = to_chars(number, number + sizeof(number), num->GetNumber());
+  std::array<char, NumericLimits<float>::kToCharsSize> number;
+  auto res = to_chars(number.data(), number.data() + number.size(), num->GetNumber());
   auto end = res.ptr;
   auto ori_size = stream_->size();
-  stream_->resize(stream_->size() + end - number);
-  std::memcpy(stream_->data() + ori_size, number, end - number);
+  stream_->resize(stream_->size() + end - number.data());
+  std::memcpy(stream_->data() + ori_size, number.data(), end - number.data());
 }
 
 void JsonWriter::Visit(JsonInteger const* num) {
-  char i2s_buffer_[NumericLimits<int64_t>::kToCharsSize];
+  std::array<char, NumericLimits<int64_t>::kToCharsSize> i2s_buffer_;
   auto i = num->GetInteger();
-  auto ret = to_chars(i2s_buffer_, i2s_buffer_ + NumericLimits<int64_t>::kToCharsSize, i);
+  auto ret =
+      to_chars(i2s_buffer_.data(), i2s_buffer_.data() + NumericLimits<int64_t>::kToCharsSize, i);
   auto end = ret.ptr;
   CHECK(ret.ec == std::errc());
-  auto digits = std::distance(i2s_buffer_, end);
+  auto digits = std::distance(i2s_buffer_.data(), end);
   auto ori_size = stream_->size();
   stream_->resize(ori_size + digits);
-  std::memcpy(stream_->data() + ori_size, i2s_buffer_, digits);
+  std::memcpy(stream_->data() + ori_size, i2s_buffer_.data(), digits);
 }
 
 void JsonWriter::Visit(JsonNull const* ) {
@@ -87,43 +96,15 @@ void JsonWriter::Visit(JsonNull const* ) {
 }
 
 void JsonWriter::Visit(JsonString const* str) {
-  std::string buffer;
-  buffer += '"';
-  auto const& string = str->GetString();
-  for (size_t i = 0; i < string.length(); i++) {
-    const char ch = string[i];
-    if (ch == '\\') {
-      if (i < string.size() && string[i+1] == 'u') {
-        buffer += "\\";
-      } else {
-        buffer += "\\\\";
-      }
-    } else if (ch == '"') {
-      buffer += "\\\"";
-    } else if (ch == '\b') {
-      buffer += "\\b";
-    } else if (ch == '\f') {
-      buffer += "\\f";
-    } else if (ch == '\n') {
-      buffer += "\\n";
-    } else if (ch == '\r') {
-      buffer += "\\r";
-    } else if (ch == '\t') {
-      buffer += "\\t";
-    } else if (static_cast<uint8_t>(ch) <= 0x1f) {
-      // Unit separator
-      char buf[8];
-      snprintf(buf, sizeof buf, "\\u%04x", ch);
-      buffer += buf;
-    } else {
-      buffer += ch;
-    }
-  }
-  buffer += '"';
+    std::string buffer;
+    buffer += '"';
+    auto const& string = str->GetString();
+    common::EscapeU8(string, &buffer);
+    buffer += '"';
 
-  auto s = stream_->size();
-  stream_->resize(s + buffer.size());
-  std::memcpy(stream_->data() + s, buffer.data(), buffer.size());
+    auto s = stream_->size();
+    stream_->resize(s + buffer.size());
+    std::memcpy(stream_->data() + s, buffer.data(), buffer.size());
 }
 
 void JsonWriter::Visit(JsonBoolean const* boolean) {
@@ -150,13 +131,30 @@ void JsonWriter::Visit(JsonBoolean const* boolean) {
 // Value
 std::string Value::TypeStr() const {
   switch (kind_) {
-    case ValueKind::kString:  return "String";  break;
-    case ValueKind::kNumber:  return "Number";  break;
-    case ValueKind::kObject:  return "Object";  break;
-    case ValueKind::kArray:   return "Array";   break;
-    case ValueKind::kBoolean: return "Boolean"; break;
-    case ValueKind::kNull:    return "Null";    break;
-    case ValueKind::kInteger: return "Integer"; break;
+    case ValueKind::kString:
+      return "String";
+    case ValueKind::kNumber:
+      return "Number";
+    case ValueKind::kObject:
+      return "Object";
+    case ValueKind::kArray:
+      return "Array";
+    case ValueKind::kBoolean:
+      return "Boolean";
+    case ValueKind::kNull:
+      return "Null";
+    case ValueKind::kInteger:
+      return "Integer";
+    case ValueKind::kF32Array:
+      return "F32Array";
+    case ValueKind::kF64Array:
+      return "F64Array";
+    case ValueKind::kU8Array:
+      return "U8Array";
+    case ValueKind::kI32Array:
+      return "I32Array";
+    case ValueKind::kI64Array:
+      return "I64Array";
   }
   return "";
 }
@@ -168,22 +166,23 @@ Json& DummyJsonObject() {
   return obj;
 }
 
-// Json Object
-JsonObject::JsonObject(JsonObject && that) :
-    Value(ValueKind::kObject), object_{std::move(that.object_)} {}
-
-JsonObject::JsonObject(std::map<std::string, Json>&& object)
-    : Value(ValueKind::kObject), object_{std::move(object)} {}
-
-Json& JsonObject::operator[](std::string const & key) {
-  return object_[key];
-}
-
-Json& JsonObject::operator[](int ) {
-  LOG(FATAL) << "Object of type "
-             << Value::TypeStr() << " can not be indexed by Integer.";
+Json& Value::operator[](std::string const&) {
+  LOG(FATAL) << "Object of type " << TypeStr() << " can not be indexed by string.";
   return DummyJsonObject();
 }
+
+Json& Value::operator[](int) {
+  LOG(FATAL) << "Object of type " << TypeStr() << " can not be indexed by Integer.";
+  return DummyJsonObject();
+}
+
+// Json Object
+JsonObject::JsonObject(JsonObject&& that) noexcept : Value(ValueKind::kObject) {
+  std::swap(that.object_, this->object_);
+}
+
+JsonObject::JsonObject(Map&& object) noexcept
+    : Value(ValueKind::kObject), object_{std::forward<Map>(object)} {}
 
 bool JsonObject::operator==(Value const& rhs) const {
   if (!IsA<JsonObject>(&rhs)) {
@@ -192,89 +191,88 @@ bool JsonObject::operator==(Value const& rhs) const {
   return object_ == Cast<JsonObject const>(&rhs)->GetObject();
 }
 
-Value& JsonObject::operator=(Value const &rhs) {
-  JsonObject const* casted = Cast<JsonObject const>(&rhs);
-  object_ = casted->GetObject();
-  return *this;
-}
-
-void JsonObject::Save(JsonWriter* writer) {
-  writer->Visit(this);
-}
+void JsonObject::Save(JsonWriter* writer) const { writer->Visit(this); }
 
 // Json String
-Json& JsonString::operator[](std::string const& ) {
-  LOG(FATAL) << "Object of type "
-             << Value::TypeStr() << " can not be indexed by string.";
-  return DummyJsonObject();
-}
-
-Json& JsonString::operator[](int ) {
-  LOG(FATAL) << "Object of type "
-             << Value::TypeStr() << " can not be indexed by Integer."
-             << "  Please try obtaining std::string first.";
-  return DummyJsonObject();
-}
-
 bool JsonString::operator==(Value const& rhs) const {
   if (!IsA<JsonString>(&rhs)) { return false; }
   return Cast<JsonString const>(&rhs)->GetString() == str_;
 }
 
-Value & JsonString::operator=(Value const &rhs) {
-  JsonString const* casted = Cast<JsonString const>(&rhs);
-  str_ = casted->GetString();
-  return *this;
-}
-
 // FIXME: UTF-8 parsing support.
-void JsonString::Save(JsonWriter* writer) {
-  writer->Visit(this);
-}
+void JsonString::Save(JsonWriter* writer) const { writer->Visit(this); }
 
 // Json Array
-JsonArray::JsonArray(JsonArray && that) :
-    Value(ValueKind::kArray), vec_{std::move(that.vec_)} {}
-
-Json& JsonArray::operator[](std::string const& ) {
-  LOG(FATAL) << "Object of type "
-             << Value::TypeStr() << " can not be indexed by string.";
-  return DummyJsonObject();
-}
-
-Json& JsonArray::operator[](int ind) {
-  return vec_.at(ind);
+JsonArray::JsonArray(JsonArray&& that) noexcept : Value(ValueKind::kArray) {
+  std::swap(that.vec_, this->vec_);
 }
 
 bool JsonArray::operator==(Value const& rhs) const {
-  if (!IsA<JsonArray>(&rhs)) { return false; }
+  if (!IsA<JsonArray>(&rhs)) {
+    return false;
+  }
   auto& arr = Cast<JsonArray const>(&rhs)->GetArray();
+  if (vec_.size() != arr.size()) {
+    return false;
+  }
   return std::equal(arr.cbegin(), arr.cend(), vec_.cbegin());
 }
 
-Value & JsonArray::operator=(Value const &rhs) {
-  JsonArray const* casted = Cast<JsonArray const>(&rhs);
-  vec_ = casted->GetArray();
-  return *this;
-}
+void JsonArray::Save(JsonWriter* writer) const { writer->Visit(this); }
 
-void JsonArray::Save(JsonWriter* writer) {
+// typed array
+namespace {
+// error C2668: 'fpclassify': ambiguous call to overloaded function
+template <typename T>
+std::enable_if_t<std::is_floating_point<T>::value, bool> IsInfMSVCWar(T v) {
+  return std::isinf(v);
+}
+template <typename T>
+std::enable_if_t<std::is_integral<T>::value, bool> IsInfMSVCWar(T) {
+  return false;
+}
+}  // namespace
+
+template <typename T, Value::ValueKind kind>
+void JsonTypedArray<T, kind>::Save(JsonWriter* writer) const {
   writer->Visit(this);
 }
 
+template <typename T, Value::ValueKind kind>
+bool JsonTypedArray<T, kind>::operator==(Value const& rhs) const {
+  if (!IsA<JsonTypedArray<T, kind>>(&rhs)) {
+    return false;
+  }
+  auto& arr = Cast<JsonTypedArray<T, kind> const>(&rhs)->GetArray();
+  if (vec_.size() != arr.size()) {
+    return false;
+  }
+  if (std::is_same<float, T>::value) {
+    for (size_t i = 0; i < vec_.size(); ++i) {
+      bool equal{false};
+      if (common::CheckNAN(vec_[i])) {
+        equal = common::CheckNAN(arr[i]);
+      } else if (IsInfMSVCWar(vec_[i])) {
+        equal = IsInfMSVCWar(arr[i]);
+      } else {
+        equal = (arr[i] - vec_[i] == 0);
+      }
+      if (!equal) {
+        return false;
+      }
+    }
+    return true;
+  }
+  return std::equal(arr.cbegin(), arr.cend(), vec_.cbegin());
+}
+
+template class JsonTypedArray<float, Value::ValueKind::kF32Array>;
+template class JsonTypedArray<double, Value::ValueKind::kF64Array>;
+template class JsonTypedArray<std::uint8_t, Value::ValueKind::kU8Array>;
+template class JsonTypedArray<std::int32_t, Value::ValueKind::kI32Array>;
+template class JsonTypedArray<std::int64_t, Value::ValueKind::kI64Array>;
+
 // Json Number
-Json& JsonNumber::operator[](std::string const& ) {
-  LOG(FATAL) << "Object of type "
-             << Value::TypeStr() << " can not be indexed by string.";
-  return DummyJsonObject();
-}
-
-Json& JsonNumber::operator[](int ) {
-  LOG(FATAL) << "Object of type "
-             << Value::TypeStr() << " can not be indexed by Integer.";
-  return DummyJsonObject();
-}
-
 bool JsonNumber::operator==(Value const& rhs) const {
   if (!IsA<JsonNumber>(&rhs)) { return false; }
   auto r_num = Cast<JsonNumber const>(&rhs)->GetNumber();
@@ -287,105 +285,38 @@ bool JsonNumber::operator==(Value const& rhs) const {
   return number_ - r_num == 0;
 }
 
-Value & JsonNumber::operator=(Value const &rhs) {
-  JsonNumber const* casted = Cast<JsonNumber const>(&rhs);
-  number_ = casted->GetNumber();
-  return *this;
-}
-
-void JsonNumber::Save(JsonWriter* writer) {
-  writer->Visit(this);
-}
+void JsonNumber::Save(JsonWriter* writer) const { writer->Visit(this); }
 
 // Json Integer
-Json& JsonInteger::operator[](std::string const& ) {
-  LOG(FATAL) << "Object of type "
-             << Value::TypeStr() << " can not be indexed by string.";
-  return DummyJsonObject();
-}
-
-Json& JsonInteger::operator[](int ) {
-  LOG(FATAL) << "Object of type "
-             << Value::TypeStr() << " can not be indexed by Integer.";
-  return DummyJsonObject();
-}
-
 bool JsonInteger::operator==(Value const& rhs) const {
   if (!IsA<JsonInteger>(&rhs)) { return false; }
   return integer_ == Cast<JsonInteger const>(&rhs)->GetInteger();
 }
 
-Value & JsonInteger::operator=(Value const &rhs) {
-  JsonInteger const* casted = Cast<JsonInteger const>(&rhs);
-  integer_ = casted->GetInteger();
-  return *this;
-}
-
-void JsonInteger::Save(JsonWriter* writer) {
-  writer->Visit(this);
-}
+void JsonInteger::Save(JsonWriter* writer) const { writer->Visit(this); }
 
 // Json Null
-Json& JsonNull::operator[](std::string const& ) {
-  LOG(FATAL) << "Object of type "
-             << Value::TypeStr() << " can not be indexed by string.";
-  return DummyJsonObject();
-}
-
-Json& JsonNull::operator[](int ) {
-  LOG(FATAL) << "Object of type "
-             << Value::TypeStr() << " can not be indexed by Integer.";
-  return DummyJsonObject();
-}
-
 bool JsonNull::operator==(Value const& rhs) const {
   if (!IsA<JsonNull>(&rhs)) { return false; }
   return true;
 }
 
-Value & JsonNull::operator=(Value const &rhs) {
-  Cast<JsonNull const>(&rhs);  // Checking only.
-  return *this;
-}
-
-void JsonNull::Save(JsonWriter* writer) {
-  writer->Visit(this);
-}
+void JsonNull::Save(JsonWriter* writer) const { writer->Visit(this); }
 
 // Json Boolean
-Json& JsonBoolean::operator[](std::string const& ) {
-  LOG(FATAL) << "Object of type "
-             << Value::TypeStr() << " can not be indexed by string.";
-  return DummyJsonObject();
-}
-
-Json& JsonBoolean::operator[](int ) {
-  LOG(FATAL) << "Object of type "
-             << Value::TypeStr() << " can not be indexed by Integer.";
-  return DummyJsonObject();
-}
-
 bool JsonBoolean::operator==(Value const& rhs) const {
   if (!IsA<JsonBoolean>(&rhs)) { return false; }
   return boolean_ == Cast<JsonBoolean const>(&rhs)->GetBoolean();
 }
 
-Value & JsonBoolean::operator=(Value const &rhs) {
-  JsonBoolean const* casted = Cast<JsonBoolean const>(&rhs);
-  boolean_ = casted->GetBoolean();
-  return *this;
-}
-
-void JsonBoolean::Save(JsonWriter *writer) {
-  writer->Visit(this);
-}
+void JsonBoolean::Save(JsonWriter* writer) const { writer->Visit(this); }
 
 size_t constexpr JsonReader::kMaxNumLength;
 
 Json JsonReader::Parse() {
   while (true) {
     SkipSpaces();
-    char c = PeekNextChar();
+    auto c = PeekNextChar();
     if (c == -1) { break; }
 
     if (c == '{') {
@@ -406,7 +337,7 @@ Json JsonReader::Parse() {
       Error("Unknown construct");
     }
   }
-  return Json();
+  return {};
 }
 
 Json JsonReader::Load() {
@@ -416,7 +347,8 @@ Json JsonReader::Load() {
 
 void JsonReader::Error(std::string msg) const {
   // just copy it.
-  std::istringstream str_s(raw_str_.substr(0, raw_str_.size()));
+  std::stringstream str_s;
+  str_s << raw_str_.substr(0, raw_str_.size());
 
   msg += ", around character position: " + std::to_string(cursor_.Pos());
   msg += '\n';
@@ -431,7 +363,7 @@ void JsonReader::Error(std::string msg) const {
   auto end = cursor_.Pos() + kExtend >= raw_str_.size() ?
              raw_str_.size() : cursor_.Pos() + kExtend;
 
-  std::string const& raw_portion = raw_str_.substr(beg, end - beg);
+  auto raw_portion = raw_str_.substr(beg, end - beg);
   std::string portion;
   for (auto c : raw_portion) {
     if (c == '\n') {
@@ -459,13 +391,13 @@ void JsonReader::Error(std::string msg) const {
 }
 
 namespace {
-bool IsSpace(char c) { return c == ' ' || c == '\n' || c == '\r' || c == '\t'; }
+bool IsSpace(JsonReader::Char c) { return c == ' ' || c == '\n' || c == '\r' || c == '\t'; }
 }  // anonymous namespace
 
 // Json class
 void JsonReader::SkipSpaces() {
   while (cursor_.Pos() < raw_str_.size()) {
-    char c = raw_str_[cursor_.Pos()];
+    Char c = raw_str_[cursor_.Pos()];
     if (IsSpace(c)) {
       cursor_.Forward();
     } else {
@@ -487,13 +419,12 @@ void ParseStr(std::string const& str) {
 }
 
 Json JsonReader::ParseString() {
-  char ch { GetConsecutiveChar('\"') };  // NOLINT
-  std::ostringstream output;
+  Char ch { GetConsecutiveChar('\"') };  // NOLINT
   std::string str;
   while (true) {
     ch = GetNextChar();
     if (ch == '\\') {
-      char next = static_cast<char>(GetNextChar());
+      Char next{GetNextChar()};
       switch (next) {
         case 'r':  str += u8"\r"; break;
         case 'n':  str += u8"\n"; break;
@@ -518,8 +449,8 @@ Json JsonReader::ParseString() {
 }
 
 Json JsonReader::ParseNull() {
-  char ch = GetNextNonSpaceChar();
-  std::string buffer{ch};
+  Char ch = GetNextNonSpaceChar();
+  std::string buffer{static_cast<char>(ch)};
   for (size_t i = 0; i < 3; ++i) {
     buffer.push_back(GetNextChar());
   }
@@ -532,7 +463,7 @@ Json JsonReader::ParseNull() {
 Json JsonReader::ParseArray() {
   std::vector<Json> data;
 
-  char ch { GetConsecutiveChar('[') };  // NOLINT
+  Char ch { GetConsecutiveChar('[') };  // NOLINT
   while (true) {
     if (PeekNextChar() == ']') {
       GetConsecutiveChar(']');
@@ -553,9 +484,9 @@ Json JsonReader::ParseArray() {
 Json JsonReader::ParseObject() {
   GetConsecutiveChar('{');
 
-  std::map<std::string, Json> data;
+  Object::Map data;
   SkipSpaces();
-  char ch = PeekNextChar();
+  auto ch = PeekNextChar();
 
   if (ch == '}') {
     GetConsecutiveChar('}');
@@ -704,10 +635,9 @@ Json JsonReader::ParseNumber() {
 
 Json JsonReader::ParseBoolean() {
   bool result = false;
-  char ch = GetNextNonSpaceChar();
+  Char ch = GetNextNonSpaceChar();
   std::string const t_value = u8"true";
   std::string const f_value = u8"false";
-  std::string buffer;
 
   if (ch == 't') {
     GetConsecutiveChar('r');
@@ -724,9 +654,15 @@ Json JsonReader::ParseBoolean() {
   return Json{JsonBoolean{result}};
 }
 
-Json Json::Load(StringView str) {
-  JsonReader reader(str);
-  Json json{reader.Load()};
+Json Json::Load(StringView str, std::ios::openmode mode) {
+  Json json;
+  if (mode & std::ios::binary) {
+    UBJReader reader{str};
+    json = Json::Load(&reader);
+  } else {
+    JsonReader reader(str);
+    json = reader.Load();
+  }
   return json;
 }
 
@@ -735,20 +671,302 @@ Json Json::Load(JsonReader* reader) {
   return json;
 }
 
-void Json::Dump(Json json, std::string* str) {
+void Json::Dump(Json json, std::string* str, std::ios::openmode mode) {
   std::vector<char> buffer;
-  JsonWriter writer(&buffer);
-  writer.Save(json);
+  Dump(json, &buffer, mode);
   str->resize(buffer.size());
   std::copy(buffer.cbegin(), buffer.cend(), str->begin());
 }
 
-Json& Json::operator=(Json const &other) = default;
-
-std::ostream &operator<<(std::ostream &os, StringView const v) {
-  for (auto c : v) {
-    os.put(c);
+void Json::Dump(Json json, std::vector<char>* str, std::ios::openmode mode) {
+  str->clear();
+  if (mode & std::ios::binary) {
+    UBJWriter writer{str};
+    writer.Save(json);
+  } else {
+    JsonWriter writer(str);
+    writer.Save(json);
   }
-  return os;
 }
+
+void Json::Dump(Json json, JsonWriter* writer) {
+  writer->Save(json);
+}
+
+static_assert(std::is_nothrow_move_constructible<Json>::value);
+static_assert(std::is_nothrow_move_constructible<Object>::value);
+static_assert(std::is_nothrow_move_constructible<Array>::value);
+static_assert(std::is_nothrow_move_constructible<String>::value);
+
+Json UBJReader::ParseArray() {
+  auto marker = PeekNextChar();
+
+  if (marker == '$') {  // typed array
+    GetNextChar();      // remove $
+    marker = GetNextChar();
+    auto type = marker;
+    GetConsecutiveChar('#');
+    GetConsecutiveChar('L');
+    auto n = this->ReadPrimitive<int64_t>();
+
+    marker = PeekNextChar();
+    switch (type) {
+      case 'd':
+        return ParseTypedArray<F32Array>(n);
+      case 'D':
+        return ParseTypedArray<F64Array>(n);
+      case 'U':
+        return ParseTypedArray<U8Array>(n);
+      case 'l':
+        return ParseTypedArray<I32Array>(n);
+      case 'L':
+        return ParseTypedArray<I64Array>(n);
+      default:
+        LOG(FATAL) << "`" + std::string{static_cast<char>(type)} +  // NOLINT
+                          "` is not supported for typed array.";
+    }
+  }
+  std::vector<Json> results;
+  if (marker == '#') {  // array with length optimization
+    GetNextChar();
+    GetConsecutiveChar('L');
+    auto n = this->ReadPrimitive<int64_t>();
+    results.resize(n);
+    for (int64_t i = 0; i < n; ++i) {
+      results[i] = Parse();
+    }
+  } else {  // normal array
+    while (marker != ']') {
+      results.emplace_back(Parse());
+      marker = PeekNextChar();
+    }
+    GetConsecutiveChar(']');
+  }
+
+  return Json{results};
+}
+
+std::string UBJReader::DecodeStr() {
+  // only L is supported right now.
+  GetConsecutiveChar('L');
+  auto bsize = this->ReadPrimitive<int64_t>();
+
+  std::string str;
+  str.resize(bsize);
+  auto ptr = raw_str_.c_str() + cursor_.Pos();
+  std::memcpy(&str[0], ptr, bsize);
+  this->cursor_.Forward(bsize);
+  return str;
+}
+
+Json UBJReader::ParseObject() {
+  auto marker = PeekNextChar();
+  Object::Map results;
+
+  while (marker != '}') {
+    auto str = this->DecodeStr();
+    results.emplace(str, this->Parse());
+    marker = PeekNextChar();
+  }
+
+  GetConsecutiveChar('}');
+  return Json{std::move(results)};
+}
+
+Json UBJReader::Load() {
+  Json result = Parse();
+  return result;
+}
+
+Json UBJReader::Parse() {
+  while (true) {
+    auto c = PeekNextChar();
+    if (c == -1) {
+      break;
+    }
+
+    GetNextChar();
+    switch (c) {
+      case '{':
+        return ParseObject();
+      case '[':
+        return ParseArray();
+      case 'Z': {
+        return Json{nullptr};
+      }
+      case 'T': {
+        return Json{JsonBoolean{true}};
+      }
+      case 'F': {
+        return Json{JsonBoolean{false}};
+      }
+      case 'd': {
+        auto v = this->ReadPrimitive<float>();
+        return Json{v};
+      }
+      case 'D': {
+        auto v = this->ReadPrimitive<double>();
+        return Json{v};
+      }
+      case 'S': {
+        auto str = this->DecodeStr();
+        return Json{str};
+      }
+      case 'i': {
+        Integer::Int i = this->ReadPrimitive<int8_t>();
+        return Json{i};
+      }
+      case 'U': {
+        Integer::Int i = this->ReadPrimitive<uint8_t>();
+        return Json{i};
+      }
+      case 'I': {
+        Integer::Int i = this->ReadPrimitive<int16_t>();
+        return Json{i};
+      }
+      case 'l': {
+        Integer::Int i = this->ReadPrimitive<int32_t>();
+        return Json{i};
+      }
+      case 'L': {
+        auto i = this->ReadPrimitive<int64_t>();
+        return Json{i};
+      }
+      case 'C': {
+        Integer::Int i = this->ReadPrimitive<char>();
+        return Json{i};
+      }
+      case 'H': {
+        LOG(FATAL) << "High precision number is not supported.";
+        break;
+      }
+      default:
+        Error("Unknown construct");
+    }
+  }
+  return {};
+}
+
+namespace {
+template <typename T>
+void WritePrimitive(T v, std::vector<char>* stream) {
+  v = ToBigEndian(v);
+  auto s = stream->size();
+  stream->resize(s + sizeof(v));
+  auto ptr = stream->data() + s;
+  std::memcpy(ptr, &v, sizeof(v));
+}
+
+void EncodeStr(std::vector<char>* stream, std::string const& string) {
+  stream->push_back('L');
+
+  int64_t bsize = string.size();
+  WritePrimitive(bsize, stream);
+
+  auto s = stream->size();
+  stream->resize(s + string.size());
+
+  auto ptr = stream->data() + s;
+  std::memcpy(ptr, string.data(), string.size());
+}
+}  // anonymous namespace
+
+void UBJWriter::Visit(JsonArray const* arr) {
+  stream_->emplace_back('[');
+  auto const& vec = arr->GetArray();
+  int64_t n = vec.size();
+  stream_->push_back('#');
+  stream_->push_back('L');
+  WritePrimitive(n, stream_);
+  for (auto const& v : vec) {
+    this->Save(v);
+  }
+}
+
+template <typename T, Value::ValueKind kind>
+void WriteTypedArray(JsonTypedArray<T, kind> const* arr, std::vector<char>* stream) {
+  stream->emplace_back('[');
+  stream->push_back('$');
+  if (std::is_same<T, float>::value) {
+    stream->push_back('d');
+  } else if (std::is_same_v<T, double>) {
+    stream->push_back('D');
+  } else if (std::is_same<T, int8_t>::value) {
+    stream->push_back('i');
+  } else if (std::is_same<T, uint8_t>::value) {
+    stream->push_back('U');
+  } else if (std::is_same<T, int32_t>::value) {
+    stream->push_back('l');
+  } else if (std::is_same<T, int64_t>::value) {
+    stream->push_back('L');
+  } else {
+    LOG(FATAL) << "Not implemented";
+  }
+
+  stream->push_back('#');
+  stream->push_back('L');
+
+  int64_t n = arr->Size();
+  WritePrimitive(n, stream);
+  auto s = stream->size();
+  stream->resize(s + arr->Size() * sizeof(T));
+  auto const& vec = arr->GetArray();
+  for (int64_t i = 0; i < n; ++i) {
+    auto v = ToBigEndian(vec[i]);
+    std::memcpy(stream->data() + s, &v, sizeof(v));
+    s += sizeof(v);
+  }
+}
+
+void UBJWriter::Visit(F32Array const* arr) { WriteTypedArray(arr, stream_); }
+void UBJWriter::Visit(F64Array const* arr) { WriteTypedArray(arr, stream_); }
+void UBJWriter::Visit(U8Array const* arr) { WriteTypedArray(arr, stream_); }
+void UBJWriter::Visit(I32Array const* arr) { WriteTypedArray(arr, stream_); }
+void UBJWriter::Visit(I64Array const* arr) { WriteTypedArray(arr, stream_); }
+
+void UBJWriter::Visit(JsonObject const* obj) {
+  stream_->emplace_back('{');
+  for (auto const& value : obj->GetObject()) {
+    auto const& key = value.first;
+    EncodeStr(stream_, key);
+    this->Save(value.second);
+  }
+  stream_->emplace_back('}');
+}
+
+void UBJWriter::Visit(JsonNumber const* num) {
+  stream_->push_back('d');
+  auto val = num->GetNumber();
+  WritePrimitive(val, stream_);
+}
+
+void UBJWriter::Visit(JsonInteger const* num) {
+  auto i = num->GetInteger();
+  if (i > std::numeric_limits<int8_t>::min() && i < std::numeric_limits<int8_t>::max()) {
+    stream_->push_back('i');
+    WritePrimitive(static_cast<int8_t>(i), stream_);
+  } else if (i > std::numeric_limits<int16_t>::min() && i < std::numeric_limits<int16_t>::max()) {
+    stream_->push_back('I');
+    WritePrimitive(static_cast<int16_t>(i), stream_);
+  } else if (i > std::numeric_limits<int32_t>::min() && i < std::numeric_limits<int32_t>::max()) {
+    stream_->push_back('l');
+    WritePrimitive(static_cast<int32_t>(i), stream_);
+  } else {
+    stream_->push_back('L');
+    WritePrimitive(i, stream_);
+  }
+}
+
+void UBJWriter::Visit(JsonNull const*) { stream_->push_back('Z'); }
+
+void UBJWriter::Visit(JsonString const* str) {
+  stream_->push_back('S');
+  EncodeStr(stream_, str->GetString());
+}
+
+void UBJWriter::Visit(JsonBoolean const* boolean) {
+  stream_->push_back(boolean->GetBoolean() ? 'T' : 'F');
+}
+
+void UBJWriter::Save(Json json) { json.Ptr()->Save(this); }
 }  // namespace xgboost

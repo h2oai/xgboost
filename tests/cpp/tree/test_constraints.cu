@@ -1,16 +1,17 @@
-/*!
- * Copyright 2019 XGBoost contributors
+/**
+ * Copyright 2019-2024, XGBoost contributors
  */
 #include <gtest/gtest.h>
 #include <thrust/copy.h>
 #include <thrust/device_vector.h>
-#include <cinttypes>
-#include <string>
-#include <bitset>
+
+#include <cstdint>
 #include <set>
+#include <string>
+
+#include "../../../src/common/device_helpers.cuh"
 #include "../../../src/tree/constraints.cuh"
 #include "../../../src/tree/param.h"
-#include "../../../src/common/device_helpers.cuh"
 
 namespace xgboost {
 namespace {
@@ -36,9 +37,7 @@ std::string GetConstraintsStr() {
 }
 
 tree::TrainParam GetParameter() {
-  std::vector<std::pair<std::string, std::string>> args{
-    {"interaction_constraints", GetConstraintsStr()}
-  };
+  Args args{{"interaction_constraints", GetConstraintsStr()}};
   tree::TrainParam param;
   param.Init(args);
   return param;
@@ -53,7 +52,7 @@ void CompareBitField(LBitField64 d_field, std::set<uint32_t> positions) {
   LBitField64 h_field{ {h_field_storage.data(),
                         h_field_storage.data() + h_field_storage.size()} };
 
-  for (size_t i = 0; i < h_field.Size(); ++i) {
+  for (size_t i = 0; i < h_field.Capacity(); ++i) {
     if (positions.find(i) != positions.cend()) {
       ASSERT_TRUE(h_field.Check(i));
     } else {
@@ -82,7 +81,7 @@ TEST(GPUFeatureInteractionConstraint, Init) {
         {h_node_storage.data(), h_node_storage.data() +  h_node_storage.size()}
       };
       // no feature is attached to node.
-      for (size_t i = 0; i < h_node.Size(); ++i) {
+      for (size_t i = 0; i < h_node.Capacity(); ++i) {
         ASSERT_FALSE(h_node.Check(i));
       }
     }
@@ -94,8 +93,8 @@ TEST(GPUFeatureInteractionConstraint, Init) {
     tree::TrainParam param = GetParameter();
     param.interaction_constraints = R"([[0, 1, 3], [3, 5, 6]])";
     FConstraintWrapper constraints(param, kFeatures);
-    std::vector<int32_t> h_sets {0, 0, 0, 1, 1, 1};
-    std::vector<int32_t> h_sets_ptr {0, 1, 2, 2, 4, 4, 5, 6};
+    std::vector<bst_feature_t> h_sets {0, 0, 0, 1, 1, 1};
+    std::vector<size_t> h_sets_ptr {0, 1, 2, 2, 4, 4, 5, 6};
     auto d_sets = constraints.GetDSets();
     ASSERT_EQ(h_sets.size(), d_sets.size());
     auto d_sets_ptr = constraints.GetDSetsPtr();

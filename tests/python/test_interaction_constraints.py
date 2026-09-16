@@ -1,15 +1,17 @@
-# -*- coding: utf-8 -*-
 import numpy as np
-import xgboost
-import testing as tm
 import pytest
+
+import xgboost
+from xgboost import testing as tm
 
 dpath = 'demo/data/'
 rng = np.random.RandomState(1994)
 
 
 class TestInteractionConstraints:
-    def run_interaction_constraints(self, tree_method, feature_names=None, interaction_constraints='[[0, 1]]'):
+    def run_interaction_constraints(
+        self, tree_method, feature_names=None, interaction_constraints='[[0, 1]]'
+    ):
         x1 = np.random.normal(loc=1.0, scale=1.0, size=1000)
         x2 = np.random.normal(loc=1.0, scale=1.0, size=1000)
         x3 = np.random.choice([1, 2, 3], size=1000, replace=True)
@@ -76,12 +78,22 @@ class TestInteractionConstraints:
                                          feature_names=feature_names,
                                          interaction_constraints=constraints)
 
+        constraints = [['feature_0', 'feature_1'], ['feature_2']]
+        feature_names = ['feature_0', 'feature_1', 'feature_2']
+        self.run_interaction_constraints(tree_method='exact',
+                                         feature_names=feature_names,
+                                         interaction_constraints=constraints)
+
     @pytest.mark.skipif(**tm.no_sklearn())
     def training_accuracy(self, tree_method):
         """Test accuracy, reused by GPU tests."""
         from sklearn.metrics import accuracy_score
-        dtrain = xgboost.DMatrix(dpath + 'agaricus.txt.train?indexing_mode=1')
-        dtest = xgboost.DMatrix(dpath + 'agaricus.txt.test?indexing_mode=1')
+        dtrain = xgboost.DMatrix(
+            dpath + "agaricus.txt.train?indexing_mode=1&format=libsvm"
+        )
+        dtest = xgboost.DMatrix(
+            dpath + "agaricus.txt.test?indexing_mode=1&format=libsvm"
+        )
         params = {
             'eta': 1,
             'max_depth': 6,

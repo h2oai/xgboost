@@ -7,11 +7,11 @@
 #include <sstream>
 
 #include "../helpers.h"
-#include "xgboost/json.h"
-#include "xgboost/logging.h"
+#include "xgboost/context.h"
 #include "xgboost/gbm.h"
-#include "xgboost/generic_parameters.h"
+#include "xgboost/json.h"
 #include "xgboost/learner.h"
+#include "xgboost/logging.h"
 
 namespace xgboost {
 namespace gbm {
@@ -19,15 +19,11 @@ namespace gbm {
 TEST(GBLinear, JsonIO) {
   size_t constexpr kRows = 16, kCols = 16;
 
-  LearnerModelParam param;
-  param.num_feature = kCols;
-  param.num_output_group = 1;
+  Context ctx;
+  LearnerModelParam mparam{MakeMP(kCols, .5, 1)};
 
-  GenericParameter gparam;
-  gparam.Init(Args{});
-
-  std::unique_ptr<GradientBooster> gbm {
-    CreateTrainedGBM("gblinear", Args{}, kRows, kCols, &param, &gparam) };
+  std::unique_ptr<GradientBooster> gbm{
+      CreateTrainedGBM("gblinear", Args{}, kRows, kCols, &mparam, &ctx)};
   Json model { Object() };
   gbm->SaveModel(&model);
   ASSERT_TRUE(IsA<Object>(model));

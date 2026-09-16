@@ -1,52 +1,44 @@
-/*!
- * Copyright (c) 2014-2019 by Contributors
+/**
+ * Copyright 2014-2023, XGBoost Contributors
  * \file sparse_page_writer.h
  * \author Tianqi Chen
  */
 #ifndef XGBOOST_DATA_SPARSE_PAGE_WRITER_H_
 #define XGBOOST_DATA_SPARSE_PAGE_WRITER_H_
 
-#include <xgboost/data.h>
-#include <dmlc/io.h>
-#include <vector>
-#include <algorithm>
-#include <cstring>
-#include <string>
-#include <utility>
-#include <memory>
-#include <functional>
+#include <functional>  // for function
+#include <string>      // for string
 
-#if DMLC_ENABLE_STD_THREAD
-#include <dmlc/concurrency.h>
-#include <thread>
-#endif  // DMLC_ENABLE_STD_THREAD
+#include "../common/io.h"   // for AlignedResourceReadStream, AlignedFileWriteStream
+#include "dmlc/io.h"        // for Stream
+#include "dmlc/registry.h"  // for Registry, FunctionRegEntryBase
+#include "xgboost/data.h"   // for SparsePage,CSCPage,SortedCSCPage,EllpackPage ...
 
-namespace xgboost {
-namespace data {
-
+namespace xgboost::data {
 template<typename T>
 struct SparsePageFormatReg;
 
-/*!
- * \brief Format specification of SparsePage.
+/**
+ * @brief Format specification of various data formats like SparsePage.
  */
-template<typename T>
+template <typename T>
 class SparsePageFormat {
  public:
-  /*! \brief virtual destructor */
   virtual ~SparsePageFormat() = default;
-  /*!
-   * \brief Load all the segments into page, advance fi to end of the block.
-   * \param page The data to read page into.
-   * \param fi the input stream of the file
-   * \return true of the loading as successful, false if end of file was reached
+  /**
+   * @brief Load all the segments into page, advance fi to end of the block.
+   *
+   * @param page The data to read page into.
+   * @param fi the input stream of the file
+   * @return true of the loading as successful, false if end of file was reached
    */
-  virtual bool Read(T* page, dmlc::SeekStream* fi) = 0;
-  /*!
-   * \brief save the data to fo, when a page was written.
-   * \param fo output stream
+  virtual bool Read(T* page, common::AlignedResourceReadStream* fi) = 0;
+  /**
+   * @brief save the data to fo, when a page was written.
+   *
+   * @param fo output stream
    */
-  virtual size_t Write(const T& page, dmlc::Stream* fo) = 0;
+  virtual size_t Write(const T& page, common::AlignedFileWriteStream* fo) = 0;
 };
 
 /*!
@@ -98,8 +90,12 @@ struct SparsePageFormatReg
 
 #define EllpackPageFmt SparsePageFormat<EllpackPage>
 #define XGBOOST_REGISTER_ELLPACK_PAGE_FORMAT(Name)                       \
-  DMLC_REGISTRY_REGISTER(SparsePageFormatReg<EllpackPage>, EllpackPageFm, Name)
+  DMLC_REGISTRY_REGISTER(SparsePageFormatReg<EllpackPage>, EllpackPageFmt, Name)
 
-}  // namespace data
-}  // namespace xgboost
+#define GHistIndexPageFmt SparsePageFormat<GHistIndexMatrix>
+#define XGBOOST_REGISTER_GHIST_INDEX_PAGE_FORMAT(Name)                         \
+  DMLC_REGISTRY_REGISTER(SparsePageFormatReg<GHistIndexMatrix>,                \
+                         GHistIndexPageFmt, Name)
+
+}  // namespace xgboost::data
 #endif  // XGBOOST_DATA_SPARSE_PAGE_WRITER_H_

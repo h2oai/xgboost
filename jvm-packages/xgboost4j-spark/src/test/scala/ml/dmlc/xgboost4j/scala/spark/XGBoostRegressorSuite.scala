@@ -1,5 +1,5 @@
 /*
- Copyright (c) 2014 by Contributors
+ Copyright (c) 2014-2024 by Contributors
 
  Licensed under the Apache License, Version 2.0 (the "License");
  you may not use this file except in compliance with the License.
@@ -16,15 +16,18 @@
 
 package ml.dmlc.xgboost4j.scala.spark
 
-import ml.dmlc.xgboost4j.java.GpuTestSuite
+import java.io.File
+
 import ml.dmlc.xgboost4j.scala.{DMatrix, XGBoost => ScalaXGBoost}
-import org.apache.spark.ml.linalg.Vector
+
+import org.apache.spark.ml.linalg.{Vector, Vectors}
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.{DataFrame, Row}
-import org.apache.spark.sql.types._
-import org.scalatest.FunSuite
+import org.scalatest.funsuite.AnyFunSuite
 
-abstract class XGBoostRegressorSuiteBase extends FunSuite with PerTest {
+import org.apache.spark.ml.feature.VectorAssembler
+
+class XGBoostRegressorSuite extends AnyFunSuite with PerTest with TmpFolderPerSuite {
   protected val treeMethod: String = "auto"
 
   test("XGBoost-Spark XGBoostRegressor output should match XGBoost4j") {
@@ -54,7 +57,7 @@ abstract class XGBoostRegressorSuiteBase extends FunSuite with PerTest {
       "max_depth" -> "6",
       "silent" -> "1",
       "objective" -> "reg:squarederror",
-      "max_bin" -> 16,
+      "max_bin" -> 64,
       "tree_method" -> treeMethod)
 
     val model1 = ScalaXGBoost.train(trainingDM, paramMap, round)
@@ -118,7 +121,7 @@ abstract class XGBoostRegressorSuiteBase extends FunSuite with PerTest {
 
   test("ranking: use group data") {
     val paramMap = Map("eta" -> "1", "max_depth" -> "6", "silent" -> "1",
-      "objective" -> "rank:pairwise", "num_workers" -> numWorkers, "num_round" -> 5,
+      "objective" -> "rank:ndcg", "num_workers" -> numWorkers, "num_round" -> 5,
       "group_col" -> "group", "tree_method" -> treeMethod)
 
     val trainingDF = buildDataFrameWithGroup(Ranking.train)
@@ -143,6 +146,24 @@ abstract class XGBoostRegressorSuiteBase extends FunSuite with PerTest {
     val prediction = model.transform(testDF).collect()
     val first = prediction.head.getAs[Double]("prediction")
     prediction.foreach(x => assert(math.abs(x.getAs[Double]("prediction") - first) <= 0.01f))
+  }
+
+  test("objective will be set if not specifying it") {
+    val paramMap = Map("eta" -> "1", "max_depth" -> "6", "silent" -> "1",
+      "num_round" -> 5, "num_workers" -> numWorkers, "tree_method" -> treeMethod)
+    val training = buildDataFrame(Regression.train)
+    val xgb = new XGBoostRegressor(paramMap)
+    assert(!xgb.isDefined(xgb.objective))
+    xgb.fit(training)
+    assert(xgb.getObjective == "reg:squarederror")
+
+    val paramMap1 = Map("eta" -> "1", "max_depth" -> "6", "silent" -> "1",
+      "num_round" -> 5, "num_workers" -> numWorkers, "tree_method" -> treeMethod,
+      "objective" -> "reg:squaredlogerror")
+    val xgb1 = new XGBoostRegressor(paramMap1)
+    assert(xgb1.getObjective == "reg:squaredlogerror")
+    xgb1.fit(training)
+    assert(xgb1.getObjective == "reg:squaredlogerror")
   }
 
   test("test predictionLeaf") {
@@ -217,14 +238,119 @@ abstract class XGBoostRegressorSuiteBase extends FunSuite with PerTest {
     assert(resultDF.columns.contains("predictLeaf"))
     assert(resultDF.columns.contains("predictContrib"))
   }
-}
 
-class XGBoostCpuRegressorSuite extends XGBoostRegressorSuiteBase {
+  test("featuresCols with features column can work") {
+    val spark = ss
+    import spark.implicits._
+    val xgbInput = Seq(
+      (Vectors.dense(1.0, 7.0), true, 10.1, 100.2, 0),
+      (Vectors.dense(2.0, 20.0), false, 2.1, 2.2, 1))
+      .toDF("f1", "f2", "f3", "features", "label")
 
-}
+    val paramMap = Map("eta" -> "1", "max_depth" -> "6", "silent" -> "1",
+      "objective" -> "reg:squarederror", "num_round" -> 5, "num_workers" -> 1)
 
-@GpuTestSuite
-class XGBoostGpuRegressorSuite extends XGBoostRegressorSuiteBase {
-  override protected val treeMethod: String = "gpu_hist"
-  override protected val numWorkers: Int = 1
+    val featuresName = Array("f1", "f2", "f3", "features")
+    val xgbClassifier = new XGBoostRegressor(paramMap)
+      .setFeaturesCol(featuresName)
+      .setLabelCol("label")
+
+    val model = xgbClassifier.fit(xgbInput)
+    assert(model.getFeaturesCols.sameElements(featuresName))
+
+    val df = model.transform(xgbInput)
+    assert(df.schema.fieldNames.contains("features_" + model.uid))
+    df.show()
+
+    val newFeatureName = "features_new"
+    // transform also can work for vectorized dataset
+    val vectorizedInput = new VectorAssembler()
+      .setInputCols(featuresName)
+      .setOutputCol(newFeatureName)
+      .transform(xgbInput)
+      .select(newFeatureName, "label")
+
+    val df1 = model
+      .setFeaturesCol(newFeatureName)
+      .transform(vectorizedInput)
+    assert(df1.schema.fieldNames.contains(newFeatureName))
+    df1.show()
+  }
+
+  test("featuresCols without features column can work") {
+    val spark = ss
+    import spark.implicits._
+    val xgbInput = Seq(
+      (Vectors.dense(1.0, 7.0), true, 10.1, 100.2, 0),
+      (Vectors.dense(2.0, 20.0), false, 2.1, 2.2, 1))
+      .toDF("f1", "f2", "f3", "f4", "label")
+
+    val paramMap = Map("eta" -> "1", "max_depth" -> "6", "silent" -> "1",
+      "objective" -> "reg:squarederror", "num_round" -> 5, "num_workers" -> 1)
+
+    val featuresName = Array("f1", "f2", "f3", "f4")
+    val xgbClassifier = new XGBoostRegressor(paramMap)
+      .setFeaturesCol(featuresName)
+      .setLabelCol("label")
+      .setEvalSets(Map("eval" -> xgbInput))
+
+    val model = xgbClassifier.fit(xgbInput)
+    assert(model.getFeaturesCols.sameElements(featuresName))
+
+    // transform should work for the dataset which includes the feature column names.
+    val df = model.transform(xgbInput)
+    assert(df.schema.fieldNames.contains("features"))
+    df.show()
+
+    // transform also can work for vectorized dataset
+    val vectorizedInput = new VectorAssembler()
+      .setInputCols(featuresName)
+      .setOutputCol("features")
+      .transform(xgbInput)
+      .select("features", "label")
+
+    val df1 = model.transform(vectorizedInput)
+    df1.show()
+  }
+
+  test("XGBoostRegressionModel should be compatible") {
+    val trainingDF = buildDataFrame(Regression.train)
+    val paramMap = Map(
+      "eta" -> "1",
+      "max_depth" -> "6",
+      "silent" -> "1",
+      "objective" -> "reg:squarederror",
+      "num_round" -> 5,
+      "tree_method" -> treeMethod,
+      "num_workers" -> numWorkers)
+
+    val model = new XGBoostRegressor(paramMap).fit(trainingDF)
+
+    val modelPath = new File(tempDir.toFile, "xgbc").getPath
+    model.write.option("format", "json").save(modelPath)
+    val nativeJsonModelPath = new File(tempDir.toFile, "nativeModel.json").getPath
+    model.nativeBooster.saveModel(nativeJsonModelPath)
+    assert(compareTwoFiles(new File(modelPath, "data/XGBoostRegressionModel").getPath,
+      nativeJsonModelPath))
+
+    // test default "ubj"
+    val modelUbjPath = new File(tempDir.toFile, "xgbcUbj").getPath
+    model.write.save(modelUbjPath)
+
+    val nativeUbjModelPath = new File(tempDir.toFile, "nativeModel.ubj").getPath
+    model.nativeBooster.saveModel(nativeUbjModelPath)
+
+    assert(compareTwoFiles(new File(modelUbjPath, "data/XGBoostRegressionModel").getPath,
+      nativeUbjModelPath))
+
+    // test the deprecated format
+    val modelDeprecatedPath = new File(tempDir.toFile, "modelDeprecated").getPath
+    model.write.option("format", "deprecated").save(modelDeprecatedPath)
+
+    val nativeDeprecatedModelPath = new File(tempDir.toFile, "nativeModel.deprecated").getPath
+    model.nativeBooster.saveModel(nativeDeprecatedModelPath)
+
+    assert(compareTwoFiles(new File(modelDeprecatedPath, "data/XGBoostRegressionModel").getPath,
+      nativeDeprecatedModelPath))
+  }
 }

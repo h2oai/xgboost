@@ -2,7 +2,7 @@ name: aarch64_test
 channels:
 - conda-forge
 dependencies:
-- python=3.7
+- python=3.8
 - pip
 - wheel
 - pytest
@@ -14,7 +14,7 @@ dependencies:
 - matplotlib
 - dask
 - distributed
-- hypothesis
+- hypothesis<=6.112
 - graphviz
 - python-graphviz
 - codecov
@@ -22,9 +22,14 @@ dependencies:
 - ninja
 - boto3
 - jsonschema
+- boto3
+- awscli
 - numba
 - llvmlite
+- cffi
+- pyarrow
+- pyspark>=3.4.0
+- cloudpickle
 - pip:
-  - shap
   - awscli
   - auditwheel

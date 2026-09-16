@@ -22,13 +22,17 @@ Core Data Structure
     :members:
     :show-inheritance:
 
-.. autoclass:: xgboost.DeviceQuantileDMatrix
+.. autoclass:: xgboost.QuantileDMatrix
+    :members:
     :show-inheritance:
 
 .. autoclass:: xgboost.Booster
     :members:
     :show-inheritance:
 
+.. autoclass:: xgboost.DataIter
+    :members:
+    :show-inheritance:
 
 Learning API
 ------------
@@ -41,6 +45,7 @@ Learning API
 
 Scikit-Learn API
 ----------------
+
 .. automodule:: xgboost.sklearn
 .. autoclass:: xgboost.XGBRegressor
     :members:
@@ -77,15 +82,25 @@ Plotting API
 
 Callback API
 ------------
-.. autofunction:: xgboost.callback.TrainingCallback
+.. automodule:: xgboost.callback
+.. autoclass:: xgboost.callback.TrainingCallback
+    :members:
 
-.. autofunction:: xgboost.callback.EvaluationMonitor
+.. autoclass:: xgboost.callback.EvaluationMonitor
+    :members:
+    :show-inheritance:
 
-.. autofunction:: xgboost.callback.EarlyStopping
+.. autoclass:: xgboost.callback.EarlyStopping
+    :members:
+    :show-inheritance:
 
-.. autofunction:: xgboost.callback.LearningRateScheduler
+.. autoclass:: xgboost.callback.LearningRateScheduler
+    :members:
+    :show-inheritance:
 
-.. autofunction:: xgboost.callback.TrainingCheckPoint
+.. autoclass:: xgboost.callback.TrainingCheckPoint
+    :members:
+    :show-inheritance:
 
 .. _dask_api:
 
@@ -98,7 +113,7 @@ Dask API
     :inherited-members:
     :show-inheritance:
 
-.. autoclass:: xgboost.dask.DaskDeviceQuantileDMatrix
+.. autoclass:: xgboost.dask.DaskQuantileDMatrix
     :members:
     :inherited-members:
     :show-inheritance:
@@ -130,6 +145,42 @@ Dask API
     :show-inheritance:
 
 .. autoclass:: xgboost.dask.DaskXGBRFClassifier
+    :members:
+    :inherited-members:
+    :show-inheritance:
+
+
+PySpark API
+-----------
+
+.. automodule:: xgboost.spark
+
+.. autoclass:: xgboost.spark.SparkXGBClassifier
+    :members:
+    :inherited-members:
+    :show-inheritance:
+
+.. autoclass:: xgboost.spark.SparkXGBClassifierModel
+    :members:
+    :inherited-members:
+    :show-inheritance:
+
+.. autoclass:: xgboost.spark.SparkXGBRegressor
+    :members:
+    :inherited-members:
+    :show-inheritance:
+
+.. autoclass:: xgboost.spark.SparkXGBRegressorModel
+    :members:
+    :inherited-members:
+    :show-inheritance:
+
+.. autoclass:: xgboost.spark.SparkXGBRanker
+    :members:
+    :inherited-members:
+    :show-inheritance:
+
+.. autoclass:: xgboost.spark.SparkXGBRankerModel
     :members:
     :inherited-members:
     :show-inheritance:

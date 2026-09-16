@@ -1,20 +1,15 @@
-/*!
- * Copyright 2017-2019 XGBoost contributors
+/**
+ * Copyright 2017-2024, XGBoost contributors
  */
 #pragma once
-#include <thrust/random.h>
-#include <cstdio>
-#include <cub/cub.cuh>
-#include <stdexcept>
-#include <string>
-#include <vector>
-#include "../common/device_helpers.cuh"
-#include "../common/random.h"
+#include <limits>   // for numeric_limits
+#include <ostream>  // for ostream
+
+#include "gpu_hist/histogram.cuh"
 #include "param.h"
+#include "xgboost/base.h"
 
-namespace xgboost {
-namespace tree {
-
+namespace xgboost::tree {
 struct GPUTrainingParam {
   // minimum amount of hessian(weight) allowed in a child
   float min_child_weight;
@@ -27,6 +22,8 @@ struct GPUTrainingParam {
   // default=0 means no constraint on weight delta
   float max_delta_step;
   float learning_rate;
+  uint32_t max_cat_to_onehot;
+  bst_bin_t max_cat_threshold;
 
   GPUTrainingParam() = default;
 
@@ -35,13 +32,10 @@ struct GPUTrainingParam {
         reg_lambda(param.reg_lambda),
         reg_alpha(param.reg_alpha),
         max_delta_step(param.max_delta_step),
-        learning_rate{param.learning_rate} {}
+        learning_rate{param.learning_rate},
+        max_cat_to_onehot{param.max_cat_to_onehot},
+        max_cat_threshold{param.max_cat_threshold} {}
 };
-
-using NodeIdT = int32_t;
-
-/** used to assign default id to a Node */
-static const bst_node_t kUnusedNode = -1;
 
 /**
  * @enum DefaultDirection node.cuh
@@ -55,68 +49,71 @@ enum DefaultDirection {
 };
 
 struct DeviceSplitCandidate {
-  float loss_chg {-FLT_MAX};
-  DefaultDirection dir {kLeftDir};
+  float loss_chg{-std::numeric_limits<float>::max()};
+  DefaultDirection dir{kLeftDir};
   int findex {-1};
   float fvalue {0};
+  // categorical split, either it's the split category for OHE or the threshold for partition-based
+  // split.
+  bst_cat_t thresh{-1};
+
   bool is_cat { false };
 
-  GradientPair left_sum;
-  GradientPair right_sum;
+  GradientPairInt64 left_sum;
+  GradientPairInt64 right_sum;
 
   XGBOOST_DEVICE DeviceSplitCandidate() {}  // NOLINT
 
-  template <typename ParamT>
-  XGBOOST_DEVICE void Update(const DeviceSplitCandidate& other,
-                             const ParamT& param) {
-    if (other.loss_chg > loss_chg &&
-        other.left_sum.GetHess() >= param.min_child_weight &&
-        other.right_sum.GetHess() >= param.min_child_weight) {
-      *this = other;
-    }
+  XGBOOST_DEVICE void Update(float loss_chg_in, DefaultDirection dir_in, float fvalue_in,
+                             int findex_in, GradientPairInt64 left_sum_in,
+                             GradientPairInt64 right_sum_in, bool cat,
+                             const GPUTrainingParam& param, const GradientQuantiser& quantiser) {
+    if (loss_chg_in > loss_chg &&
+        quantiser.ToFloatingPoint(left_sum_in).GetHess() >= param.min_child_weight &&
+        quantiser.ToFloatingPoint(right_sum_in).GetHess() >= param.min_child_weight) {
+        loss_chg = loss_chg_in;
+        dir = dir_in;
+        fvalue = fvalue_in;
+        is_cat = cat;
+        left_sum = left_sum_in;
+        right_sum = right_sum_in;
+        findex = findex_in;
+      }
   }
 
-  XGBOOST_DEVICE void Update(float loss_chg_in, DefaultDirection dir_in,
-                             float fvalue_in, int findex_in,
-                             GradientPair left_sum_in,
-                             GradientPair right_sum_in,
-                             bool cat,
-                             const GPUTrainingParam& param) {
-    if (loss_chg_in > loss_chg &&
-        left_sum_in.GetHess() >= param.min_child_weight &&
-        right_sum_in.GetHess() >= param.min_child_weight) {
-      loss_chg = loss_chg_in;
-      dir = dir_in;
-      fvalue = fvalue_in;
-      is_cat = cat;
-      left_sum = left_sum_in;
-      right_sum = right_sum_in;
-      findex = findex_in;
-    }
+  /**
+   * \brief Update for partition-based splits.
+   */
+  XGBOOST_DEVICE void UpdateCat(float loss_chg_in, DefaultDirection dir_in, bst_cat_t thresh_in,
+                                bst_feature_t findex_in, GradientPairInt64 left_sum_in,
+                                GradientPairInt64 right_sum_in, GPUTrainingParam const& param,
+                                const GradientQuantiser& quantiser) {
+      if (loss_chg_in > loss_chg &&
+          quantiser.ToFloatingPoint(left_sum_in).GetHess() >= param.min_child_weight &&
+          quantiser.ToFloatingPoint(right_sum_in).GetHess() >= param.min_child_weight) {
+        loss_chg = loss_chg_in;
+        dir = dir_in;
+        fvalue = std::numeric_limits<float>::quiet_NaN();
+        thresh = thresh_in;
+        is_cat = true;
+        left_sum = left_sum_in;
+        right_sum = right_sum_in;
+        findex = findex_in;
+      }
   }
-  XGBOOST_DEVICE bool IsValid() const { return loss_chg > 0.0f; }
+
+  [[nodiscard]] XGBOOST_DEVICE bool IsValid() const { return loss_chg > 0.0f; }
 
   friend std::ostream& operator<<(std::ostream& os, DeviceSplitCandidate const& c) {
     os << "loss_chg:" << c.loss_chg << ", "
        << "dir: " << c.dir << ", "
        << "findex: " << c.findex << ", "
        << "fvalue: " << c.fvalue << ", "
+       << "thresh: " << c.thresh << ", "
        << "is_cat: " << c.is_cat << ", "
        << "left sum: " << c.left_sum << ", "
        << "right sum: " << c.right_sum << std::endl;
     return os;
-  }
-};
-
-struct DeviceSplitCandidateReduceOp {
-  GPUTrainingParam param;
-  explicit DeviceSplitCandidateReduceOp(GPUTrainingParam param) : param(std::move(param)) {}
-  XGBOOST_DEVICE DeviceSplitCandidate operator()(
-      const DeviceSplitCandidate& a, const DeviceSplitCandidate& b) const {
-    DeviceSplitCandidate best;
-    best.Update(a, param);
-    best.Update(b, param);
-    return best;
   }
 };
 
@@ -132,5 +129,4 @@ struct SumCallbackOp {
     return old_prefix;
   }
 };
-}  // namespace tree
-}  // namespace xgboost
+}  // namespace xgboost::tree

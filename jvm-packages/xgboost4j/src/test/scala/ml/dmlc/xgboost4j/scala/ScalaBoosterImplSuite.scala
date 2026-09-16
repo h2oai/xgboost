@@ -1,5 +1,5 @@
 /*
- Copyright (c) 2014 by Contributors
+ Copyright (c) 2014-2022 by Contributors
 
  Licensed under the Apache License, Version 2.0 (the "License");
  you may not use this file except in compliance with the License.
@@ -20,11 +20,11 @@ import java.io.{FileOutputStream, FileInputStream, File}
 
 import junit.framework.TestCase
 import org.apache.commons.logging.LogFactory
-import org.scalatest.FunSuite
+import org.scalatest.funsuite.AnyFunSuite
 
 import ml.dmlc.xgboost4j.java.XGBoostError
 
-class ScalaBoosterImplSuite extends FunSuite {
+class ScalaBoosterImplSuite extends AnyFunSuite {
 
   private class EvalError extends EvalTrait {
 
@@ -95,8 +95,8 @@ class ScalaBoosterImplSuite extends FunSuite {
   }
 
   test("basic operation of booster") {
-    val trainMat = new DMatrix("../../demo/data/agaricus.txt.train")
-    val testMat = new DMatrix("../../demo/data/agaricus.txt.test")
+    val trainMat = new DMatrix("../../demo/data/agaricus.txt.train?format=libsvm")
+    val testMat = new DMatrix("../../demo/data/agaricus.txt.test?format=libsvm")
 
     val booster = trainBooster(trainMat, testMat)
     val predicts = booster.predict(testMat, true)
@@ -106,8 +106,8 @@ class ScalaBoosterImplSuite extends FunSuite {
 
   test("save/load model with path") {
 
-    val trainMat = new DMatrix("../../demo/data/agaricus.txt.train")
-    val testMat = new DMatrix("../../demo/data/agaricus.txt.test")
+    val trainMat = new DMatrix("../../demo/data/agaricus.txt.train?format=libsvm")
+    val testMat = new DMatrix("../../demo/data/agaricus.txt.test?format=libsvm")
     val eval = new EvalError
     val booster = trainBooster(trainMat, testMat)
     // save and load
@@ -117,13 +117,14 @@ class ScalaBoosterImplSuite extends FunSuite {
 
     val bst2: Booster = XGBoost.loadModel(temp.getAbsolutePath)
     assert(java.util.Arrays.equals(bst2.toByteArray, booster.toByteArray))
+    assert(java.util.Arrays.equals(bst2.toByteArray("ubj"), booster.toByteArray("ubj")))
     val predicts2: Array[Array[Float]] = bst2.predict(testMat, true, 0)
     TestCase.assertTrue(eval.eval(predicts2, testMat) < 0.1f)
   }
 
   test("save/load model with stream") {
-    val trainMat = new DMatrix("../../demo/data/agaricus.txt.train")
-    val testMat = new DMatrix("../../demo/data/agaricus.txt.test")
+    val trainMat = new DMatrix("../../demo/data/agaricus.txt.train?format=libsvm")
+    val testMat = new DMatrix("../../demo/data/agaricus.txt.test?format=libsvm")
     val eval = new EvalError
     val booster = trainBooster(trainMat, testMat)
     // save and load
@@ -138,7 +139,7 @@ class ScalaBoosterImplSuite extends FunSuite {
   }
 
   test("cross validation") {
-    val trainMat = new DMatrix("../../demo/data/agaricus.txt.train")
+    val trainMat = new DMatrix("../../demo/data/agaricus.txt.train?format=libsvm")
     val params = List("eta" -> "1.0", "max_depth" -> "3", "silent" -> "1", "nthread" -> "6",
       "objective" -> "binary:logistic", "gamma" -> "1.0", "eval_metric" -> "error").toMap
     val round = 2
@@ -147,8 +148,8 @@ class ScalaBoosterImplSuite extends FunSuite {
   }
 
   test("test with quantile histo depthwise") {
-    val trainMat = new DMatrix("../../demo/data/agaricus.txt.train")
-    val testMat = new DMatrix("../../demo/data/agaricus.txt.test")
+    val trainMat = new DMatrix("../../demo/data/agaricus.txt.train?format=libsvm")
+    val testMat = new DMatrix("../../demo/data/agaricus.txt.test?format=libsvm")
     val paramMap = List("max_depth" -> "3", "silent" -> "0",
       "objective" -> "binary:logistic", "tree_method" -> "hist",
       "grow_policy" -> "depthwise", "eval_metric" -> "auc").toMap
@@ -157,8 +158,8 @@ class ScalaBoosterImplSuite extends FunSuite {
   }
 
   test("test with quantile histo lossguide") {
-    val trainMat = new DMatrix("../../demo/data/agaricus.txt.train")
-    val testMat = new DMatrix("../../demo/data/agaricus.txt.test")
+    val trainMat = new DMatrix("../../demo/data/agaricus.txt.train?format=libsvm")
+    val testMat = new DMatrix("../../demo/data/agaricus.txt.test?format=libsvm")
     val paramMap = List("max_depth" -> "3", "silent" -> "0",
       "objective" -> "binary:logistic", "tree_method" -> "hist",
       "grow_policy" -> "lossguide", "max_leaves" -> "8", "eval_metric" -> "auc").toMap
@@ -167,8 +168,8 @@ class ScalaBoosterImplSuite extends FunSuite {
   }
 
   test("test with quantile histo lossguide with max bin") {
-    val trainMat = new DMatrix("../../demo/data/agaricus.txt.train")
-    val testMat = new DMatrix("../../demo/data/agaricus.txt.test")
+    val trainMat = new DMatrix("../../demo/data/agaricus.txt.train?format=libsvm")
+    val testMat = new DMatrix("../../demo/data/agaricus.txt.test?format=libsvm")
     val paramMap = List("max_depth" -> "3", "silent" -> "0",
       "objective" -> "binary:logistic", "tree_method" -> "hist",
       "grow_policy" -> "lossguide", "max_leaves" -> "8", "max_bin" -> "16",
@@ -178,8 +179,8 @@ class ScalaBoosterImplSuite extends FunSuite {
   }
 
   test("test with quantile histo depthwidth with max depth") {
-    val trainMat = new DMatrix("../../demo/data/agaricus.txt.train")
-    val testMat = new DMatrix("../../demo/data/agaricus.txt.test")
+    val trainMat = new DMatrix("../../demo/data/agaricus.txt.train?format=libsvm")
+    val testMat = new DMatrix("../../demo/data/agaricus.txt.test?format=libsvm")
     val paramMap = List("max_depth" -> "0", "silent" -> "0",
       "objective" -> "binary:logistic", "tree_method" -> "hist",
       "grow_policy" -> "depthwise", "max_leaves" -> "8", "max_depth" -> "2",
@@ -189,8 +190,8 @@ class ScalaBoosterImplSuite extends FunSuite {
   }
 
   test("test with quantile histo depthwidth with max depth and max bin") {
-    val trainMat = new DMatrix("../../demo/data/agaricus.txt.train")
-    val testMat = new DMatrix("../../demo/data/agaricus.txt.test")
+    val trainMat = new DMatrix("../../demo/data/agaricus.txt.train?format=libsvm")
+    val testMat = new DMatrix("../../demo/data/agaricus.txt.test?format=libsvm")
     val paramMap = List("max_depth" -> "0", "silent" -> "0",
       "objective" -> "binary:logistic", "tree_method" -> "hist",
       "grow_policy" -> "depthwise", "max_depth" -> "2", "max_bin" -> "2",
@@ -200,7 +201,7 @@ class ScalaBoosterImplSuite extends FunSuite {
   }
 
   test("test training from existing model in scala") {
-    val trainMat = new DMatrix("../../demo/data/agaricus.txt.train")
+    val trainMat = new DMatrix("../../demo/data/agaricus.txt.train?format=libsvm")
     val paramMap = List("max_depth" -> "0", "silent" -> "0",
       "objective" -> "binary:logistic", "tree_method" -> "hist",
       "grow_policy" -> "depthwise", "max_depth" -> "2", "max_bin" -> "2",
@@ -212,8 +213,8 @@ class ScalaBoosterImplSuite extends FunSuite {
   }
 
   test("test getting number of features from a booster") {
-    val trainMat = new DMatrix("../../demo/data/agaricus.txt.train")
-    val testMat = new DMatrix("../../demo/data/agaricus.txt.test")
+    val trainMat = new DMatrix("../../demo/data/agaricus.txt.train?format=libsvm")
+    val testMat = new DMatrix("../../demo/data/agaricus.txt.test?format=libsvm")
     val booster = trainBooster(trainMat, testMat)
 
     TestCase.assertEquals(booster.getNumFeature, 127)

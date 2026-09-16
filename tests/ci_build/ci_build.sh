@@ -2,14 +2,14 @@
 #
 # Execute command within a docker container
 #
-# Usage: ci_build.sh <CONTAINER_TYPE> <DOCKER_BINARY>
+# Usage: ci_build.sh <CONTAINER_TYPE> [--use-gpus]
 #                    [--dockerfile <DOCKERFILE_PATH>] [-it]
 #                    [--build-arg <BUILD_ARG>] <COMMAND>
 #
 # CONTAINER_TYPE: Type of the docker container used the run the build: e.g.,
 #                 (cpu | gpu)
 #
-# DOCKER_BINARY: Command to invoke docker, e.g. (docker | nvidia-docker).
+# --use-gpus: Whether to grant the container access to NVIDIA GPUs.
 #
 # DOCKERFILE_PATH: (Optional) Path to the Dockerfile used for docker build.  If
 #                  this optional value is not supplied (via the --dockerfile
@@ -29,9 +29,12 @@ shift 1
 DOCKERFILE_PATH="${SCRIPT_DIR}/Dockerfile.${CONTAINER_TYPE}"
 DOCKER_CONTEXT_PATH="${SCRIPT_DIR}"
 
-# Get docker binary command (should be either docker or nvidia-docker)
-DOCKER_BINARY="$1"
-shift 1
+GPU_FLAG=''
+if [[ "$1" == "--use-gpus" ]]; then
+    echo "Using NVIDIA GPUs"
+    GPU_FLAG='--gpus all'
+    shift 1
+fi
 
 if [[ "$1" == "--dockerfile" ]]; then
     DOCKERFILE_PATH="$2"
@@ -144,20 +147,21 @@ then
     DOCKER_CACHE_REPO="${DOCKER_CACHE_ECR_ID}.dkr.ecr.${DOCKER_CACHE_ECR_REGION}.amazonaws.com"
     echo "Using AWS ECR; repo URL = ${DOCKER_CACHE_REPO}"
     # Login for Docker registry
-    echo "\$(python3 -m awscli ecr get-login --no-include-email --region ${DOCKER_CACHE_ECR_REGION} --registry-ids ${DOCKER_CACHE_ECR_ID})"
-    $(python3 -m awscli ecr get-login --no-include-email --region ${DOCKER_CACHE_ECR_REGION} --registry-ids ${DOCKER_CACHE_ECR_ID})
+    echo "aws ecr get-login-password --region ${DOCKER_CACHE_ECR_REGION} | docker login --username AWS --password-stdin ${DOCKER_CACHE_REPO}"
+    aws ecr get-login-password --region ${DOCKER_CACHE_ECR_REGION} | docker login --username AWS --password-stdin ${DOCKER_CACHE_REPO}
     # Pull pre-build container from Docker build cache,
     # if one exists for the particular branch or pull request
-    echo "docker pull ${DOCKER_CACHE_REPO}/${DOCKER_IMG_NAME}:${BRANCH_NAME}"
-    if docker pull "${DOCKER_CACHE_REPO}/${DOCKER_IMG_NAME}:${BRANCH_NAME}"
+    DOCKER_TAG="${BRANCH_NAME//\//-}"  # Slashes are not allow in Docker tag
+    echo "docker pull --quiet ${DOCKER_CACHE_REPO}/${DOCKER_IMG_NAME}:${DOCKER_TAG}"
+    if time docker pull --quiet "${DOCKER_CACHE_REPO}/${DOCKER_IMG_NAME}:${DOCKER_TAG}"
     then
-      CACHE_FROM_CMD="--cache-from ${DOCKER_CACHE_REPO}/${DOCKER_IMG_NAME}:${BRANCH_NAME}"
+      CACHE_FROM_CMD="--cache-from ${DOCKER_CACHE_REPO}/${DOCKER_IMG_NAME}:${DOCKER_TAG} --build-arg BUILDKIT_INLINE_CACHE=1"
     else
       # If the build cache is empty of the particular branch or pull request,
       # use the build cache associated with the master branch
-      echo "docker pull ${DOCKER_CACHE_REPO}/${DOCKER_IMG_NAME}:master"
-      docker pull "${DOCKER_CACHE_REPO}/${DOCKER_IMG_NAME}:master" || true
-      CACHE_FROM_CMD="--cache-from ${DOCKER_CACHE_REPO}/${DOCKER_IMG_NAME}:master"
+      echo "docker pull --quiet ${DOCKER_CACHE_REPO}/${DOCKER_IMG_NAME}:master"
+      docker pull --quiet "${DOCKER_CACHE_REPO}/${DOCKER_IMG_NAME}:master" || true
+      CACHE_FROM_CMD="--cache-from ${DOCKER_CACHE_REPO}/${DOCKER_IMG_NAME}:master --build-arg BUILDKIT_INLINE_CACHE=1"
     fi
 else
     CACHE_FROM_CMD=''
@@ -165,11 +169,15 @@ fi
 
 echo "docker build \
     ${CI_DOCKER_BUILD_ARG} \
+    --progress=plain \
+    --ulimit nofile=1024000:1024000 \
     -t ${DOCKER_IMG_NAME} \
     -f ${DOCKERFILE_PATH} ${DOCKER_CONTEXT_PATH} \
     ${CACHE_FROM_CMD}"
 docker build \
     ${CI_DOCKER_BUILD_ARG} \
+    --progress=plain \
+    --ulimit nofile=1024000:1024000 \
     -t "${DOCKER_IMG_NAME}" \
     -f "${DOCKERFILE_PATH}" "${DOCKER_CONTEXT_PATH}" \
     ${CACHE_FROM_CMD}
@@ -185,16 +193,39 @@ if [[ -n "${DOCKER_CACHE_REPO}" ]]
 then
     # Push the container we just built to the Docker build cache
     # that is associated with the particular branch or pull request
-    echo "docker tag ${DOCKER_IMG_NAME} ${DOCKER_CACHE_REPO}/${DOCKER_IMG_NAME}:${BRANCH_NAME}"
-    docker tag "${DOCKER_IMG_NAME}" "${DOCKER_CACHE_REPO}/${DOCKER_IMG_NAME}:${BRANCH_NAME}"
+    echo "docker tag ${DOCKER_IMG_NAME} ${DOCKER_CACHE_REPO}/${DOCKER_IMG_NAME}:${DOCKER_TAG}"
+    docker tag "${DOCKER_IMG_NAME}" "${DOCKER_CACHE_REPO}/${DOCKER_IMG_NAME}:${DOCKER_TAG}"
 
-    echo "python3 -m awscli ecr create-repository --repository-name ${DOCKER_IMG_NAME} --region ${DOCKER_CACHE_ECR_REGION} || true"
-    python3 -m awscli ecr create-repository --repository-name ${DOCKER_IMG_NAME} --region ${DOCKER_CACHE_ECR_REGION} || true
+    # Attempt to create Docker repository; it will fail if the repository already exists
+    echo "aws ecr create-repository --repository-name ${DOCKER_IMG_NAME} --region ${DOCKER_CACHE_ECR_REGION}"
+    if aws ecr create-repository --repository-name ${DOCKER_IMG_NAME} --region ${DOCKER_CACHE_ECR_REGION}
+    then
+      # Repository was created. Now set expiration policy
+      echo "aws ecr put-lifecycle-policy --repository-name ${DOCKER_IMG_NAME} --region ${DOCKER_CACHE_ECR_REGION} --lifecycle-policy-text file:///dev/stdin"
+      cat <<EOF | aws ecr put-lifecycle-policy --repository-name ${DOCKER_IMG_NAME} --region ${DOCKER_CACHE_ECR_REGION} --lifecycle-policy-text file:///dev/stdin
+{
+   "rules": [
+       {
+           "rulePriority": 1,
+           "selection": {
+               "tagStatus": "any",
+               "countType": "sinceImagePushed",
+               "countUnit": "days",
+               "countNumber": 30
+           },
+           "action": {
+               "type": "expire"
+           }
+       }
+   ]
+}
+EOF
+    fi
 
-    echo "docker push ${DOCKER_CACHE_REPO}/${DOCKER_IMG_NAME}:${BRANCH_NAME}"
-    docker push "${DOCKER_CACHE_REPO}/${DOCKER_IMG_NAME}:${BRANCH_NAME}"
+    echo "docker push --quiet ${DOCKER_CACHE_REPO}/${DOCKER_IMG_NAME}:${DOCKER_TAG}"
+    docker push --quiet "${DOCKER_CACHE_REPO}/${DOCKER_IMG_NAME}:${DOCKER_TAG}"
     if [[ $? != "0" ]]; then
-        echo "ERROR: could not update Docker cache ${DOCKER_CACHE_REPO}/${DOCKER_IMG_NAME}:${BRANCH_NAME}"
+        echo "ERROR: could not update Docker cache ${DOCKER_CACHE_REPO}/${DOCKER_IMG_NAME}:${DOCKER_TAG}"
         exit 1
     fi
 fi
@@ -207,7 +238,8 @@ echo "Running '${COMMAND[*]}' inside ${DOCKER_IMG_NAME}..."
 # and share the PID namespace (--pid=host) so the process inside does not have
 # pid 1 and SIGKILL is propagated to the process inside (jenkins can kill it).
 set -x
-${DOCKER_BINARY} run --rm --pid=host \
+docker run --rm --pid=host \
+    ${GPU_FLAG} \
     -v "${WORKSPACE}":/workspace \
     -w /workspace \
     ${USER_IDS} \

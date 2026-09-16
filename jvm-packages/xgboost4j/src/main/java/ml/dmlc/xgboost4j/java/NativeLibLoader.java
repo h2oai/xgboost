@@ -26,6 +26,9 @@ import java.util.Locale;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 
+import static ml.dmlc.xgboost4j.java.NativeLibLoader.LibraryPathProvider.getLibraryPathFor;
+import static ml.dmlc.xgboost4j.java.NativeLibLoader.LibraryPathProvider.getPropertyNameForLibrary;
+
 /**
  * class to load native library
  *
@@ -45,13 +48,14 @@ class NativeLibLoader {
 
     final String name;
 
-    private OS(String name) {
+    OS(String name) {
       this.name = name;
     }
 
     /**
      * Detects the OS using the system properties.
      * Throws IllegalStateException if the OS is not recognized.
+     *
      * @return The OS.
      */
     static OS detectOS() {
@@ -68,6 +72,7 @@ class NativeLibLoader {
         throw new IllegalStateException("Unsupported OS:" + os);
       }
     }
+
   }
 
   /**
@@ -80,7 +85,7 @@ class NativeLibLoader {
 
     final String name;
 
-    private Arch(String name) {
+    Arch(String name) {
       this.name = name;
     }
 
@@ -103,8 +108,43 @@ class NativeLibLoader {
     }
   }
 
+  /**
+   * Utility class to determine the path of a native library.
+   */
+  static class LibraryPathProvider {
+
+    private static final String nativeResourcePath = "/lib";
+    private static final String customNativeLibraryPathPropertyPrefix = "xgboostruntime.native.";
+
+    static String getPropertyNameForLibrary(String libName) {
+      return customNativeLibraryPathPropertyPrefix + libName;
+    }
+
+    /**
+     * If a library-specific system property is set, this value is
+     * being used without further processing.
+     * Otherwise, the library path depends on the OS and architecture.
+     *
+     * @return path of the native library
+     */
+    static String getLibraryPathFor(OS os, Arch arch, String libName) {
+
+      String libraryPath = System.getProperty(getPropertyNameForLibrary(libName));
+
+      if (libraryPath == null) {
+        libraryPath = nativeResourcePath + "/" +
+                getPlatformFor(os, arch) + "/" +
+                System.mapLibraryName(libName);
+      }
+
+      logger.debug("Using path " + libraryPath + " for library with name " + libName);
+
+      return libraryPath;
+    }
+
+  }
+
   private static boolean initialized = false;
-  private static final String nativeResourcePath = "/lib";
   private static final String[] libNames = new String[]{"xgboost4j"};
 
   /**
@@ -115,39 +155,51 @@ class NativeLibLoader {
    *   <li>Supported OS: macOS, Windows, Linux, Solaris.</li>
    *   <li>Supported Architectures: x86_64, aarch64, sparc.</li>
    * </ul>
-   * Throws UnsatisfiedLinkError if the library failed to load it's dependencies.
+   * Throws UnsatisfiedLinkError if the library failed to load its dependencies.
    * @throws IOException If the library could not be extracted from the jar.
    */
   static synchronized void initXGBoost() throws IOException {
     if (!initialized) {
       OS os = OS.detectOS();
       Arch arch = Arch.detectArch();
-      String platform = os.name + "/" + arch.name;
       for (String libName : libNames) {
         try {
-          String libraryPathInJar = nativeResourcePath + "/" +
-              platform + "/" + System.mapLibraryName(libName);
+          String libraryPathInJar = getLibraryPathFor(os, arch, libName);
           loadLibraryFromJar(libraryPathInJar);
         } catch (UnsatisfiedLinkError ule) {
-          logger.error("Failed to load " + libName + " due to missing native dependencies for " +
-              "platform " + platform + ", this is likely due to a missing OpenMP dependency");
+          String failureMessageIncludingOpenMPHint = "Failed to load " + libName + " " +
+              "due to missing native dependencies for " +
+              "platform " + getPlatformFor(os, arch) + ", " +
+              "this is likely due to a missing OpenMP dependency";
+
           switch (os) {
             case WINDOWS:
+              logger.error(failureMessageIncludingOpenMPHint);
               logger.error("You may need to install 'vcomp140.dll' or 'libgomp-1.dll'");
               break;
             case MACOS:
-              logger.error("You may need to install 'libomp.dylib', via `brew install libomp`" +
-                  " or similar");
+              logger.error(failureMessageIncludingOpenMPHint);
+              logger.error("You may need to install 'libomp.dylib', via `brew install libomp` " +
+                  "or similar");
               break;
             case LINUX:
+              logger.error(failureMessageIncludingOpenMPHint);
+              logger.error("You may need to install 'libgomp.so' (or glibc) via your package " +
+                  "manager.");
+              logger.error("Alternatively, if your Linux OS is musl-based, you should set " +
+                      "the path for the native library " + libName + " " +
+                      "via the system property " + getPropertyNameForLibrary(libName));
+              break;
             case SOLARIS:
+              logger.error(failureMessageIncludingOpenMPHint);
               logger.error("You may need to install 'libgomp.so' (or glibc) via your package " +
                   "manager.");
               break;
           }
           throw ule;
         } catch (IOException ioe) {
-          logger.error("Failed to load " + libName + " library from jar for platform " + platform);
+          logger.error("Failed to load " + libName + " library from jar for platform " +
+                  getPlatformFor(os, arch));
           throw ioe;
         }
       }
@@ -240,6 +292,10 @@ class NativeLibLoader {
     }
 
     return temp.getAbsolutePath();
+  }
+
+  private static String getPlatformFor(OS os, Arch arch) {
+    return os.name + "/" + arch.name;
   }
 
 }

@@ -33,7 +33,7 @@ treeInteractions <- function(input_tree, input_max_depth) {
   }
 
   # Extract nodes with interactions
-  interaction_trees <- trees[!is.na(Split) & !is.na(parent_1),
+  interaction_trees <- trees[!is.na(Split) & !is.na(parent_1),  # nolint: object_usage_linter
                              c('Feature', paste0('parent_feat_', 1:(input_max_depth - 1))),
                              with = FALSE]
   interaction_trees_split <- split(interaction_trees, seq_len(nrow(interaction_trees)))
@@ -44,7 +44,7 @@ treeInteractions <- function(input_tree, input_max_depth) {
 
   # Remove non-interactions (same variable)
   interaction_list <- lapply(interaction_list, unique)  # remove same variables
-  interaction_length <- sapply(interaction_list, length)
+  interaction_length <- lengths(interaction_list)
   interaction_list <- interaction_list[interaction_length > 1]
   interaction_list <- unique(lapply(interaction_list, sort))
   return(interaction_list)
@@ -74,26 +74,26 @@ cols2ids <- function(object, col_names) {
 interaction_list_fid <- cols2ids(interaction_list, colnames(train))
 
 # Fit model with interaction constraints
-bst <- xgboost(data = train, label = y, max_depth = 4,
-               eta = 0.1, nthread = 2, nrounds = 1000,
-               interaction_constraints = interaction_list_fid)
+bst <- xgb.train(data = xgb.DMatrix(train, label = y), max_depth = 4,
+                 eta = 0.1, nthread = 2, nrounds = 1000,
+                 interaction_constraints = interaction_list_fid)
 
 bst_tree <- xgb.model.dt.tree(colnames(train), bst)
 bst_interactions <- treeInteractions(bst_tree, 4)
   # interactions constrained to combinations of V1*V2 and V3*V4*V5
 
 # Fit model without interaction constraints
-bst2 <- xgboost(data = train, label = y, max_depth = 4,
-                eta = 0.1, nthread = 2, nrounds = 1000)
+bst2 <- xgb.train(data = xgb.DMatrix(train, label = y), max_depth = 4,
+                  eta = 0.1, nthread = 2, nrounds = 1000)
 
 bst2_tree <- xgb.model.dt.tree(colnames(train), bst2)
 bst2_interactions <- treeInteractions(bst2_tree, 4)  # much more interactions
 
 # Fit model with both interaction and monotonicity constraints
-bst3 <- xgboost(data = train, label = y, max_depth = 4,
-                eta = 0.1, nthread = 2, nrounds = 1000,
-                interaction_constraints = interaction_list_fid,
-                monotone_constraints = c(-1, 0, 0, 0, 0, 0, 0, 0, 0, 0))
+bst3 <- xgb.train(data = xgb.DMatrix(train, label = y), max_depth = 4,
+                  eta = 0.1, nthread = 2, nrounds = 1000,
+                  interaction_constraints = interaction_list_fid,
+                  monotone_constraints = c(-1, 0, 0, 0, 0, 0, 0, 0, 0, 0))
 
 bst3_tree <- xgb.model.dt.tree(colnames(train), bst3)
 bst3_interactions <- treeInteractions(bst3_tree, 4)

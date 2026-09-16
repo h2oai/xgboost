@@ -1,30 +1,31 @@
-/*!
- *  Copyright (c) 2019~2021 by Contributors
+/**
+ *  Copyright 2019-2023, XGBoost Contributors
  * \file adapter.h
  */
 #ifndef XGBOOST_DATA_ADAPTER_H_
 #define XGBOOST_DATA_ADAPTER_H_
 #include <dmlc/data.h>
 
-#include <cstddef>
+#include <algorithm>
+#include <cstddef>  // for size_t
 #include <functional>
 #include <limits>
+#include <map>
 #include <memory>
 #include <string>
-#include <utility>
+#include <utility>  // std::move
 #include <vector>
 
-#include "xgboost/logging.h"
+#include "../common/error_msg.h"  // for MaxFeatureSize
+#include "../common/math.h"
+#include "array_interface.h"
 #include "xgboost/base.h"
 #include "xgboost/data.h"
+#include "xgboost/logging.h"
 #include "xgboost/span.h"
+#include "xgboost/string_view.h"
 
-#include "array_interface.h"
-#include "../c_api/c_api_error.h"
-
-namespace xgboost {
-namespace data {
-
+namespace xgboost::data {
 /**  External data formats should implement an adapter as below. The
  * adapter provides a uniform access to data outside xgboost, allowing
  * construction of DMatrix objects from a range of sources without duplicating
@@ -72,12 +73,30 @@ constexpr size_t kAdapterUnknownSize = std::numeric_limits<size_t >::max();
 
 struct COOTuple {
   COOTuple() = default;
-  XGBOOST_DEVICE COOTuple(size_t row_idx, size_t column_idx, float value)
+  XGBOOST_DEVICE COOTuple(bst_idx_t row_idx, bst_idx_t column_idx, float value)
       : row_idx(row_idx), column_idx(column_idx), value(value) {}
 
-  size_t row_idx{0};
-  size_t column_idx{0};
+  bst_idx_t row_idx{0};
+  bst_idx_t column_idx{0};
   float value{0};
+};
+
+struct IsValidFunctor {
+  float missing;
+
+  XGBOOST_DEVICE explicit IsValidFunctor(float missing) : missing(missing) {}
+
+  XGBOOST_DEVICE bool operator()(float value) const {
+    return !(common::CheckNAN(value) || value == missing);
+  }
+
+  XGBOOST_DEVICE bool operator()(const data::COOTuple& e) const {
+    return !(common::CheckNAN(e.value) || e.value == missing);
+  }
+
+  XGBOOST_DEVICE bool operator()(const Entry& e) const {
+    return !(common::CheckNAN(e.fvalue) || e.fvalue == missing);
+  }
 };
 
 namespace detail {
@@ -117,12 +136,8 @@ class CSRAdapterBatch : public detail::NoMetaInfo {
  public:
   class Line {
    public:
-    Line(size_t row_idx, size_t size, const unsigned* feature_idx,
-         const float* values)
-        : row_idx_(row_idx),
-          size_(size),
-          feature_idx_(feature_idx),
-          values_(values) {}
+    Line(bst_idx_t row_idx, bst_idx_t size, const unsigned* feature_idx, const float* values)
+        : row_idx_(row_idx), size_(size), feature_idx_(feature_idx), values_(values) {}
 
     size_t Size() const { return size_; }
     COOTuple GetElement(size_t idx) const {
@@ -130,8 +145,8 @@ class CSRAdapterBatch : public detail::NoMetaInfo {
     }
 
    private:
-    size_t row_idx_;
-    size_t size_;
+    bst_idx_t row_idx_;
+    bst_idx_t size_;
     const unsigned* feature_idx_;
     const float* values_;
   };
@@ -159,29 +174,25 @@ class CSRAdapterBatch : public detail::NoMetaInfo {
 
 class CSRAdapter : public detail::SingleBatchDataIter<CSRAdapterBatch> {
  public:
-  CSRAdapter(const size_t* row_ptr, const unsigned* feature_idx,
-             const float* values, size_t num_rows, size_t num_elements,
-             size_t num_features)
-      : batch_(row_ptr, feature_idx, values, num_rows, num_elements,
-               num_features),
+  CSRAdapter(const size_t* row_ptr, const unsigned* feature_idx, const float* values,
+             bst_idx_t num_rows, bst_idx_t num_elements, size_t num_features)
+      : batch_(row_ptr, feature_idx, values, num_rows, num_elements, num_features),
         num_rows_(num_rows),
         num_columns_(num_features) {}
   const CSRAdapterBatch& Value() const override { return batch_; }
-  size_t NumRows() const { return num_rows_; }
-  size_t NumColumns() const { return num_columns_; }
+  bst_idx_t NumRows() const { return num_rows_; }
+  bst_idx_t NumColumns() const { return num_columns_; }
 
  private:
   CSRAdapterBatch batch_;
-  size_t num_rows_;
-  size_t num_columns_;
+  bst_idx_t num_rows_;
+  bst_idx_t num_columns_;
 };
 
 class DenseAdapterBatch : public detail::NoMetaInfo {
  public:
-  DenseAdapterBatch(const float* values, size_t num_rows, size_t num_features)
-      : values_(values),
-        num_rows_(num_rows),
-        num_features_(num_features) {}
+  DenseAdapterBatch(const float* values, bst_idx_t num_rows, bst_idx_t num_features)
+      : values_(values), num_rows_(num_rows), num_features_(num_features) {}
 
  private:
   class Line {
@@ -235,20 +246,20 @@ class ArrayAdapterBatch : public detail::NoMetaInfo {
   static constexpr bool kIsRowMajor = true;
 
  private:
-  ArrayInterface array_interface_;
+  ArrayInterface<2> array_interface_;
 
   class Line {
-    ArrayInterface array_interface_;
+    ArrayInterface<2> array_interface_;
     size_t ridx_;
 
    public:
-    Line(ArrayInterface array_interface, size_t ridx)
+    Line(ArrayInterface<2> array_interface, size_t ridx)
         : array_interface_{std::move(array_interface)}, ridx_{ridx} {}
 
-    size_t Size() const { return array_interface_.num_cols; }
+    size_t Size() const { return array_interface_.Shape(1); }
 
     COOTuple GetElement(size_t idx) const {
-      return {ridx_, idx, array_interface_.GetElement(ridx_, idx)};
+      return {ridx_, idx, array_interface_(ridx_, idx)};
     }
   };
 
@@ -258,11 +269,11 @@ class ArrayAdapterBatch : public detail::NoMetaInfo {
     return Line{array_interface_, idx};
   }
 
-  size_t NumRows() const { return array_interface_.num_rows; }
-  size_t NumCols() const { return array_interface_.num_cols; }
-  size_t Size() const { return this->NumRows(); }
+  [[nodiscard]] std::size_t NumRows() const { return array_interface_.Shape(0); }
+  [[nodiscard]] std::size_t NumCols() const { return array_interface_.Shape(1); }
+  [[nodiscard]] std::size_t Size() const { return this->NumRows(); }
 
-  explicit ArrayAdapterBatch(ArrayInterface array_interface)
+  explicit ArrayAdapterBatch(ArrayInterface<2> array_interface)
       : array_interface_{std::move(array_interface)} {}
 };
 
@@ -275,43 +286,42 @@ class ArrayAdapter : public detail::SingleBatchDataIter<ArrayAdapterBatch> {
  public:
   explicit ArrayAdapter(StringView array_interface) {
     auto j = Json::Load(array_interface);
-    array_interface_ = ArrayInterface(get<Object const>(j));
+    array_interface_ = ArrayInterface<2>(get<Object const>(j));
     batch_ = ArrayAdapterBatch{array_interface_};
   }
-  ArrayAdapterBatch const& Value() const override { return batch_; }
-  size_t NumRows() const { return array_interface_.num_rows; }
-  size_t NumColumns() const { return array_interface_.num_cols; }
+  [[nodiscard]] ArrayAdapterBatch const& Value() const override { return batch_; }
+  [[nodiscard]] std::size_t NumRows() const { return array_interface_.Shape(0); }
+  [[nodiscard]] std::size_t NumColumns() const { return array_interface_.Shape(1); }
 
  private:
   ArrayAdapterBatch batch_;
-  ArrayInterface array_interface_;
+  ArrayInterface<2> array_interface_;
 };
 
 class CSRArrayAdapterBatch : public detail::NoMetaInfo {
-  ArrayInterface indptr_;
-  ArrayInterface indices_;
-  ArrayInterface values_;
+  ArrayInterface<1> indptr_;
+  ArrayInterface<1> indices_;
+  ArrayInterface<1> values_;
   bst_feature_t n_features_;
 
   class Line {
-    ArrayInterface indices_;
-    ArrayInterface values_;
+    ArrayInterface<1> indices_;
+    ArrayInterface<1> values_;
     size_t ridx_;
     size_t offset_;
 
    public:
-    Line(ArrayInterface indices, ArrayInterface values, size_t ridx,
+    Line(ArrayInterface<1> indices, ArrayInterface<1> values, size_t ridx,
          size_t offset)
         : indices_{std::move(indices)}, values_{std::move(values)}, ridx_{ridx},
           offset_{offset} {}
 
-    COOTuple GetElement(size_t idx) const {
-      return {ridx_, indices_.GetElement<size_t>(offset_ + idx, 0),
-              values_.GetElement(offset_ + idx, 0)};
+    [[nodiscard]] COOTuple GetElement(std::size_t idx) const {
+      return {ridx_, TypedIndex<std::size_t, 1>{indices_}(offset_ + idx), values_(offset_ + idx)};
     }
 
-    size_t Size() const {
-      return values_.num_rows * values_.num_cols;
+    [[nodiscard]] std::size_t Size() const {
+      return values_.Shape(0);
     }
   };
 
@@ -320,17 +330,16 @@ class CSRArrayAdapterBatch : public detail::NoMetaInfo {
 
  public:
   CSRArrayAdapterBatch() = default;
-  CSRArrayAdapterBatch(ArrayInterface indptr, ArrayInterface indices,
-                       ArrayInterface values, bst_feature_t n_features)
-      : indptr_{std::move(indptr)}, indices_{std::move(indices)},
-        values_{std::move(values)}, n_features_{n_features} {
-    indptr_.AsColumnVector();
-    values_.AsColumnVector();
-    indices_.AsColumnVector();
+  CSRArrayAdapterBatch(ArrayInterface<1> indptr, ArrayInterface<1> indices,
+                       ArrayInterface<1> values, bst_feature_t n_features)
+      : indptr_{std::move(indptr)},
+        indices_{std::move(indices)},
+        values_{std::move(values)},
+        n_features_{n_features} {
   }
 
   size_t NumRows() const {
-    size_t size = indptr_.num_rows * indptr_.num_cols;
+    size_t size = indptr_.Shape(0);
     size = size == 0 ? 0 : size - 1;
     return size;
   }
@@ -338,19 +347,19 @@ class CSRArrayAdapterBatch : public detail::NoMetaInfo {
   size_t Size() const { return this->NumRows(); }
 
   Line const GetLine(size_t idx) const {
-    auto begin_offset = indptr_.GetElement<size_t>(idx, 0);
-    auto end_offset = indptr_.GetElement<size_t>(idx + 1, 0);
+    auto begin_no_stride = TypedIndex<size_t, 1>{indptr_}(idx);
+    auto end_no_stride = TypedIndex<size_t, 1>{indptr_}(idx + 1);
 
     auto indices = indices_;
     auto values = values_;
+    // Slice indices and values, stride remains unchanged since this is slicing by
+    // specific index.
+    auto offset = indices.strides[0] * begin_no_stride;
 
-    values.num_cols = end_offset - begin_offset;
-    values.num_rows = 1;
+    indices.shape[0] = end_no_stride - begin_no_stride;
+    values.shape[0] = end_no_stride - begin_no_stride;
 
-    indices.num_cols = values.num_cols;
-    indices.num_rows = values.num_rows;
-
-    return Line{indices, values, idx, begin_offset};
+    return Line{indices, values, idx, offset};
   }
 };
 
@@ -372,7 +381,7 @@ class CSRArrayAdapter : public detail::SingleBatchDataIter<CSRArrayAdapterBatch>
     return batch_;
   }
   size_t NumRows() const {
-    size_t size = indptr_.num_cols * indptr_.num_rows;
+    size_t size = indptr_.Shape(0);
     size = size == 0 ? 0 : size - 1;
     return  size;
   }
@@ -380,9 +389,9 @@ class CSRArrayAdapter : public detail::SingleBatchDataIter<CSRArrayAdapterBatch>
 
  private:
   CSRArrayAdapterBatch batch_;
-  ArrayInterface indptr_;
-  ArrayInterface indices_;
-  ArrayInterface values_;
+  ArrayInterface<1> indptr_;
+  ArrayInterface<1> indices_;
+  ArrayInterface<1> values_;
   size_t num_cols_;
 };
 
@@ -452,17 +461,83 @@ class CSCAdapter : public detail::SingleBatchDataIter<CSCAdapterBatch> {
   size_t num_columns_;
 };
 
-class DataTableAdapterBatch : public detail::NoMetaInfo {
- public:
-  DataTableAdapterBatch(void** data, const char** feature_stypes,
-                        size_t num_rows, size_t num_features)
-      : data_(data),
-        feature_stypes_(feature_stypes),
-        num_features_(num_features),
-        num_rows_(num_rows) {}
+class CSCArrayAdapterBatch : public detail::NoMetaInfo {
+  ArrayInterface<1> indptr_;
+  ArrayInterface<1> indices_;
+  ArrayInterface<1> values_;
 
- private:
-  enum class DTType : uint8_t {
+  class Line {
+    std::size_t column_idx_;
+    ArrayInterface<1> row_idx_;
+    ArrayInterface<1> values_;
+    std::size_t offset_;
+
+   public:
+    Line(std::size_t idx, ArrayInterface<1> row_idx, ArrayInterface<1> values, std::size_t offset)
+        : column_idx_{idx},
+          row_idx_{std::move(row_idx)},
+          values_{std::move(values)},
+          offset_{offset} {}
+
+    std::size_t Size() const { return values_.Shape(0); }
+    COOTuple GetElement(std::size_t idx) const {
+      return {TypedIndex<std::size_t, 1>{row_idx_}(offset_ + idx), column_idx_,
+              values_(offset_ + idx)};
+    }
+  };
+
+ public:
+  static constexpr bool kIsRowMajor = false;
+
+  CSCArrayAdapterBatch(ArrayInterface<1> indptr, ArrayInterface<1> indices,
+                       ArrayInterface<1> values)
+      : indptr_{std::move(indptr)}, indices_{std::move(indices)}, values_{std::move(values)} {}
+
+  std::size_t Size() const { return indptr_.n - 1; }
+  Line GetLine(std::size_t idx) const {
+    auto begin_no_stride = TypedIndex<std::size_t, 1>{indptr_}(idx);
+    auto end_no_stride = TypedIndex<std::size_t, 1>{indptr_}(idx + 1);
+
+    auto indices = indices_;
+    auto values = values_;
+    // Slice indices and values, stride remains unchanged since this is slicing by
+    // specific index.
+    auto offset = indices.strides[0] * begin_no_stride;
+    indices.shape[0] = end_no_stride - begin_no_stride;
+    values.shape[0] = end_no_stride - begin_no_stride;
+
+    return Line{idx, indices, values, offset};
+  }
+};
+
+/**
+ * \brief CSC adapter with support for array interface.
+ */
+class CSCArrayAdapter : public detail::SingleBatchDataIter<CSCArrayAdapterBatch> {
+  ArrayInterface<1> indptr_;
+  ArrayInterface<1> indices_;
+  ArrayInterface<1> values_;
+  size_t num_rows_;
+  CSCArrayAdapterBatch batch_;
+
+ public:
+  CSCArrayAdapter(StringView indptr, StringView indices, StringView values, std::size_t num_rows)
+      : indptr_{indptr},
+        indices_{indices},
+        values_{values},
+        num_rows_{num_rows},
+        batch_{CSCArrayAdapterBatch{indptr_, indices_, values_}} {}
+
+  // JVM package sends 0 as unknown
+  [[nodiscard]] std::size_t NumRows() const {
+    return num_rows_ == 0 ? kAdapterUnknownSize : num_rows_;
+  }
+  [[nodiscard]] std::size_t NumColumns() const { return indptr_.n - 1; }
+  [[nodiscard]] const CSCArrayAdapterBatch& Value() const override { return batch_; }
+};
+
+class DataTableAdapterBatch : public detail::NoMetaInfo {
+  enum class DTType : std::uint8_t {
     kFloat32 = 0,
     kFloat64 = 1,
     kBool8 = 2,
@@ -473,7 +548,7 @@ class DataTableAdapterBatch : public detail::NoMetaInfo {
     kUnknown = 7
   };
 
-  DTType DTGetType(std::string type_string) const {
+  static DTType DTGetType(std::string type_string) {
     if (type_string == "float32") {
       return DTType::kFloat32;
     } else if (type_string == "float64") {
@@ -494,8 +569,23 @@ class DataTableAdapterBatch : public detail::NoMetaInfo {
     }
   }
 
+ public:
+  DataTableAdapterBatch(void const* const* const data, char const* const* feature_stypes,
+                        std::size_t num_rows, std::size_t num_features)
+      : data_(data), num_rows_(num_rows) {
+    CHECK(feature_types_.empty());
+    std::transform(feature_stypes, feature_stypes + num_features,
+                   std::back_inserter(feature_types_),
+                   [](char const* stype) { return DTGetType(stype); });
+  }
+
+ private:
   class Line {
-    float DTGetValue(const void* column, DTType dt_type, size_t ridx) const {
+    std::size_t row_idx_;
+    void const* const* const data_;
+    std::vector<DTType> const& feature_types_;
+
+    float DTGetValue(void const* column, DTType dt_type, std::size_t ridx) const {
       float missing = std::numeric_limits<float>::quiet_NaN();
       switch (dt_type) {
         case DTType::kFloat32: {
@@ -524,8 +614,7 @@ class DataTableAdapterBatch : public detail::NoMetaInfo {
         }
         case DTType::kInt64: {
           int64_t val = reinterpret_cast<const int64_t*>(column)[ridx];
-          return val != -9223372036854775807 - 1 ? static_cast<float>(val)
-                                                 : missing;
+          return val != -9223372036854775807 - 1 ? static_cast<float>(val) : missing;
         }
         default: {
           LOG(FATAL) << "Unknown data table type.";
@@ -535,51 +624,109 @@ class DataTableAdapterBatch : public detail::NoMetaInfo {
     }
 
    public:
-    Line(DTType type, size_t size, size_t column_idx, const void* column)
-        : type_(type), size_(size), column_idx_(column_idx), column_(column) {}
-
-    size_t Size() const { return size_; }
-    COOTuple GetElement(size_t idx) const {
-      return COOTuple{idx, column_idx_, DTGetValue(column_, type_, idx)};
+    Line(std::size_t ridx, void const* const* const data, std::vector<DTType> const& ft)
+        : row_idx_{ridx}, data_{data}, feature_types_{ft} {}
+    [[nodiscard]] std::size_t Size() const { return feature_types_.size(); }
+    [[nodiscard]] COOTuple GetElement(std::size_t idx) const {
+      return COOTuple{row_idx_, idx, DTGetValue(data_[idx], feature_types_[idx], row_idx_)};
     }
-
-   private:
-    DTType type_;
-    size_t size_;
-    size_t column_idx_;
-    const void* column_;
   };
 
  public:
-  size_t Size() const { return num_features_; }
-  const Line GetLine(size_t idx) const {
-    return Line(DTGetType(feature_stypes_[idx]), num_rows_, idx, data_[idx]);
-  }
-  static constexpr bool kIsRowMajor = false;
+  [[nodiscard]] size_t Size() const { return num_rows_; }
+  [[nodiscard]] const Line GetLine(std::size_t ridx) const { return {ridx, data_, feature_types_}; }
+  static constexpr bool kIsRowMajor = true;
 
  private:
-  void** data_;
-  const char** feature_stypes_;
-  size_t num_features_;
-  size_t num_rows_;
+  void const* const* const data_;
+
+  std::vector<DTType> feature_types_;
+  std::size_t num_rows_;
 };
 
-class DataTableAdapter
-    : public detail::SingleBatchDataIter<DataTableAdapterBatch> {
+class DataTableAdapter : public detail::SingleBatchDataIter<DataTableAdapterBatch> {
  public:
-  DataTableAdapter(void** data, const char** feature_stypes, size_t num_rows,
-                   size_t num_features)
+  DataTableAdapter(void** data, const char** feature_stypes, std::size_t num_rows,
+                   std::size_t num_features)
       : batch_(data, feature_stypes, num_rows, num_features),
         num_rows_(num_rows),
         num_columns_(num_features) {}
-  const DataTableAdapterBatch& Value() const override { return batch_; }
-  size_t NumRows() const { return num_rows_; }
-  size_t NumColumns() const { return num_columns_; }
+  [[nodiscard]] const DataTableAdapterBatch& Value() const override { return batch_; }
+  [[nodiscard]] std::size_t NumRows() const { return num_rows_; }
+  [[nodiscard]] std::size_t NumColumns() const { return num_columns_; }
 
  private:
   DataTableAdapterBatch batch_;
-  size_t num_rows_;
-  size_t num_columns_;
+  std::size_t num_rows_;
+  std::size_t num_columns_;
+};
+
+class ColumnarAdapterBatch : public detail::NoMetaInfo {
+  common::Span<ArrayInterface<1, false>> columns_;
+
+  class Line {
+    common::Span<ArrayInterface<1, false>> const& columns_;
+    std::size_t ridx_;
+
+   public:
+    explicit Line(common::Span<ArrayInterface<1, false>> const& columns, std::size_t ridx)
+        : columns_{columns}, ridx_{ridx} {}
+    [[nodiscard]] std::size_t Size() const { return columns_.empty() ? 0 : columns_.size(); }
+
+    [[nodiscard]] COOTuple GetElement(std::size_t idx) const {
+      return {ridx_, idx, columns_[idx](ridx_)};
+    }
+  };
+
+ public:
+  ColumnarAdapterBatch() = default;
+  explicit ColumnarAdapterBatch(common::Span<ArrayInterface<1, false>> columns)
+      : columns_{columns} {}
+  [[nodiscard]] Line GetLine(std::size_t ridx) const { return Line{columns_, ridx}; }
+  [[nodiscard]] std::size_t Size() const {
+    return columns_.empty() ? 0 : columns_.front().Shape(0);
+  }
+  [[nodiscard]] std::size_t NumCols() const { return columns_.empty() ? 0 : columns_.size(); }
+  [[nodiscard]] std::size_t NumRows() const { return this->Size(); }
+
+  static constexpr bool kIsRowMajor = true;
+};
+
+class ColumnarAdapter : public detail::SingleBatchDataIter<ColumnarAdapterBatch> {
+  std::vector<ArrayInterface<1, false>> columns_;
+  ColumnarAdapterBatch batch_;
+
+ public:
+  explicit ColumnarAdapter(StringView columns) {
+    auto jarray = Json::Load(columns);
+    CHECK(IsA<Array>(jarray));
+    auto const& array = get<Array const>(jarray);
+    for (auto col : array) {
+      columns_.emplace_back(get<Object const>(col));
+    }
+    bool consistent =
+        columns_.empty() ||
+        std::all_of(columns_.cbegin(), columns_.cend(), [&](ArrayInterface<1, false> const& array) {
+          return array.Shape(0) == columns_[0].Shape(0);
+        });
+    CHECK(consistent) << "Size of columns should be the same.";
+    batch_ = ColumnarAdapterBatch{columns_};
+  }
+
+  [[nodiscard]] ColumnarAdapterBatch const& Value() const override { return batch_; }
+
+  [[nodiscard]] std::size_t NumRows() const {
+    if (!columns_.empty()) {
+      return columns_.front().shape[0];
+    }
+    return 0;
+  }
+  [[nodiscard]] std::size_t NumColumns() const {
+    if (!columns_.empty()) {
+      return columns_.size();
+    }
+    return 0;
+  }
 };
 
 class FileAdapterBatch {
@@ -654,39 +801,26 @@ class FileAdapter : dmlc::DataIter<FileAdapterBatch> {
   dmlc::Parser<uint32_t>* parser_;
 };
 
-/*! \brief Data iterator that takes callback to return data, used in JVM package for
- *  accepting data iterator. */
+/**
+ * @brief Data iterator that takes callback to return data, used in JVM package for accepting data
+ *        iterator.
+ */
 template <typename DataIterHandle, typename XGBCallbackDataIterNext, typename XGBoostBatchCSR>
 class IteratorAdapter : public dmlc::DataIter<FileAdapterBatch> {
  public:
-  IteratorAdapter(DataIterHandle data_handle,
-                  XGBCallbackDataIterNext* next_callback)
-      :  columns_{data::kAdapterUnknownSize}, row_offset_{0},
-         at_first_(true),
-         data_handle_(data_handle), next_callback_(next_callback) {}
+  IteratorAdapter(DataIterHandle data_handle, XGBCallbackDataIterNext* next_callback)
+      : columns_{data::kAdapterUnknownSize},
+        data_handle_(data_handle),
+        next_callback_(next_callback) {}
 
   // override functions
   void BeforeFirst() override {
     CHECK(at_first_) << "Cannot reset IteratorAdapter";
   }
 
-  bool Next() override {
-    if ((*next_callback_)(
-            data_handle_,
-            [](void *handle, XGBoostBatchCSR batch) -> int {
-              API_BEGIN();
-              static_cast<IteratorAdapter *>(handle)->SetData(batch);
-              API_END();
-            },
-            this) != 0) {
-      at_first_ = false;
-      return true;
-    } else {
-      return false;
-    }
-  }
+  [[nodiscard]] bool Next() override;
 
-  FileAdapterBatch const& Value() const override {
+  [[nodiscard]] FileAdapterBatch const& Value() const override {
     return *batch_.get();
   }
 
@@ -734,12 +868,12 @@ class IteratorAdapter : public dmlc::DataIter<FileAdapterBatch> {
     block_.index = dmlc::BeginPtr(index_);
     block_.value = dmlc::BeginPtr(value_);
 
-    batch_.reset(new FileAdapterBatch(&block_, row_offset_));
+    batch_ = std::make_unique<FileAdapterBatch>(&block_, row_offset_);
     row_offset_ += offset_.size() - 1;
   }
 
-  size_t NumColumns() const { return columns_; }
-  size_t NumRows() const { return kAdapterUnknownSize; }
+  [[nodiscard]] std::size_t NumColumns() const { return columns_; }
+  [[nodiscard]] std::size_t NumRows() const { return kAdapterUnknownSize; }
 
  private:
   std::vector<size_t> offset_;
@@ -749,9 +883,9 @@ class IteratorAdapter : public dmlc::DataIter<FileAdapterBatch> {
   std::vector<dmlc::real_t> value_;
 
   size_t columns_;
-  size_t row_offset_;
+  size_t row_offset_{0};
   // at the beginning.
-  bool at_first_;
+  bool at_first_{true};
   // handle to the iterator,
   DataIterHandle data_handle_;
   // call back to get the data.
@@ -760,6 +894,22 @@ class IteratorAdapter : public dmlc::DataIter<FileAdapterBatch> {
   dmlc::RowBlock<uint32_t> block_;
   std::unique_ptr<FileAdapterBatch> batch_;
 };
-};  // namespace data
-}  // namespace xgboost
+
+class SparsePageAdapterBatch {
+  HostSparsePageView page_;
+
+ public:
+  struct Line {
+    Entry const* inst;
+    size_t n;
+    bst_idx_t ridx;
+    COOTuple GetElement(size_t idx) const { return {ridx, inst[idx].index, inst[idx].fvalue}; }
+    size_t Size() const { return n; }
+  };
+
+  explicit SparsePageAdapterBatch(HostSparsePageView page) : page_{std::move(page)} {}
+  Line GetLine(size_t ridx) const { return Line{page_[ridx].data(), page_[ridx].size(), ridx}; }
+  size_t Size() const { return page_.Size(); }
+};
+}  // namespace xgboost::data
 #endif  // XGBOOST_DATA_ADAPTER_H_

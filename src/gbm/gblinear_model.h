@@ -4,10 +4,8 @@
 #pragma once
 #include <dmlc/io.h>
 #include <dmlc/parameter.h>
-#include <xgboost/base.h>
-#include <xgboost/feature_map.h>
-#include <xgboost/model_visitor.h>
 #include <xgboost/learner.h>
+
 #include <vector>
 #include <string>
 #include <cstring>
@@ -36,7 +34,10 @@ struct DeprecatedGBLinearModelParam : public dmlc::Parameter<DeprecatedGBLinearM
     std::memset(this, 0, sizeof(DeprecatedGBLinearModelParam));
   }
 
-  DMLC_DECLARE_PARAMETER(DeprecatedGBLinearModelParam) {}
+  DMLC_DECLARE_PARAMETER(DeprecatedGBLinearModelParam) {
+    DMLC_DECLARE_FIELD(deprecated_num_feature);
+    DMLC_DECLARE_FIELD(deprecated_num_output_group);
+  }
 };
 
 // model for linear booster
@@ -46,12 +47,12 @@ class GBLinearModel : public Model {
   DeprecatedGBLinearModelParam param_;
 
  public:
-  int32_t num_boosted_rounds;
+  int32_t num_boosted_rounds{0};
   LearnerModelParam const* learner_model_param;
 
  public:
-  explicit GBLinearModel(LearnerModelParam const* learner_model_param) :
-      num_boosted_rounds{0}, learner_model_param {learner_model_param} {}
+  explicit GBLinearModel(LearnerModelParam const *learner_model_param)
+      : learner_model_param{learner_model_param} {}
   void Configure(Args const &) { }
 
   // weight for each of feature, bias is the last one
@@ -139,10 +140,6 @@ class GBLinearModel : public Model {
     std::vector<std::string> v;
     v.push_back(fo.str());
     return v;
-  }
-
-  void Accept(ModelVisitor& v) {
-      v.Visit(*this);
   }
 };
 

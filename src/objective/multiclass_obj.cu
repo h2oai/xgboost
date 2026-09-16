@@ -1,5 +1,5 @@
-/*!
- * Copyright 2015-2018 by Contributors
+/**
+ * Copyright 2015-2023, XGBoost Contributors
  * \file multi_class.cc
  * \brief Definition of multi-class classification objectives.
  * \author Tianqi Chen
@@ -21,21 +21,14 @@
 #include "../common/math.h"
 #include "../common/transform.h"
 
+#include "multiclass_param.h"
+
 namespace xgboost {
 namespace obj {
 
 #if defined(XGBOOST_USE_CUDA)
 DMLC_REGISTRY_FILE_TAG(multiclass_obj_gpu);
 #endif  // defined(XGBOOST_USE_CUDA)
-
-struct SoftmaxMultiClassParam : public XGBoostParameter<SoftmaxMultiClassParam> {
-  int num_class;
-  // declare parameters
-  DMLC_DECLARE_PARAMETER(SoftmaxMultiClassParam) {
-    DMLC_DECLARE_FIELD(num_class).set_lower_bound(1)
-        .describe("Number of output class in the multi-class classification.");
-  }
-};
 
 class SoftmaxMultiClassObj : public ObjFunction {
  public:
@@ -45,36 +38,34 @@ class SoftmaxMultiClassObj : public ObjFunction {
   void Configure(Args const& args) override {
     param_.UpdateAllowUnknown(args);
   }
-  void GetGradient(const HostDeviceVector<bst_float>& preds,
-                   const MetaInfo& info,
-                   int iter,
-                   HostDeviceVector<GradientPair>* out_gpair) override {
-    // Remove unused parameter compiler warning.
-    (void) iter;
 
-    if (info.labels_.Size() == 0) {
+  ObjInfo Task() const override { return ObjInfo::kClassification; }
+
+  void GetGradient(const HostDeviceVector<bst_float>& preds, const MetaInfo& info, std::int32_t,
+                   linalg::Matrix<GradientPair>* out_gpair) override {
+    if (info.labels.Size() == 0) {
       return;
     }
-    CHECK(preds.Size() == (static_cast<size_t>(param_.num_class) * info.labels_.Size()))
+    CHECK(preds.Size() == (static_cast<size_t>(param_.num_class) * info.labels.Size()))
         << "SoftmaxMultiClassObj: label size and pred size does not match.\n"
         << "label.Size() * num_class: "
-        << info.labels_.Size() * static_cast<size_t>(param_.num_class) << "\n"
+        << info.labels.Size() * static_cast<size_t>(param_.num_class) << "\n"
         << "num_class: " << param_.num_class << "\n"
         << "preds.Size(): " << preds.Size();
 
     const int nclass = param_.num_class;
     const auto ndata = static_cast<int64_t>(preds.Size() / nclass);
 
-    auto device = tparam_->gpu_id;
+    auto device = ctx_->Device();
     out_gpair->SetDevice(device);
-    info.labels_.SetDevice(device);
+    info.labels.SetDevice(device);
     info.weights_.SetDevice(device);
     preds.SetDevice(device);
 
     label_correct_.Resize(1);
     label_correct_.SetDevice(device);
 
-    out_gpair->Resize(preds.Size());
+    out_gpair->Reshape(info.num_row_, static_cast<std::uint64_t>(nclass));
     label_correct_.Fill(1);
 
     const bool is_null_weight = info.weights_.Size() == 0;
@@ -111,8 +102,8 @@ class SoftmaxMultiClassObj : public ObjFunction {
             p = label == k ? p - 1.0f : p;
             gpair[idx * nclass + k] = GradientPair(p * wt, h);
           }
-        }, common::Range{0, ndata}, device, false)
-        .Eval(out_gpair, &info.labels_, &preds, &info.weights_, &label_correct_);
+        }, common::Range{0, ndata}, ctx_->Threads(), device)
+        .Eval(out_gpair->Data(), info.labels.Data(), &preds, &info.weights_, &label_correct_);
 
     std::vector<int>& label_correct_h = label_correct_.HostVector();
     for (auto const flag : label_correct_h) {
@@ -135,7 +126,7 @@ class SoftmaxMultiClassObj : public ObjFunction {
     const int nclass = param_.num_class;
     const auto ndata = static_cast<int64_t>(io_preds->Size() / nclass);
 
-    auto device = io_preds->DeviceIdx();
+    auto device = io_preds->Device();
     if (prob) {
       common::Transform<>::Init(
           [=] XGBOOST_DEVICE(size_t _idx, common::Span<bst_float> _preds) {
@@ -143,8 +134,8 @@ class SoftmaxMultiClassObj : public ObjFunction {
                 _preds.subspan(_idx * nclass, nclass);
             common::Softmax(point.begin(), point.end());
           },
-          common::Range{0, ndata}, device)
-        .Eval(io_preds);
+          common::Range{0, ndata}, this->ctx_->Threads(), device)
+          .Eval(io_preds);
     } else {
       io_preds->SetDevice(device);
       HostDeviceVector<bst_float> max_preds;
@@ -159,7 +150,7 @@ class SoftmaxMultiClassObj : public ObjFunction {
                 common::FindMaxIndex(point.cbegin(), point.cend()) -
                 point.cbegin();
           },
-          common::Range{0, ndata}, device, false)
+          common::Range{0, ndata}, this->ctx_->Threads(), device)
           .Eval(io_preds, &max_preds);
       io_preds->Resize(max_preds.Size());
       io_preds->Copy(max_preds);

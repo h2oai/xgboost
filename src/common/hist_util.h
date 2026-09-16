@@ -1,5 +1,5 @@
-/*!
- * Copyright 2017-2020 by Contributors
+/**
+ * Copyright 2017-2024, XGBoost Contributors
  * \file hist_util.h
  * \brief Utility for fast histogram aggregation
  * \author Philip Cho, Tianqi Chen
@@ -7,22 +7,19 @@
 #ifndef XGBOOST_COMMON_HIST_UTIL_H_
 #define XGBOOST_COMMON_HIST_UTIL_H_
 
-#include <xgboost/data.h>
-#include <xgboost/generic_parameters.h>
-#include <limits>
-#include <vector>
 #include <algorithm>
-#include <memory>
-#include <utility>
+#include <cstdint>  // for uint32_t
+#include <limits>
 #include <map>
+#include <utility>
+#include <vector>
 
+#include "categorical.h"
+#include "quantile.h"
 #include "row_set.h"
-#include "common.h"
 #include "threading_utils.h"
-#include "../tree/param.h"
-#include "./quantile.h"
-#include "./timer.h"
-#include "../include/rabit/rabit.h"
+#include "xgboost/base.h"  // for bst_feature_t, bst_bin_t
+#include "xgboost/data.h"
 
 namespace xgboost {
 class GHistIndexMatrix;
@@ -34,129 +31,183 @@ namespace common {
  */
 using GHistIndexRow = Span<uint32_t const>;
 
-// A CSC matrix representing histogram cuts, used in CPU quantile hist.
+// A CSC matrix representing histogram cuts.
 // The cut values represent upper bounds of bins containing approximately equal numbers of elements
 class HistogramCuts {
+  bool has_categorical_{false};
+  float max_cat_{-1.0f};
+
  protected:
-  using BinIdx = uint32_t;
+  void Swap(HistogramCuts&& that) noexcept(true) {
+    std::swap(cut_values_, that.cut_values_);
+    std::swap(cut_ptrs_, that.cut_ptrs_);
+    std::swap(min_vals_, that.min_vals_);
+
+    std::swap(has_categorical_, that.has_categorical_);
+    std::swap(max_cat_, that.max_cat_);
+  }
+
+  void Copy(HistogramCuts const& that) {
+    cut_values_.Resize(that.cut_values_.Size());
+    cut_ptrs_.Resize(that.cut_ptrs_.Size());
+    min_vals_.Resize(that.min_vals_.Size());
+    cut_values_.Copy(that.cut_values_);
+    cut_ptrs_.Copy(that.cut_ptrs_);
+    min_vals_.Copy(that.min_vals_);
+    has_categorical_ = that.has_categorical_;
+    max_cat_ = that.max_cat_;
+  }
 
  public:
-  HostDeviceVector<bst_float> cut_values_;  // NOLINT
-  HostDeviceVector<uint32_t> cut_ptrs_;     // NOLINT
+  HostDeviceVector<float> cut_values_;   // NOLINT
+  HostDeviceVector<uint32_t> cut_ptrs_;  // NOLINT
   // storing minimum value in a sketch set.
   HostDeviceVector<float> min_vals_;  // NOLINT
 
   HistogramCuts();
-  HistogramCuts(HistogramCuts const& that) {
-    cut_values_.Resize(that.cut_values_.Size());
-    cut_ptrs_.Resize(that.cut_ptrs_.Size());
-    min_vals_.Resize(that.min_vals_.Size());
-    cut_values_.Copy(that.cut_values_);
-    cut_ptrs_.Copy(that.cut_ptrs_);
-    min_vals_.Copy(that.min_vals_);
-  }
+  HistogramCuts(HistogramCuts const& that) { this->Copy(that); }
 
   HistogramCuts(HistogramCuts&& that) noexcept(true) {
-    *this = std::forward<HistogramCuts&&>(that);
+    this->Swap(std::forward<HistogramCuts>(that));
   }
 
   HistogramCuts& operator=(HistogramCuts const& that) {
-    cut_values_.Resize(that.cut_values_.Size());
-    cut_ptrs_.Resize(that.cut_ptrs_.Size());
-    min_vals_.Resize(that.min_vals_.Size());
-    cut_values_.Copy(that.cut_values_);
-    cut_ptrs_.Copy(that.cut_ptrs_);
-    min_vals_.Copy(that.min_vals_);
+    this->Copy(that);
     return *this;
   }
 
   HistogramCuts& operator=(HistogramCuts&& that) noexcept(true) {
-    cut_ptrs_ = std::move(that.cut_ptrs_);
-    cut_values_ = std::move(that.cut_values_);
-    min_vals_ = std::move(that.min_vals_);
+    this->Swap(std::forward<HistogramCuts>(that));
     return *this;
   }
 
-  uint32_t FeatureBins(uint32_t feature) const {
-    return cut_ptrs_.ConstHostVector().at(feature + 1) -
-           cut_ptrs_.ConstHostVector()[feature];
+  [[nodiscard]] bst_bin_t FeatureBins(bst_feature_t feature) const {
+    return cut_ptrs_.ConstHostVector().at(feature + 1) - cut_ptrs_.ConstHostVector()[feature];
   }
 
-  // Getters.  Cuts should be of no use after building histogram indices, but currently
-  // they are deeply linked with quantile_hist, gpu sketcher and gpu_hist, so we preserve
-  // these for now.
   std::vector<uint32_t> const& Ptrs()      const { return cut_ptrs_.ConstHostVector();   }
   std::vector<float>    const& Values()    const { return cut_values_.ConstHostVector(); }
   std::vector<float>    const& MinValues() const { return min_vals_.ConstHostVector();   }
 
-  size_t TotalBins() const { return cut_ptrs_.ConstHostVector().back(); }
+  [[nodiscard]] bool HasCategorical() const { return has_categorical_; }
+  [[nodiscard]] float MaxCategory() const { return max_cat_; }
+  /**
+   * \brief Set meta info about categorical features.
+   *
+   * \param has_cat Do we have categorical feature in the data?
+   * \param max_cat The maximum categorical value in all features.
+   */
+  void SetCategorical(bool has_cat, float max_cat) {
+    has_categorical_ = has_cat;
+    max_cat_ = max_cat;
+  }
+
+  [[nodiscard]] bst_bin_t TotalBins() const { return cut_ptrs_.ConstHostVector().back(); }
 
   // Return the index of a cut point that is strictly greater than the input
   // value, or the last available index if none exists
-  BinIdx SearchBin(float value, uint32_t column_id) const {
-    auto beg = cut_ptrs_.ConstHostVector().at(column_id);
-    auto end = cut_ptrs_.ConstHostVector().at(column_id + 1);
-    const auto &values = cut_values_.ConstHostVector();
+  [[nodiscard]] bst_bin_t SearchBin(float value, bst_feature_t column_id,
+                                    std::vector<uint32_t> const& ptrs,
+                                    std::vector<float> const& values) const {
+    auto end = ptrs[column_id + 1];
+    auto beg = ptrs[column_id];
     auto it = std::upper_bound(values.cbegin() + beg, values.cbegin() + end, value);
-    BinIdx idx = it - values.cbegin();
-    if (idx == end) {
-      idx -= 1;
-    }
+    auto idx = static_cast<bst_bin_t>(it - values.cbegin());
+    idx -= !!(idx == static_cast<bst_bin_t>(end));
     return idx;
   }
 
-  BinIdx SearchBin(Entry const& e) const {
-    return SearchBin(e.fvalue, e.index);
+  [[nodiscard]] bst_bin_t SearchBin(float value, bst_feature_t column_id) const {
+    return this->SearchBin(value, column_id, Ptrs(), Values());
+  }
+  /**
+   * \brief Search the bin index for numerical feature.
+   */
+  [[nodiscard]] bst_bin_t SearchBin(Entry const& e) const { return SearchBin(e.fvalue, e.index); }
+
+  /**
+   * \brief Search the bin index for categorical feature.
+   */
+  [[nodiscard]] bst_bin_t SearchCatBin(float value, bst_feature_t fidx,
+                                       std::vector<uint32_t> const& ptrs,
+                                       std::vector<float> const& vals) const {
+    auto end = ptrs.at(fidx + 1) + vals.cbegin();
+    auto beg = ptrs[fidx] + vals.cbegin();
+    // Truncates the value in case it's not perfectly rounded.
+    auto v = static_cast<float>(common::AsCat(value));
+    auto bin_idx = static_cast<bst_bin_t>(std::lower_bound(beg, end, v) - vals.cbegin());
+    if (bin_idx == static_cast<bst_bin_t>(ptrs.at(fidx + 1))) {
+      bin_idx -= 1;
+    }
+    return bin_idx;
+  }
+  [[nodiscard]] bst_bin_t SearchCatBin(float value, bst_feature_t fidx) const {
+    auto const& ptrs = this->Ptrs();
+    auto const& vals = this->Values();
+    return this->SearchCatBin(value, fidx, ptrs, vals);
+  }
+  [[nodiscard]] bst_bin_t SearchCatBin(Entry const& e) const {
+    return SearchCatBin(e.fvalue, e.index);
+  }
+
+  /**
+   * \brief Return numerical bin value given bin index.
+   */
+  static float NumericBinValue(std::vector<std::uint32_t> const& ptrs,
+                               std::vector<float> const& vals, std::vector<float> const& mins,
+                               bst_feature_t fidx, bst_bin_t bin_idx) {
+    auto lower = static_cast<bst_bin_t>(ptrs[fidx]);
+    if (bin_idx == lower) {
+      return mins[fidx];
+    }
+    return vals[bin_idx - 1];
   }
 };
 
-inline HistogramCuts SketchOnDMatrix(DMatrix *m, int32_t max_bins,
-                                     std::vector<float> const &hessian = {}) {
-  HistogramCuts out;
-  auto const& info = m->Info();
-  const auto threads = omp_get_max_threads();
-  std::vector<std::vector<bst_row_t>> column_sizes(threads);
-  for (auto& column : column_sizes) {
-    column.resize(info.num_col_, 0);
-  }
-  std::vector<bst_row_t> reduced(info.num_col_, 0);
-  for (auto const& page : m->GetBatches<SparsePage>()) {
-    auto const &entries_per_column =
-        HostSketchContainer::CalcColumnSize(page, info.num_col_, threads);
-    for (size_t i = 0; i < entries_per_column.size(); ++i) {
-      reduced[i] += entries_per_column[i];
-    }
-  }
-  HostSketchContainer container(reduced, max_bins,
-                                HostSketchContainer::UseGroup(info), threads);
-  for (auto const &page : m->GetBatches<SparsePage>()) {
-    container.PushRowPage(page, info, hessian);
-  }
-  container.MakeCuts(&out);
-  return out;
-}
+/**
+ * \brief Run CPU sketching on DMatrix.
+ *
+ * \param use_sorted Whether should we use SortedCSC for sketching, it's more efficient
+ *                   but consumes more memory.
+ */
+HistogramCuts SketchOnDMatrix(Context const* ctx, DMatrix* m, bst_bin_t max_bins,
+                              bool use_sorted = false, Span<float const> hessian = {});
 
-enum BinTypeSize {
-  kUint8BinsTypeSize  = 1,
+enum BinTypeSize : uint8_t {
+  kUint8BinsTypeSize = 1,
   kUint16BinsTypeSize = 2,
   kUint32BinsTypeSize = 4
 };
 
-struct Index {
-  Index() {
-    SetBinTypeSize(binTypeSize_);
-  }
-  Index(const Index& i) = delete;
-  Index& operator=(Index i) = delete;
-  Index(Index&& i) = delete;
-  Index& operator=(Index&& i) = delete;
-  uint32_t operator[](size_t i) const {
-    if (offset_ptr_ != nullptr) {
-      return func_(data_ptr_, i) + offset_ptr_[i%p_];
-    } else {
-      return func_(data_ptr_, i);
+/**
+ * \brief Dispatch for bin type, fn is a function that accepts a scalar of the bin type.
+ */
+template <typename Fn>
+auto DispatchBinType(BinTypeSize type, Fn&& fn) {
+  switch (type) {
+    case kUint8BinsTypeSize: {
+      return fn(uint8_t{});
+    }
+    case kUint16BinsTypeSize: {
+      return fn(uint16_t{});
+    }
+    case kUint32BinsTypeSize: {
+      return fn(uint32_t{});
     }
   }
+  LOG(FATAL) << "Unreachable";
+  return fn(uint32_t{});
+}
+
+/**
+ * @brief Optionally compressed gradient index. The compression works only with dense
+ *        data.
+ *
+ *   The main body of construction code is in gradient_index.cc, this struct is only a
+ *   view class.
+ */
+class Index {
+ private:
   void SetBinTypeSize(BinTypeSize binTypeSize) {
     binTypeSize_ = binTypeSize;
     switch (binTypeSize) {
@@ -170,70 +221,121 @@ struct Index {
         func_ = &GetValueFromUint32;
         break;
       default:
-        CHECK(binTypeSize == kUint8BinsTypeSize  ||
-              binTypeSize == kUint16BinsTypeSize ||
+        CHECK(binTypeSize == kUint8BinsTypeSize || binTypeSize == kUint16BinsTypeSize ||
               binTypeSize == kUint32BinsTypeSize);
     }
   }
-  BinTypeSize GetBinTypeSize() const {
-    return binTypeSize_;
+
+ public:
+  // Inside the compressor, bin_idx is the index for cut value across all features. By
+  // subtracting it with starting pointer of each feature, we can reduce it to smaller
+  // value and store it with smaller types. Usable only with dense data.
+  //
+  // For sparse input we have to store an addition feature index (similar to sparse matrix
+  // formats like CSR) for each bin in index field to choose the right offset.
+  template <typename T>
+  struct CompressBin {
+    uint32_t const* offsets;
+
+    template <typename Bin, typename Feat>
+    auto operator()(Bin bin_idx, Feat fidx) const {
+      return static_cast<T>(bin_idx - offsets[fidx]);
+    }
+  };
+
+  template <typename T>
+  CompressBin<T> MakeCompressor() const {
+    uint32_t const* offsets = this->Offset();
+    return CompressBin<T>{offsets};
   }
-  template<typename T>
-  T* data() const {  // NOLINT
-    return static_cast<T*>(data_ptr_);
+
+  Index() { SetBinTypeSize(binTypeSize_); }
+
+  Index(Index const& i) = delete;
+  Index& operator=(Index const& i) = delete;
+  Index(Index&& i) = delete;
+
+  /** @brief Move assignment for lazy initialization. */
+  Index& operator=(Index&& i) = default;
+
+  /**
+   * @brief Construct the index from data.
+   *
+   * @param data     Storage for compressed histogram bin.
+   * @param bin_size Number of bytes for each bin.
+   */
+  Index(Span<std::uint8_t> data, BinTypeSize bin_size) : data_{data} {
+    this->SetBinTypeSize(bin_size);
   }
-  uint32_t* Offset() const {
-    return offset_ptr_;
+
+  uint32_t operator[](size_t i) const {
+    if (!bin_offset_.empty()) {
+      // dense, compressed
+      auto fidx = i % bin_offset_.size();
+      // restore the index by adding back its feature offset.
+      return func_(data_.data(), i) + bin_offset_[fidx];
+    } else {
+      return func_(data_.data(), i);
+    }
   }
-  size_t OffsetSize() const {
-    return offset_.size();
+  [[nodiscard]] BinTypeSize GetBinTypeSize() const { return binTypeSize_; }
+  template <typename T>
+  T const* data() const {  // NOLINT
+    return reinterpret_cast<T const*>(data_.data());
   }
-  size_t Size() const {
-    return data_.size() / (binTypeSize_);
+  template <typename T>
+  T* data() {  // NOLINT
+    return reinterpret_cast<T*>(data_.data());
   }
-  void Resize(const size_t nBytesData) {
-    data_.resize(nBytesData);
-    data_ptr_ = reinterpret_cast<void*>(data_.data());
+  [[nodiscard]] std::uint32_t const* Offset() const { return bin_offset_.data(); }
+  [[nodiscard]] std::size_t OffsetSize() const { return bin_offset_.size(); }
+  [[nodiscard]] std::size_t Size() const { return data_.size() / (binTypeSize_); }
+
+  // set the offset used in compression, cut_ptrs is the CSC indptr in HistogramCuts
+  void SetBinOffset(std::vector<uint32_t> const& cut_ptrs) {
+    bin_offset_.resize(cut_ptrs.size() - 1);  // resize to number of features.
+    std::copy_n(cut_ptrs.begin(), bin_offset_.size(), bin_offset_.begin());
   }
-  void ResizeOffset(const size_t nDisps) {
-    offset_.resize(nDisps);
-    offset_ptr_ = offset_.data();
-    p_ = nDisps;
+  auto begin() const {  // NOLINT
+    return data_.data();
   }
-  std::vector<uint8_t>::const_iterator begin() const {  // NOLINT
-    return data_.begin();
+  auto end() const {  // NOLINT
+    return data_.data() + data_.size();
   }
-  std::vector<uint8_t>::const_iterator end() const {  // NOLINT
-    return data_.end();
+
+  auto begin() {  // NOLINT
+    return data_.data();
+  }
+  auto end() {  // NOLINT
+    return data_.data() + data_.size();
   }
 
  private:
-  static uint32_t GetValueFromUint8(void *t, size_t i) {
-    return reinterpret_cast<uint8_t*>(t)[i];
+  // Functions to decompress the index.
+  static uint32_t GetValueFromUint8(uint8_t const* t, size_t i) { return t[i]; }
+  static uint32_t GetValueFromUint16(uint8_t const* t, size_t i) {
+    return reinterpret_cast<uint16_t const*>(t)[i];
   }
-  static uint32_t GetValueFromUint16(void* t, size_t i) {
-    return reinterpret_cast<uint16_t*>(t)[i];
-  }
-  static uint32_t GetValueFromUint32(void* t, size_t i) {
-    return reinterpret_cast<uint32_t*>(t)[i];
+  static uint32_t GetValueFromUint32(uint8_t const* t, size_t i) {
+    return reinterpret_cast<uint32_t const*>(t)[i];
   }
 
-  using Func = uint32_t (*)(void*, size_t);
+  using Func = uint32_t (*)(uint8_t const*, size_t);
 
-  std::vector<uint8_t> data_;
-  std::vector<uint32_t> offset_;  // size of this field is equal to number of features
-  void* data_ptr_;
-  BinTypeSize binTypeSize_ {kUint8BinsTypeSize};
-  size_t p_ {1};
-  uint32_t* offset_ptr_ {nullptr};
+  Span<std::uint8_t> data_;
+  // starting position of each feature inside the cut values (the indptr of the CSC cut matrix
+  // HistogramCuts without the last entry.) Used for bin compression.
+  std::vector<uint32_t> bin_offset_;
+
+  BinTypeSize binTypeSize_{kUint8BinsTypeSize};
   Func func_;
 };
 
 template <typename GradientIndex>
-int32_t XGBOOST_HOST_DEV_INLINE BinarySearchBin(size_t begin, size_t end,
-                                                GradientIndex const &data,
-                                                uint32_t const fidx_begin,
-                                                uint32_t const fidx_end) {
+bst_bin_t XGBOOST_HOST_DEV_INLINE BinarySearchBin(std::size_t begin, std::size_t end,
+                                                  GradientIndex const& data,
+                                                  bst_feature_t const fidx_begin,
+                                                  bst_feature_t const fidx_end) {
   size_t previous_middle = std::numeric_limits<size_t>::max();
   while (end != begin) {
     size_t middle = begin + (end - begin) / 2;
@@ -242,9 +344,11 @@ int32_t XGBOOST_HOST_DEV_INLINE BinarySearchBin(size_t begin, size_t end,
     }
     previous_middle = middle;
 
+    // index into all the bins
     auto gidx = data[middle];
 
     if (gidx >= fidx_begin && gidx < fidx_end) {
+      // Found the intersection.
       return static_cast<int32_t>(gidx);
     } else if (gidx < fidx_begin) {
       begin = middle;
@@ -256,72 +360,52 @@ int32_t XGBOOST_HOST_DEV_INLINE BinarySearchBin(size_t begin, size_t end,
   return -1;
 }
 
-class ColumnMatrix;
-
-template<typename GradientSumT>
-using GHistRow = Span<xgboost::detail::GradientPairInternal<GradientSumT> >;
-
-/*!
- * \brief fill a histogram by zeros
- */
-template<typename GradientSumT>
-void InitilizeHistByZeroes(GHistRow<GradientSumT> hist, size_t begin, size_t end);
+using GHistRow = Span<xgboost::GradientPairPrecise>;
+using ConstGHistRow = Span<xgboost::GradientPairPrecise const>;
 
 /*!
  * \brief Increment hist as dst += add in range [begin, end)
  */
-template<typename GradientSumT>
-void IncrementHist(GHistRow<GradientSumT> dst, const GHistRow<GradientSumT> add,
-                   size_t begin, size_t end);
+void IncrementHist(GHistRow dst, ConstGHistRow add, std::size_t begin, std::size_t end);
 
 /*!
  * \brief Copy hist from src to dst in range [begin, end)
  */
-template<typename GradientSumT>
-void CopyHist(GHistRow<GradientSumT> dst, const GHistRow<GradientSumT> src,
-              size_t begin, size_t end);
+void CopyHist(GHistRow dst, const GHistRow src, size_t begin, size_t end);
 
 /*!
  * \brief Compute Subtraction: dst = src1 - src2 in range [begin, end)
  */
-template<typename GradientSumT>
-void SubtractionHist(GHistRow<GradientSumT> dst, const GHistRow<GradientSumT> src1,
-                     const GHistRow<GradientSumT> src2,
-                     size_t begin, size_t end);
+void SubtractionHist(GHistRow dst, const GHistRow src1, const GHistRow src2, size_t begin,
+                     size_t end);
 
 /*!
  * \brief histogram of gradient statistics for multiple nodes
  */
-template<typename GradientSumT>
 class HistCollection {
  public:
-  using GHistRowT = GHistRow<GradientSumT>;
-  using GradientPairT = xgboost::detail::GradientPairInternal<GradientSumT>;
-
   // access histogram for i-th node
-  GHistRowT operator[](bst_uint nid) const {
+  GHistRow operator[](bst_uint nid) const {
     constexpr uint32_t kMax = std::numeric_limits<uint32_t>::max();
     const size_t id = row_ptr_.at(nid);
     CHECK_NE(id, kMax);
-    GradientPairT* ptr = nullptr;
-    if (contiguous_allocation_) {
-      ptr = const_cast<GradientPairT*>(data_[0].data() + nbins_*id);
-    } else {
-      ptr = const_cast<GradientPairT*>(data_[id].data());
-    }
+    GradientPairPrecise* ptr = const_cast<GradientPairPrecise*>(data_[id].data());
     return {ptr, nbins_};
   }
 
   // have we computed a histogram for i-th node?
-  bool RowExists(bst_uint nid) const {
+  [[nodiscard]] bool RowExists(bst_uint nid) const {
     const uint32_t k_max = std::numeric_limits<uint32_t>::max();
     return (nid < row_ptr_.size() && row_ptr_[nid] != k_max);
   }
-
-  // initialize histogram collection
-  void Init(uint32_t nbins) {
-    if (nbins_ != nbins) {
-      nbins_ = nbins;
+  /**
+   * \brief Initialize histogram collection.
+   *
+   * \param n_total_bins Number of bins across all features.
+   */
+  void Init(std::uint32_t n_total_bins) {
+    if (nbins_ != n_total_bins) {
+      nbins_ = n_total_bins;
       // quite expensive operation, so let's do this only once
       data_.clear();
     }
@@ -350,24 +434,13 @@ class HistCollection {
       data_[row_ptr_[nid]].resize(nbins_, {0, 0});
     }
   }
-  // allocate common buffer contiguously for all nodes, need for single Allreduce call
-  void AllocateAllData() {
-    const size_t new_size = nbins_*data_.size();
-    contiguous_allocation_ = true;
-    if (data_[0].size() != new_size) {
-      data_[0].resize(new_size);
-    }
-  }
 
  private:
   /*! \brief number of all bins over all features */
   uint32_t nbins_ = 0;
   /*! \brief amount of active nodes in hist collection */
   uint32_t n_nodes_added_ = 0;
-  /*! \brief flag to identify contiguous memory allocation */
-  bool contiguous_allocation_ = false;
-
-  std::vector<std::vector<GradientPairT>> data_;
+  std::vector<std::vector<GradientPairPrecise>> data_;
 
   /*! \brief row_ptr_[nid] locates bin for histogram of node nid */
   std::vector<size_t> row_ptr_;
@@ -378,11 +451,8 @@ class HistCollection {
  * Supports processing multiple tree-nodes for nested parallelism
  * Able to reduce histograms across threads in efficient way
  */
-template<typename GradientSumT>
 class ParallelGHistBuilder {
  public:
-  using GHistRowT = GHistRow<GradientSumT>;
-
   void Init(size_t nbins) {
     if (nbins != nbins_) {
       hist_buffer_.Init(nbins);
@@ -393,7 +463,7 @@ class ParallelGHistBuilder {
   // Add new elements if needed, mark all hists as unused
   // targeted_hists - already allocated hists which should contain final results after Reduce() call
   void Reset(size_t nthreads, size_t nodes, const BlockedSpace2d& space,
-             const std::vector<GHistRowT>& targeted_hists) {
+             const std::vector<GHistRow>& targeted_hists) {
     hist_buffer_.Init(nbins_);
     tid_nid_to_hist_.clear();
     threads_to_nids_map_.clear();
@@ -414,7 +484,7 @@ class ParallelGHistBuilder {
   }
 
   // Get specified hist, initialize hist by zeros if it wasn't used before
-  GHistRowT GetInitializedHist(size_t tid, size_t nid) {
+  GHistRow GetInitializedHist(size_t tid, size_t nid) {
     CHECK_LT(nid, nodes_);
     CHECK_LT(tid, nthreads_);
 
@@ -422,10 +492,10 @@ class ParallelGHistBuilder {
     if (idx >= 0) {
       hist_buffer_.AllocateData(idx);
     }
-    GHistRowT hist = idx == -1 ? targeted_hists_[nid] : hist_buffer_[idx];
+    GHistRow hist = idx == -1 ? targeted_hists_[nid] : hist_buffer_[idx];
 
     if (!hist_was_used_[tid * nodes_ + nid]) {
-      InitilizeHistByZeroes(hist, 0, hist.size());
+      std::fill_n(hist.data(), hist.size(), GradientPairPrecise{});
       hist_was_used_[tid * nodes_ + nid] = static_cast<int>(true);
     }
 
@@ -433,11 +503,11 @@ class ParallelGHistBuilder {
   }
 
   // Reduce following bins (begin, end] for nid-node in dst across threads
-  void ReduceHist(size_t nid, size_t begin, size_t end) {
+  void ReduceHist(size_t nid, size_t begin, size_t end) const {
     CHECK_GT(end, begin);
     CHECK_LT(nid, nodes_);
 
-    GHistRowT dst = targeted_hists_[nid];
+    GHistRow dst = targeted_hists_[nid];
 
     bool is_updated = false;
     for (size_t tid = 0; tid < nthreads_; ++tid) {
@@ -445,7 +515,7 @@ class ParallelGHistBuilder {
         is_updated = true;
 
         int idx = tid_nid_to_hist_.at({tid, nid});
-        GHistRowT src = idx == -1 ? targeted_hists_[nid] : hist_buffer_[idx];
+        GHistRow src = idx == -1 ? targeted_hists_[nid] : hist_buffer_[idx];
 
         if (dst.data() != src.data()) {
           IncrementHist(dst, src, begin, end);
@@ -455,11 +525,10 @@ class ParallelGHistBuilder {
     if (!is_updated) {
       // In distributed mode - some tree nodes can be empty on local machines,
       // So we need just set local hist by zeros in this case
-      InitilizeHistByZeroes(dst, begin, end);
+      std::fill(dst.data() + begin, dst.data() + end, GradientPairPrecise{});
     }
   }
 
- protected:
   void MatchThreadsToNodes(const BlockedSpace2d& space) {
     const size_t space_size = space.Size();
     const size_t chunck_size = space_size / nthreads_ + !!(space_size % nthreads_);
@@ -506,6 +575,9 @@ class ParallelGHistBuilder {
     }
   }
 
+  [[nodiscard]] bst_bin_t TotalBins() const { return nbins_; }
+
+ private:
   void MatchNodeNidPairToHist() {
     size_t hist_allocated_additionally = 0;
 
@@ -531,7 +603,7 @@ class ParallelGHistBuilder {
   /*! \brief number of nodes which will be processed in parallel  */
   size_t nodes_ = 0;
   /*! \brief Buffer for additional histograms for Parallel processing  */
-  HistCollection<GradientSumT> hist_buffer_;
+  HistCollection hist_buffer_;
   /*!
    * \brief Marks which hists were used, it means that they should be merged.
    * Contains only {true or false} values
@@ -542,7 +614,7 @@ class ParallelGHistBuilder {
   /*! \brief Buffer for additional histograms for Parallel processing  */
   std::vector<bool> threads_to_nids_map_;
   /*! \brief Contains histograms for final results  */
-  std::vector<GHistRowT> targeted_hists_;
+  std::vector<GHistRow> targeted_hists_;
   /*!
    * \brief map pair {tid, nid} to index of allocated histogram from hist_buffer_ and targeted_hists_,
    * -1 is reserved for targeted_hists_
@@ -550,74 +622,10 @@ class ParallelGHistBuilder {
   std::map<std::pair<size_t, size_t>, int> tid_nid_to_hist_;
 };
 
-/*!
- * \brief builder for histograms of gradient statistics
- */
-template<typename GradientSumT>
-class GHistBuilder {
- public:
-  using GHistRowT = GHistRow<GradientSumT>;
-
-  GHistBuilder() = default;
-  GHistBuilder(size_t nthread, uint32_t nbins) : nthread_{nthread}, nbins_{nbins} {}
-
-  // construct a histogram via histogram aggregation
-  template <bool any_missing>
-  void BuildHist(const std::vector<GradientPair>& gpair,
-                 const RowSetCollection::Elem row_indices,
-                 const GHistIndexMatrix& gmat,
-                 GHistRowT hist);
-  // construct a histogram via subtraction trick
-  void SubtractionTrick(GHistRowT self,
-                        GHistRowT sibling,
-                        GHistRowT parent);
-
-  uint32_t GetNumBins() const {
-      return nbins_;
-  }
-
- private:
-  /*! \brief number of threads for parallel computation */
-  size_t nthread_ { 0 };
-  /*! \brief number of all bins over all features */
-  uint32_t nbins_ { 0 };
-};
-
-/*!
- * \brief A C-style array with in-stack allocation. As long as the array is smaller than
- * MaxStackSize, it will be allocated inside the stack. Otherwise, it will be
- * heap-allocated.
- */
-template<typename T, size_t MaxStackSize>
-class MemStackAllocator {
- public:
-  explicit MemStackAllocator(size_t required_size): required_size_(required_size) {
-  }
-
-  T* Get() {
-    if (!ptr_) {
-      if (MaxStackSize >= required_size_) {
-        ptr_ = stack_mem_;
-      } else {
-        ptr_ =  reinterpret_cast<T*>(malloc(required_size_ * sizeof(T)));
-        do_free_ = true;
-      }
-    }
-
-    return ptr_;
-  }
-
-  ~MemStackAllocator() {
-    if (do_free_) free(ptr_);
-  }
-
-
- private:
-  T* ptr_ = nullptr;
-  bool do_free_ = false;
-  size_t required_size_;
-  T stack_mem_[MaxStackSize];
-};
+// construct a histogram via histogram aggregation
+template <bool any_missing>
+void BuildHist(Span<GradientPair const> gpair, const RowSetCollection::Elem row_indices,
+               const GHistIndexMatrix& gmat, GHistRow hist, bool force_read_by_column = false);
 }  // namespace common
 }  // namespace xgboost
 #endif  // XGBOOST_COMMON_HIST_UTIL_H_

@@ -6,6 +6,13 @@ name: XGBoost-CI
 # events but only for the master branch
 on: [push, pull_request]
 
+permissions:
+  contents: read # to fetch code (actions/checkout)
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 # A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
   gtest-cpu:
@@ -14,22 +21,19 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-10.15]
+        os: [macos-12]
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
       with:
         submodules: 'true'
     - name: Install system packages
       run: |
-        # Use libomp 11.1.0: https://github.com/dmlc/xgboost/issues/7039
-        wget https://raw.githubusercontent.com/Homebrew/homebrew-core/679923b4eb48a8dc7ecc1f05d06063cd79b3fc00/Formula/libomp.rb -O $(find $(brew --repository) -name libomp.rb)
         brew install ninja libomp
-        brew pin libomp
     - name: Build gtest binary
       run: |
         mkdir build
         cd build
-        cmake .. -DGOOGLE_TEST=ON -DUSE_OPENMP=ON -DUSE_DMLC_GTEST=ON -DPLUGIN_DENSE_PARSER=ON -GNinja
+        cmake .. -DGOOGLE_TEST=ON -DUSE_OPENMP=ON -DUSE_DMLC_GTEST=ON -GNinja -DBUILD_DEPRECATED_CLI=ON -DUSE_SANITIZER=ON -DENABLED_SANITIZERS=address -DCMAKE_BUILD_TYPE=RelWithDebInfo
         ninja -v
     - name: Run gtest binary
       run: |
@@ -45,7 +49,7 @@ jobs:
       matrix:
         os: [ubuntu-latest]
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
       with:
         submodules: 'true'
     - name: Install system packages
@@ -56,40 +60,80 @@ jobs:
       run: |
         mkdir build
         cd build
-        cmake .. -GNinja -DGOOGLE_TEST=ON  -DUSE_DMLC_GTEST=ON -DUSE_OPENMP=OFF
+        cmake .. -GNinja -DGOOGLE_TEST=ON  -DUSE_DMLC_GTEST=ON -DUSE_OPENMP=OFF -DBUILD_DEPRECATED_CLI=ON
         ninja -v
     - name: Run gtest binary
       run: |
         cd build
         ctest --extra-verbose
 
+  gtest-cpu-sycl:
+    name: Test Google C++ unittest (CPU SYCL)
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        python-version: ["3.8"]
+    steps:
+    - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+      with:
+        submodules: 'true'
+    - uses: conda-incubator/setup-miniconda@a4260408e20b96e80095f42ff7f1a15b27dd94ca  # v3.0.4
+      with:
+        miniforge-variant: Miniforge3
+        miniforge-version: latest
+        activate-environment: linux_sycl_test
+        environment-file: tests/ci_build/conda_env/linux_sycl_test.yml
+        use-mamba: true
+    - name: Display Conda env
+      run: |
+        conda info
+        conda list
+    - name: Build and install XGBoost
+      shell: bash -l {0}
+      run: |
+        mkdir build
+        cd build
+        cmake .. -DGOOGLE_TEST=ON -DUSE_DMLC_GTEST=ON -DPLUGIN_SYCL=ON -DCMAKE_INSTALL_PREFIX=$CONDA_PREFIX
+        make -j$(nproc)
+    - name: Run gtest binary for SYCL
+      run: |
+        cd build
+        ./testxgboost --gtest_filter=Sycl*
+    - name: Run gtest binary for non SYCL
+      run: |
+        cd build
+        ./testxgboost --gtest_filter=-Sycl*
+
   c-api-demo:
     name: Test installing XGBoost lib + building the C API demo
     runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash -l {0}
     strategy:
       fail-fast: false
       matrix:
         os: ["ubuntu-latest"]
         python-version: ["3.8"]
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
       with:
         submodules: 'true'
-    - name: Install system packages
-      run: |
-        sudo apt-get install -y --no-install-recommends ninja-build
-    - uses: conda-incubator/setup-miniconda@v2
+    - uses: conda-incubator/setup-miniconda@a4260408e20b96e80095f42ff7f1a15b27dd94ca  # v3.0.4
       with:
-        auto-update-conda: true
-        python-version: ${{ matrix.python-version }}
-        activate-environment: test
+        miniforge-variant: Miniforge3
+        miniforge-version: latest
+        activate-environment: cpp_test
+        environment-file: tests/ci_build/conda_env/cpp_test.yml
+        use-mamba: true
     - name: Display Conda env
-      shell: bash -l {0}
       run: |
         conda info
         conda list
+
     - name: Build and install XGBoost static library
-      shell: bash -l {0}
       run: |
         mkdir build
         cd build
@@ -97,7 +141,6 @@ jobs:
         ninja -v install
         cd -
     - name: Build and run C API demo with static
-      shell: bash -l {0}
       run: |
         pushd .
         cd demo/c-api/
@@ -109,15 +152,15 @@ jobs:
         cd ..
         rm -rf ./build
         popd
+
     - name: Build and install XGBoost shared library
-      shell: bash -l {0}
       run: |
         cd build
-        cmake .. -DBUILD_STATIC_LIB=OFF -DCMAKE_INSTALL_PREFIX=$CONDA_PREFIX -GNinja
+        cmake .. -DBUILD_STATIC_LIB=OFF -DCMAKE_INSTALL_PREFIX=$CONDA_PREFIX -GNinja -DPLUGIN_FEDERATED=ON -DGOOGLE_TEST=ON
         ninja -v install
+        ./testxgboost
         cd -
     - name: Build and run C API demo with shared
-      shell: bash -l {0}
       run: |
         pushd .
         cd demo/c-api/
@@ -130,103 +173,21 @@ jobs:
         ./tests/ci_build/verify_link.sh ./demo/c-api/build/basic/api-demo
         ./tests/ci_build/verify_link.sh ./demo/c-api/build/external-memory/external-memory-demo
 
-  lint:
+  cpp-lint:
     runs-on: ubuntu-latest
-    name: Code linting for Python and C++
+    name: Code linting for C++
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
       with:
         submodules: 'true'
-    - uses: actions/setup-python@v2
+    - uses: actions/setup-python@0a5c61591373683505ea898e09a3ea4f39ef2b9c # v5.0.0
       with:
-        python-version: '3.7'
+        python-version: "3.8"
         architecture: 'x64'
     - name: Install Python packages
       run: |
-        python -m pip install wheel setuptools
-        python -m pip install pylint cpplint numpy scipy scikit-learn
+        python -m pip install wheel setuptools cmakelint cpplint pylint
     - name: Run lint
       run: |
-        make lint
-
-  mypy:
-    runs-on: ubuntu-latest
-    name: Type checking for Python
-    steps:
-    - uses: actions/checkout@v2
-      with:
-        submodules: 'true'
-    - uses: actions/setup-python@v2
-      with:
-        python-version: '3.7'
-        architecture: 'x64'
-    - name: Install Python packages
-      run: |
-        python -m pip install wheel setuptools mypy pandas dask[complete] distributed
-    - name: Run mypy
-      run: |
-        make mypy
-
-  doxygen:
-    runs-on: ubuntu-latest
-    name: Generate C/C++ API doc using Doxygen
-    steps:
-    - uses: actions/checkout@v2
-      with:
-        submodules: 'true'
-    - uses: actions/setup-python@v2
-      with:
-        python-version: '3.7'
-        architecture: 'x64'
-    - name: Install system packages
-      run: |
-        sudo apt-get install -y --no-install-recommends doxygen graphviz ninja-build
-        python -m pip install wheel setuptools
-        python -m pip install awscli
-    - name: Run Doxygen
-      run: |
-        mkdir build
-        cd build
-        cmake .. -DBUILD_C_DOC=ON -GNinja
-        ninja -v doc_doxygen
-    - name: Extract branch name
-      shell: bash
-      run: echo "##[set-output name=branch;]$(echo ${GITHUB_REF#refs/heads/})"
-      id: extract_branch
-      if: github.ref == 'refs/heads/master' || contains(github.ref, 'refs/heads/release_')
-    - name: Publish
-      run: |
-        cd build/
-        tar cvjf ${{ steps.extract_branch.outputs.branch }}.tar.bz2 doc_doxygen/
-        python -m awscli s3 cp ./${{ steps.extract_branch.outputs.branch }}.tar.bz2 s3://xgboost-docs/doxygen/ --acl public-read
-      if: github.ref == 'refs/heads/master' || contains(github.ref, 'refs/heads/release_')
-      env:
-        AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID_IAM_S3_UPLOADER }}
-        AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY_IAM_S3_UPLOADER }}
-
-  sphinx:
-    runs-on: ubuntu-latest
-    name: Build docs using Sphinx
-    steps:
-    - uses: actions/checkout@v2
-      with:
-        submodules: 'true'
-    - uses: actions/setup-python@v2
-      with:
-        python-version: '3.8'
-        architecture: 'x64'
-    - name: Install system packages
-      run: |
-        sudo apt-get install -y --no-install-recommends graphviz
-        python -m pip install wheel setuptools
-        python -m pip install -r doc/requirements.txt
-    - name: Extract branch name
-      shell: bash
-      run: echo "##[set-output name=branch;]$(echo ${GITHUB_REF#refs/heads/})"
-      id: extract_branch
-      if: github.ref == 'refs/heads/master' || contains(github.ref, 'refs/heads/release_')
-    - name: Run Sphinx
-      run: |
-        make -C doc html
-      env:
-        SPHINX_GIT_BRANCH: ${{ steps.extract_branch.outputs.branch }}
+        python3 tests/ci_build/lint_cpp.py
+        sh ./tests/ci_build/lint_cmake.sh

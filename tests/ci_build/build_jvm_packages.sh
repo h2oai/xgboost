@@ -6,11 +6,11 @@ set -x
 spark_version=$1
 use_cuda=$2
 gpu_arch=$3
+use_scala213=$4
 
 gpu_options=""
 if [ "x$use_cuda" == "x-Duse.cuda=ON" ]; then
-  # Since building jvm for CPU will do unit tests, choose gpu-with-gpu-tests profile to build
-  gpu_options="$use_cuda -Pgpu-with-gpu-tests "
+  gpu_options="$use_cuda -Pgpu"
 fi
 
 # Initialize local Maven repository
@@ -18,11 +18,17 @@ fi
 
 rm -rf build/
 cd jvm-packages
-export RABIT_MOCK=ON
 
 if [ "x$gpu_arch" != "x" ]; then
   export GPU_ARCH_FLAG=$gpu_arch
 fi
+
+if [ "x$use_scala213" != "x" ]; then
+  cd ..
+  python dev/change_scala_version.py --scala-version 2.13 --purge-artifacts
+  cd jvm-packages
+fi
+
 mvn --no-transfer-progress package -Dspark.version=${spark_version} $gpu_options
 
 set +x

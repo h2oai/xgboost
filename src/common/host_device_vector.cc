@@ -1,5 +1,5 @@
-/*!
- * Copyright 2017 XGBoost contributors
+/**
+ * Copyright 2017-2023 by XGBoost contributors
  */
 #ifndef XGBOOST_USE_CUDA
 
@@ -33,19 +33,19 @@ struct HostDeviceVectorImpl {
 };
 
 template <typename T>
-HostDeviceVector<T>::HostDeviceVector(size_t size, T v, int)
+HostDeviceVector<T>::HostDeviceVector(size_t size, T v, DeviceOrd)
   : impl_(nullptr) {
   impl_ = new HostDeviceVectorImpl<T>(size, v);
 }
 
 template <typename T>
-HostDeviceVector<T>::HostDeviceVector(std::initializer_list<T> init, int)
+HostDeviceVector<T>::HostDeviceVector(std::initializer_list<T> init, DeviceOrd)
   : impl_(nullptr) {
   impl_ = new HostDeviceVectorImpl<T>(init);
 }
 
 template <typename T>
-HostDeviceVector<T>::HostDeviceVector(const std::vector<T>& init, int)
+HostDeviceVector<T>::HostDeviceVector(const std::vector<T>& init, DeviceOrd)
   : impl_(nullptr) {
   impl_ = new HostDeviceVectorImpl<T>(init);
 }
@@ -81,7 +81,7 @@ template <typename T>
 size_t HostDeviceVector<T>::Size() const { return impl_->Vec().size(); }
 
 template <typename T>
-int HostDeviceVector<T>::DeviceIdx() const { return -1; }
+DeviceOrd HostDeviceVector<T>::Device() const { return DeviceOrd::CPU(); }
 
 template <typename T>
 T* HostDeviceVector<T>::DevicePointer() { return nullptr; }
@@ -166,26 +166,31 @@ bool HostDeviceVector<T>::DeviceCanWrite() const {
 }
 
 template <typename T>
-void HostDeviceVector<T>::SetDevice(int) const {}
+void HostDeviceVector<T>::SetDevice(DeviceOrd) const {}
 
 // explicit instantiations are required, as HostDeviceVector isn't header-only
 template class HostDeviceVector<bst_float>;
+template class HostDeviceVector<double>;
 template class HostDeviceVector<GradientPair>;
+template class HostDeviceVector<GradientPairPrecise>;
 template class HostDeviceVector<int32_t>;   // bst_node_t
 template class HostDeviceVector<uint8_t>;
+template class HostDeviceVector<int8_t>;
 template class HostDeviceVector<FeatureType>;
 template class HostDeviceVector<Entry>;
-template class HostDeviceVector<uint64_t>;  // bst_row_t
+template class HostDeviceVector<bst_idx_t>;
 template class HostDeviceVector<uint32_t>;  // bst_feature_t
-template class HostDeviceVector<RegTree::Segment>;
 
-#if defined(__APPLE__)
+#if defined(__APPLE__) || defined(__EMSCRIPTEN__)
 /*
  * On OSX:
  *
  * typedef unsigned int         uint32_t;
  * typedef unsigned long long   uint64_t;
  * typedef unsigned long       __darwin_size_t;
+ *
+ * On Emscripten:
+ * typedef unsigned long        size_t;
  */
 template class HostDeviceVector<std::size_t>;
 #endif  // defined(__APPLE__)

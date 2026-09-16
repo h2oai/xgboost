@@ -1,44 +1,36 @@
+/**
+ * Copyright 2019-2024, XGBoost Contributors
+ */
 #include <gtest/gtest.h>
-
 #include <xgboost/tree_model.h>
 #include <xgboost/tree_updater.h>
 
+#include "../../../src/tree/param.h"  // for TrainParam
 #include "../helpers.h"
+#include "test_column_split.h"  // for GenerateCatDMatrix
 
-namespace xgboost {
-namespace tree {
-
+namespace xgboost::tree {
 TEST(GrowHistMaker, InteractionConstraint) {
-  size_t constexpr kRows = 32;
-  size_t constexpr kCols = 16;
+  auto constexpr kRows = 32;
+  auto constexpr kCols = 16;
+  auto p_dmat = GenerateCatDMatrix(kRows, kCols, 0.0, false);
+  Context ctx;
 
-  GenericParameter param;
-  param.UpdateAllowUnknown(Args{{"gpu_id", "0"}});
+  linalg::Matrix<GradientPair> gpair({kRows}, ctx.Device());
+  gpair.Data()->Copy(GenerateRandomGradients(kRows));
 
-  auto p_dmat = RandomDataGenerator{kRows, kCols, 0.6f}.Seed(3).GenerateDMatrix();
-
-  HostDeviceVector<GradientPair> gradients (kRows);
-  std::vector<GradientPair>& h_gradients = gradients.HostVector();
-
-  xgboost::SimpleLCG gen;
-  xgboost::SimpleRealUniformDistribution<bst_float> dist(0.0f, 1.0f);
-
-  for (size_t i = 0; i < kRows; ++i) {
-    bst_float grad = dist(&gen);
-    bst_float hess = dist(&gen);
-    h_gradients[i] = GradientPair(grad, hess);
-  }
-
+  ObjInfo task{ObjInfo::kRegression};
   {
     // With constraints
-    RegTree tree;
-    tree.param.num_feature = kCols;
+    RegTree tree{1, kCols};
 
-    std::unique_ptr<TreeUpdater> updater { TreeUpdater::Create("grow_histmaker", &param) };
-    updater->Configure(Args{
-        {"interaction_constraints", "[[0, 1]]"},
-        {"num_feature", std::to_string(kCols)}});
-    updater->Update(&gradients, p_dmat.get(), {&tree});
+    std::unique_ptr<TreeUpdater> updater{TreeUpdater::Create("grow_histmaker", &ctx, &task)};
+    TrainParam param;
+    param.UpdateAllowUnknown(
+        Args{{"interaction_constraints", "[[0, 1]]"}, {"num_feature", std::to_string(kCols)}});
+    std::vector<HostDeviceVector<bst_node_t>> position(1);
+    updater->Configure(Args{});
+    updater->Update(&param, &gpair, p_dmat.get(), position, {&tree});
 
     ASSERT_EQ(tree.NumExtraNodes(), 4);
     ASSERT_EQ(tree[0].SplitIndex(), 1);
@@ -48,12 +40,14 @@ TEST(GrowHistMaker, InteractionConstraint) {
   }
   {
     // Without constraints
-    RegTree tree;
-    tree.param.num_feature = kCols;
+    RegTree tree{1u, kCols};
 
-    std::unique_ptr<TreeUpdater> updater { TreeUpdater::Create("grow_histmaker", &param) };
-    updater->Configure(Args{{"num_feature", std::to_string(kCols)}});
-    updater->Update(&gradients, p_dmat.get(), {&tree});
+    std::unique_ptr<TreeUpdater> updater{TreeUpdater::Create("grow_histmaker", &ctx, &task)};
+    std::vector<HostDeviceVector<bst_node_t>> position(1);
+    TrainParam param;
+    param.Init(Args{});
+    updater->Configure(Args{});
+    updater->Update(&param, &gpair, p_dmat.get(), position, {&tree});
 
     ASSERT_EQ(tree.NumExtraNodes(), 10);
     ASSERT_EQ(tree[0].SplitIndex(), 1);
@@ -62,6 +56,4 @@ TEST(GrowHistMaker, InteractionConstraint) {
     ASSERT_NE(tree[tree[0].RightChild()].SplitIndex(), 0);
   }
 }
-
-}  // namespace tree
-}  // namespace xgboost
+}  // namespace xgboost::tree

@@ -36,7 +36,7 @@ struct TestTestStatus {
   XGBOOST_DEVICE void operator()() {
     this->operator()(0);
   }
-  XGBOOST_DEVICE void operator()(int _idx) {
+  XGBOOST_DEVICE void operator()(size_t) {  // size_t for CUDA index
     SPAN_ASSERT_TRUE(false, status_);
   }
 };
@@ -49,7 +49,7 @@ struct TestAssignment {
   XGBOOST_DEVICE void operator()() {
     this->operator()(0);
   }
-  XGBOOST_DEVICE void operator()(int _idx) {
+  XGBOOST_DEVICE void operator()(size_t) {  // size_t for CUDA index
     Span<float> s1;
 
     float arr[] = {3, 4, 5};
@@ -71,7 +71,7 @@ struct TestBeginEnd {
   XGBOOST_DEVICE void operator()() {
     this->operator()(0);
   }
-  XGBOOST_DEVICE void operator()(int _idx) {
+  XGBOOST_DEVICE void operator()(size_t) {  // size_t for CUDA index
     float arr[16];
     InitializeRange(arr, arr + 16);
 
@@ -93,17 +93,23 @@ struct TestRBeginREnd {
   XGBOOST_DEVICE void operator()() {
     this->operator()(0);
   }
-  XGBOOST_DEVICE void operator()(int _idx) {
+  XGBOOST_DEVICE void operator()(size_t) {  // size_t for CUDA index
     float arr[16];
     InitializeRange(arr, arr + 16);
 
     Span<float> s (arr);
-    Span<float>::iterator rbeg { s.rbegin() };
-    Span<float>::iterator rend { s.rend() };
 
-    SPAN_ASSERT_TRUE(rbeg == rend + 16, status_);
-    SPAN_ASSERT_TRUE(*(rbeg - 1) == arr[15], status_);
-    SPAN_ASSERT_TRUE(*rend == arr[0], status_);
+#if defined(__CUDA_ARCH__)
+    auto rbeg = dh::trbegin(s);
+    auto rend = dh::trend(s);
+#else
+    Span<float>::reverse_iterator rbeg{s.rbegin()};
+    Span<float>::reverse_iterator rend{s.rend()};
+#endif
+
+    SPAN_ASSERT_TRUE(rbeg + 16 == rend, status_);
+    SPAN_ASSERT_TRUE(*(rbeg) == arr[15], status_);
+    SPAN_ASSERT_TRUE(*(rend - 1) == arr[0], status_);
   }
 };
 
@@ -115,7 +121,7 @@ struct TestObservers {
   XGBOOST_DEVICE void operator()() {
     this->operator()(0);
   }
-  XGBOOST_DEVICE void operator()(int _idx) {
+  XGBOOST_DEVICE void operator()(size_t) {  // size_t for CUDA index
     // empty
     {
       float *arr = nullptr;
@@ -142,7 +148,7 @@ struct TestCompare {
   XGBOOST_DEVICE void operator()() {
     this->operator()(0);
   }
-  XGBOOST_DEVICE void operator()(int _idx) {
+  XGBOOST_DEVICE void operator()(size_t) {  // size_t for CUDA index
     float lhs_arr[16], rhs_arr[16];
     InitializeRange(lhs_arr, lhs_arr + 16);
     InitializeRange(rhs_arr, rhs_arr + 16);
@@ -172,7 +178,7 @@ struct TestIterConstruct {
   XGBOOST_DEVICE void operator()() {
     this->operator()(0);
   }
-  XGBOOST_DEVICE void operator()(int _idx) {
+  XGBOOST_DEVICE void operator()(size_t) {  // size_t for CUDA index.
     Span<float>::iterator it1;
     Span<float>::iterator it2;
     SPAN_ASSERT_TRUE(it1 == it2, status_);
@@ -191,7 +197,7 @@ struct TestIterRef {
   XGBOOST_DEVICE void operator()() {
     this->operator()(0);
   }
-  XGBOOST_DEVICE void operator()(int _idx) {
+  XGBOOST_DEVICE void operator()(size_t) {  // size_t for CUDA index
     float arr[16];
     InitializeRange(arr, arr + 16);
 
@@ -209,7 +215,7 @@ struct TestIterCalculate {
   XGBOOST_DEVICE void operator()() {
     this->operator()(0);
   }
-  XGBOOST_DEVICE void operator()(int _idx) {
+  XGBOOST_DEVICE void operator()(size_t) {  // size_t for CUDA index
     float arr[16];
     InitializeRange(arr, arr + 16);
 
@@ -242,7 +248,7 @@ struct TestIterCompare {
   XGBOOST_DEVICE void operator()() {
     this->operator()(0);
   }
-  XGBOOST_DEVICE void operator()(int _idx) {
+  XGBOOST_DEVICE void operator()(size_t) {  // size_t for CUDA index
     float arr[16];
     InitializeRange(arr, arr + 16);
     Span<float> s (arr);
@@ -272,7 +278,7 @@ struct TestAsBytes {
   XGBOOST_DEVICE void operator()() {
     this->operator()(0);
   }
-  XGBOOST_DEVICE void operator()(int _idx) {
+  XGBOOST_DEVICE void operator()(size_t) {  // size_t for CUDA index
     float arr[16];
     InitializeRange(arr, arr + 16);
 
@@ -307,7 +313,7 @@ struct TestAsWritableBytes {
   XGBOOST_DEVICE void operator()() {
     this->operator()(0);
   }
-  XGBOOST_DEVICE void operator()(int _idx) {
+  XGBOOST_DEVICE void operator()(size_t) {  // size_t for CUDA index
     float arr[16];
     InitializeRange(arr, arr + 16);
 

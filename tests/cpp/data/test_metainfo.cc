@@ -1,37 +1,44 @@
-// Copyright 2016-2020 by Contributors
-#include <dmlc/io.h>
-#include <dmlc/filesystem.h>
-#include <xgboost/data.h>
-#include <string>
-#include <memory>
-#include "../../../src/common/version.h"
+/**
+ * Copyright 2016-2024, XGBoost contributors
+ */
+#include "test_metainfo.h"
 
-#include "../helpers.h"
+#include <dmlc/io.h>
+#include <gmock/gmock.h>
+#include <xgboost/data.h>
+
+#include <memory>
+#include <string>
+
+#include "../collective/test_worker.h"  // for TestDistributedGlobal
+#include "../filesystem.h"              // dmlc::TemporaryDirectory
+#include "../helpers.h"                 // for GMockTHrow
 #include "xgboost/base.h"
 
+namespace xgboost {
 TEST(MetaInfo, GetSet) {
+  xgboost::Context ctx;
   xgboost::MetaInfo info;
 
   double double2[2] = {1.0, 2.0};
 
-  EXPECT_EQ(info.labels_.Size(), 0);
-  info.SetInfo("label", double2, xgboost::DataType::kFloat32, 2);
-  EXPECT_EQ(info.labels_.Size(), 2);
+  EXPECT_EQ(info.labels.Size(), 0);
+  info.SetInfo(ctx, "label", Make1dInterfaceTest(double2, 2));
+  EXPECT_EQ(info.labels.Size(), 2);
 
   float float2[2] = {1.0f, 2.0f};
-  EXPECT_EQ(info.GetWeight(1), 1.0f)
-    << "When no weights are given, was expecting default value 1";
-  info.SetInfo("weight", float2, xgboost::DataType::kFloat32, 2);
+  EXPECT_EQ(info.GetWeight(1), 1.0f) << "When no weights are given, was expecting default value 1";
+  info.SetInfo(ctx, "weight", Make1dInterfaceTest(float2, 2));
   EXPECT_EQ(info.GetWeight(1), 2.0f);
 
   uint32_t uint32_t2[2] = {1U, 2U};
   EXPECT_EQ(info.base_margin_.Size(), 0);
-  info.SetInfo("base_margin", uint32_t2, xgboost::DataType::kUInt32, 2);
+  info.SetInfo(ctx, "base_margin", Make1dInterfaceTest(uint32_t2, 2));
   EXPECT_EQ(info.base_margin_.Size(), 2);
 
   uint64_t uint64_t2[2] = {1U, 2U};
   EXPECT_EQ(info.group_ptr_.size(), 0);
-  info.SetInfo("group", uint64_t2, xgboost::DataType::kUInt64, 2);
+  info.SetInfo(ctx, "group", Make1dInterfaceTest(uint64_t2, 2));
   ASSERT_EQ(info.group_ptr_.size(), 3);
   EXPECT_EQ(info.group_ptr_[2], 3);
 
@@ -41,6 +48,8 @@ TEST(MetaInfo, GetSet) {
 
 TEST(MetaInfo, GetSetFeature) {
   xgboost::MetaInfo info;
+  ASSERT_THAT([&] { info.SetFeatureInfo("", nullptr, 0); },
+              GMockThrow("Unknown feature info name"));
   EXPECT_THROW(info.SetFeatureInfo("", nullptr, 0), dmlc::Error);
   EXPECT_THROW(info.SetFeatureInfo("foo", nullptr, 0), dmlc::Error);
   EXPECT_NO_THROW(info.SetFeatureInfo("feature_name", nullptr, 0));
@@ -54,7 +63,7 @@ TEST(MetaInfo, GetSetFeature) {
   std::vector<char const*> c_types(kCols);
   std::transform(types.cbegin(), types.cend(), c_types.begin(),
                  [](auto const &str) { return str.c_str(); });
-  // Info has 0 column
+  info.num_col_ = 1;
   EXPECT_THROW(
       info.SetFeatureInfo(u8"feature_type", c_types.data(), c_types.size()),
       dmlc::Error);
@@ -69,8 +78,55 @@ TEST(MetaInfo, GetSetFeature) {
   // Other conditions are tested in `SaveLoadBinary`.
 }
 
+namespace {
+void VerifyGetSetFeatureColumnSplit() {
+  xgboost::MetaInfo info;
+  info.data_split_mode = DataSplitMode::kCol;
+  auto const world_size = collective::GetWorldSize();
+
+  auto constexpr kCols{2};
+  std::vector<std::string> types{u8"float", u8"c"};
+  std::vector<char const *> c_types(kCols);
+  std::transform(types.cbegin(), types.cend(), c_types.begin(),
+                 [](auto const &str) { return str.c_str(); });
+  info.num_col_ = kCols;
+  ASSERT_THAT([&] { info.SetFeatureInfo(u8"feature_type", c_types.data(), c_types.size()); },
+              GMockThrow("Length of feature_type must be equal to number of columns"));
+  info.num_col_ = kCols * world_size;
+  EXPECT_NO_THROW(info.SetFeatureInfo(u8"feature_type", c_types.data(), c_types.size()));
+  std::vector<std::string> expected_type_names{u8"float", u8"c",     u8"float",
+                                               u8"c",     u8"float", u8"c"};
+  EXPECT_EQ(info.feature_type_names, expected_type_names);
+  std::vector<xgboost::FeatureType> expected_types{
+      xgboost::FeatureType::kNumerical, xgboost::FeatureType::kCategorical,
+      xgboost::FeatureType::kNumerical, xgboost::FeatureType::kCategorical,
+      xgboost::FeatureType::kNumerical, xgboost::FeatureType::kCategorical};
+  EXPECT_EQ(info.feature_types.HostVector(), expected_types);
+
+  std::vector<std::string> names{u8"feature0", u8"feature1"};
+  std::vector<char const *> c_names(kCols);
+  std::transform(names.cbegin(), names.cend(), c_names.begin(),
+                 [](auto const &str) { return str.c_str(); });
+  info.num_col_ = kCols;
+  ASSERT_THAT([&] { info.SetFeatureInfo(u8"feature_name", c_names.data(), c_names.size()); },
+              GMockThrow("Length of feature_name must be equal to number of columns"));
+  info.num_col_ = kCols * world_size;
+  EXPECT_NO_THROW(info.SetFeatureInfo(u8"feature_name", c_names.data(), c_names.size()));
+  std::vector<std::string> expected_names{u8"0.feature0", u8"0.feature1", u8"1.feature0",
+                                          u8"1.feature1", u8"2.feature0", u8"2.feature1"};
+  EXPECT_EQ(info.feature_names, expected_names);
+}
+}  // anonymous namespace
+
+TEST(MetaInfo, GetSetFeatureColumnSplit) {
+  auto constexpr kWorkers{3};
+  collective::TestDistributedGlobal(kWorkers, VerifyGetSetFeatureColumnSplit);
+}
+
 TEST(MetaInfo, SaveLoadBinary) {
   xgboost::MetaInfo info;
+  xgboost::Context ctx;
+
   uint64_t constexpr kRows { 64 }, kCols { 32 };
   auto generator = []() {
                      static float f = 0;
@@ -78,9 +134,9 @@ TEST(MetaInfo, SaveLoadBinary) {
                    };
   std::vector<float> values (kRows);
   std::generate(values.begin(), values.end(), generator);
-  info.SetInfo("label", values.data(), xgboost::DataType::kFloat32, kRows);
-  info.SetInfo("weight", values.data(), xgboost::DataType::kFloat32, kRows);
-  info.SetInfo("base_margin", values.data(), xgboost::DataType::kFloat32, kRows);
+  info.SetInfo(ctx, "label", Make1dInterfaceTest(values.data(), kRows));
+  info.SetInfo(ctx, "weight", Make1dInterfaceTest(values.data(), kRows));
+  info.SetInfo(ctx, "base_margin", Make1dInterfaceTest(values.data(), kRows));
 
   info.num_row_ = kRows;
   info.num_col_ = kCols;
@@ -118,11 +174,15 @@ TEST(MetaInfo, SaveLoadBinary) {
     EXPECT_EQ(inforead.num_col_, info.num_col_);
     EXPECT_EQ(inforead.num_nonzero_, info.num_nonzero_);
 
-    ASSERT_EQ(inforead.labels_.HostVector(), values);
-    EXPECT_EQ(inforead.labels_.HostVector(), info.labels_.HostVector());
+    ASSERT_EQ(inforead.labels.Data()->HostVector(), values);
+    EXPECT_EQ(inforead.labels.Data()->HostVector(), info.labels.Data()->HostVector());
     EXPECT_EQ(inforead.group_ptr_, info.group_ptr_);
     EXPECT_EQ(inforead.weights_.HostVector(), info.weights_.HostVector());
-    EXPECT_EQ(inforead.base_margin_.HostVector(), info.base_margin_.HostVector());
+
+    auto orig_margin = info.base_margin_.View(xgboost::DeviceOrd::CPU());
+    auto read_margin = inforead.base_margin_.View(xgboost::DeviceOrd::CPU());
+    EXPECT_TRUE(std::equal(orig_margin.Values().cbegin(), orig_margin.Values().cend(),
+                           read_margin.Values().cbegin()));
 
     EXPECT_EQ(inforead.feature_type_names.size(), kCols);
     EXPECT_EQ(inforead.feature_types.Size(), kCols);
@@ -147,8 +207,7 @@ TEST(MetaInfo, LoadQid) {
   dmlc::TemporaryDirectory tempdir;
   std::string tmp_file = tempdir.path + "/qid_test.libsvm";
   {
-    std::unique_ptr<dmlc::Stream> fs(
-      dmlc::Stream::Create(tmp_file.c_str(), "w"));
+    std::unique_ptr<dmlc::Stream> fs(dmlc::Stream::Create(tmp_file.c_str(), "w"));
     dmlc::ostream os(fs.get());
     os << R"qid(3 qid:1 1:1 2:1 3:0 4:0.2 5:0
                 2 qid:1 1:0 2:0 3:1 4:0.1 5:1
@@ -165,13 +224,13 @@ TEST(MetaInfo, LoadQid) {
     os.set_stream(nullptr);
   }
   std::unique_ptr<xgboost::DMatrix> dmat(
-    xgboost::DMatrix::Load(tmp_file, true, false, "libsvm"));
+      xgboost::DMatrix::Load(tmp_file + "?format=libsvm", true, xgboost::DataSplitMode::kRow));
 
   const xgboost::MetaInfo& info = dmat->Info();
   const std::vector<xgboost::bst_uint> expected_group_ptr{0, 4, 8, 12};
   CHECK(info.group_ptr_ == expected_group_ptr);
 
-  const std::vector<xgboost::bst_row_t> expected_offset{
+  const std::vector<xgboost::bst_idx_t> expected_offset{
     0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60
   };
   const std::vector<xgboost::Entry> expected_data{
@@ -204,13 +263,14 @@ TEST(MetaInfo, LoadQid) {
 
 TEST(MetaInfo, CPUQid) {
   xgboost::MetaInfo info;
+  xgboost::Context ctx;
   info.num_row_ = 100;
   std::vector<uint32_t> qid(info.num_row_, 0);
   for (size_t i = 0; i < qid.size(); ++i) {
     qid[i] = i;
   }
 
-  info.SetInfo("qid", qid.data(), xgboost::DataType::kUInt32, info.num_row_);
+  info.SetInfo(ctx, "qid", Make1dInterfaceTest(qid.data(), info.num_row_));
   ASSERT_EQ(info.group_ptr_.size(), info.num_row_ + 1);
   ASSERT_EQ(info.group_ptr_.front(), 0);
   ASSERT_EQ(info.group_ptr_.back(), info.num_row_);
@@ -226,46 +286,66 @@ TEST(MetaInfo, Validate) {
   info.num_nonzero_ = 12;
   info.num_col_ = 3;
   std::vector<xgboost::bst_group_t> groups (11);
-  info.SetInfo("group", groups.data(), xgboost::DataType::kUInt32, 11);
-  EXPECT_THROW(info.Validate(0), dmlc::Error);
+  Context ctx;
+  info.SetInfo(ctx, "group", Make1dInterfaceTest(groups.data(), groups.size()));
+  EXPECT_THROW(info.Validate(FstCU()), dmlc::Error);
 
   std::vector<float> labels(info.num_row_ + 1);
-  info.SetInfo("label", labels.data(), xgboost::DataType::kFloat32, info.num_row_ + 1);
-  EXPECT_THROW(info.Validate(0), dmlc::Error);
+  EXPECT_THROW(
+      { info.SetInfo(ctx, "label", Make1dInterfaceTest(labels.data(), info.num_row_ + 1)); },
+      dmlc::Error);
+
+  // Make overflow data, which can happen when users pass group structure as int
+  // or float.
+  groups = {};
+  for (size_t i = 0; i < 63; ++i) {
+    groups.push_back(1562500);
+  }
+  groups.push_back(static_cast<xgboost::bst_group_t>(-1));
+  EXPECT_THROW(info.SetInfo(ctx, "group", Make1dInterfaceTest(groups.data(), groups.size())),
+               dmlc::Error);
 
 #if defined(XGBOOST_USE_CUDA)
   info.group_ptr_.clear();
   labels.resize(info.num_row_);
-  info.SetInfo("label", labels.data(), xgboost::DataType::kFloat32, info.num_row_);
-  info.labels_.SetDevice(0);
-  EXPECT_THROW(info.Validate(1), dmlc::Error);
+  info.SetInfo(ctx, "label", Make1dInterfaceTest(labels.data(), info.num_row_));
+  info.labels.SetDevice(FstCU());
+  EXPECT_THROW(info.Validate(DeviceOrd::CUDA(1)), dmlc::Error);
+
+  xgboost::HostDeviceVector<xgboost::bst_group_t> d_groups{groups};
+  d_groups.SetDevice(FstCU());
+  d_groups.DevicePointer();  // pull to device
+  std::string arr_interface_str{ArrayInterfaceStr(xgboost::linalg::MakeVec(
+      d_groups.ConstDevicePointer(), d_groups.Size(), xgboost::DeviceOrd::CUDA(0)))};
+  EXPECT_THROW(info.SetInfo(ctx, "group", xgboost::StringView{arr_interface_str}), dmlc::Error);
 #endif  // defined(XGBOOST_USE_CUDA)
 }
 
 TEST(MetaInfo, HostExtend) {
   xgboost::MetaInfo lhs, rhs;
+  xgboost::Context ctx;
   size_t const kRows = 100;
-  lhs.labels_.Resize(kRows);
+  lhs.labels.Reshape(kRows);
   lhs.num_row_ = kRows;
-  rhs.labels_.Resize(kRows);
+  rhs.labels.Reshape(kRows);
   rhs.num_row_ = kRows;
-  ASSERT_TRUE(lhs.labels_.HostCanRead());
-  ASSERT_TRUE(rhs.labels_.HostCanRead());
+  ASSERT_TRUE(lhs.labels.Data()->HostCanRead());
+  ASSERT_TRUE(rhs.labels.Data()->HostCanRead());
 
   size_t per_group = 10;
   std::vector<xgboost::bst_group_t> groups;
   for (size_t g = 0; g < kRows / per_group; ++g) {
     groups.emplace_back(per_group);
   }
-  lhs.SetInfo("group", groups.data(), xgboost::DataType::kUInt32, groups.size());
-  rhs.SetInfo("group", groups.data(), xgboost::DataType::kUInt32, groups.size());
+  lhs.SetInfo(ctx, "group", Make1dInterfaceTest(groups.data(), groups.size()));
+  rhs.SetInfo(ctx, "group", Make1dInterfaceTest(groups.data(), groups.size()));
 
   lhs.Extend(rhs, true, true);
   ASSERT_EQ(lhs.num_row_, kRows * 2);
-  ASSERT_TRUE(lhs.labels_.HostCanRead());
-  ASSERT_TRUE(rhs.labels_.HostCanRead());
-  ASSERT_FALSE(lhs.labels_.DeviceCanRead());
-  ASSERT_FALSE(rhs.labels_.DeviceCanRead());
+  ASSERT_TRUE(lhs.labels.Data()->HostCanRead());
+  ASSERT_TRUE(rhs.labels.Data()->HostCanRead());
+  ASSERT_FALSE(lhs.labels.Data()->DeviceCanRead());
+  ASSERT_FALSE(rhs.labels.Data()->DeviceCanRead());
 
   ASSERT_EQ(lhs.group_ptr_.front(), 0);
   ASSERT_EQ(lhs.group_ptr_.back(), kRows * 2);
@@ -273,3 +353,6 @@ TEST(MetaInfo, HostExtend) {
     ASSERT_EQ(lhs.group_ptr_.at(i), per_group * i);
   }
 }
+
+TEST(MetaInfo, CPUStridedData) { TestMetaInfoStridedData(DeviceOrd::CPU()); }
+}  // namespace xgboost

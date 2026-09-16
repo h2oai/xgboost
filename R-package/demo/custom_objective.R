@@ -8,7 +8,7 @@ dtest <- xgb.DMatrix(agaricus.test$data, label = agaricus.test$label)
 # note: for customized objective function, we leave objective as default
 # note: what we are getting is margin value in prediction
 # you must know what you are doing
-watchlist <- list(eval = dtest, train = dtrain)
+evals <- list(eval = dtest, train = dtrain)
 num_round <- 2
 
 # user define objective function, given prediction, return gradient and second order gradient
@@ -35,10 +35,10 @@ evalerror <- function(preds, dtrain) {
 
 param <- list(max_depth = 2, eta = 1, nthread  =  2, verbosity = 0,
               objective = logregobj, eval_metric = evalerror)
-print ('start training with user customized objective')
+print('start training with user customized objective')
 # training with customized objective, we can also do step by step training
 # simply look at xgboost.py's implementation of train
-bst <- xgb.train(param, dtrain, num_round, watchlist)
+bst <- xgb.train(param, dtrain, num_round, evals)
 
 #
 # there can be cases where you want additional information
@@ -59,7 +59,7 @@ logregobjattr <- function(preds, dtrain) {
 }
 param <- list(max_depth = 2, eta = 1, nthread  =  2, verbosity = 0,
               objective = logregobjattr, eval_metric = evalerror)
-print ('start training with user customized objective, with additional attributes in DMatrix')
+print('start training with user customized objective, with additional attributes in DMatrix')
 # training with customized objective, we can also do step by step training
 # simply look at xgboost.py's implementation of train
-bst <- xgb.train(param, dtrain, num_round, watchlist)
+bst <- xgb.train(param, dtrain, num_round, evals)

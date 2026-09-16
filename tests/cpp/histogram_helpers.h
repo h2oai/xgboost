@@ -1,6 +1,15 @@
+/**
+ * Copyright 2020-2023, XGBoost contributors
+ */
+#pragma once
+
 #if defined(__CUDACC__)
 #include "../../src/data/ellpack_page.cuh"
 #endif
+
+#include <xgboost/data.h>  // for SparsePage
+
+#include "./helpers.h"  // for RandomDataGenerator
 
 namespace xgboost {
 #if defined(__CUDACC__)
@@ -20,8 +29,8 @@ class HistogramCutsWrapper : public common::HistogramCuts {
 };
 }  //  anonymous namespace
 
-inline std::unique_ptr<EllpackPageImpl> BuildEllpackPage(
-    int n_rows, int n_cols, bst_float sparsity= 0) {
+inline std::unique_ptr<EllpackPageImpl> BuildEllpackPage(int n_rows, int n_cols,
+                                                         bst_float sparsity = 0) {
   auto dmat = RandomDataGenerator(n_rows, n_cols, sparsity).Seed(3).GenerateDMatrix();
   const SparsePage& batch = *dmat->GetBatches<xgboost::SparsePage>().begin();
 
@@ -38,14 +47,14 @@ inline std::unique_ptr<EllpackPageImpl> BuildEllpackPage(
           0.26f, 0.71f, 1.83f});
   cmat.SetMins({0.1f, 0.2f, 0.3f, 0.1f, 0.2f, 0.3f, 0.2f, 0.2f});
 
-  bst_row_t row_stride = 0;
+  bst_idx_t row_stride = 0;
   const auto &offset_vec = batch.offset.ConstHostVector();
   for (size_t i = 1; i < offset_vec.size(); ++i) {
     row_stride = std::max(row_stride, offset_vec[i] - offset_vec[i-1]);
   }
 
   auto page = std::unique_ptr<EllpackPageImpl>(
-      new EllpackPageImpl(0, cmat, batch, dmat->IsDense(), row_stride, {}));
+      new EllpackPageImpl(DeviceOrd::CUDA(0), cmat, batch, dmat->IsDense(), row_stride, {}));
 
   return page;
 }

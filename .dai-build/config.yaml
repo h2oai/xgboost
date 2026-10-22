@@ -1,0 +1,9 @@
+# Build configuration for the DAI dependency build workflow, validated before
+# anything is built.
+schema: 1
+python: "3.11"
+cuda_image: cuda:12.8.1-cudnn-devel-rockylinux8
+# Real cubins only: sm_60 covers Pascal 61/62, sm_80 covers 86/87/89. The PTX
+# target is the newest one.
+cuda_archs: "60;70;75;80;90;100;120"
+arches: [x86_64, aarch64]

@@ -1,5 +1,5 @@
 schema: 1
 python: "3.11"
-cuda_image: 353750902984.dkr.ecr.us-east-1.amazonaws.com/driverlessai/library/cuda:11.2.2-cudnn8-devel-rockylinux8
+cuda_image: cuda:11.2.2-cudnn8-devel-rockylinux8
 cuda_archs: "60;61;70;75;80;86"
 arches: [x86_64, aarch64]
